@@ -193,11 +193,15 @@ export const useStore = create<AppState>((set, get) => ({
   currentView: 'landing',
 
   initializeApp: async () => {
+    let isCloud = false;
+
     // Check Supabase session first (only if configured)
     if (isSupabaseConfigured()) try {
       const supabase = createClient();
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
+        isCloud = true;
+
         // Fetch profile from Supabase
         const { data: profile } = await supabase
           .from('profiles')
@@ -232,6 +236,62 @@ export const useStore = create<AppState>((set, get) => ({
           if (localGoals.length > 0) {
             migrateLocalDataToCloud().catch(() => {});
           }
+
+          // ── Cloud path: load data from Supabase ──
+          const cloudGoals = await api.getGoals();
+          const cloudActiveGoal = cloudGoals.find(g => g.status === 'active') || null;
+          const focusDuration = supaUser.settings?.focus_duration || 25 * 60;
+
+          // Recover timer state from localStorage first (instant), fallback to cloud
+          const timerSaved = storage.getTimerState();
+          let timeRemaining = focusDuration;
+          let timerState: TimerState = 'idle';
+          let currentSessionId: string | null = null;
+
+          if (timerSaved && timerSaved.isRunning && cloudActiveGoal) {
+            const elapsed = Math.floor((Date.now() - timerSaved.savedAt) / 1000);
+            const remaining = timerSaved.remaining - elapsed;
+            if (remaining > 0) {
+              timeRemaining = remaining;
+              timerState = 'paused';
+              currentSessionId = timerSaved.sessionId || null;
+            }
+          }
+
+          // Load daily grind state
+          const dashboardMode = storage.getDashboardMode();
+          const todayKey = new Date().toISOString().split('T')[0];
+          let dailyTasks: DailyTask[] = [];
+          let repeatingTemplates: RepeatingTaskTemplate[] = [];
+          try {
+            dailyTasks = await api.getDailyTasksForDate(todayKey);
+            repeatingTemplates = await api.getRepeatingTemplates();
+          } catch {
+            dailyTasks = storage.ensureRepeatingTasksForDate(todayKey);
+            repeatingTemplates = storage.getRepeatingTemplates().filter(t => t.active);
+          }
+
+          // Also cache goals to localStorage for offline access
+          // (storage.setGoals doesn't exist, but individual goal data is cached via the store)
+
+          set({
+            user: supaUser,
+            isAuthenticated: true,
+            isLoading: false,
+            goals: cloudGoals,
+            activeGoal: cloudActiveGoal,
+            timeRemaining,
+            timerState,
+            currentSessionId,
+            dashboardMode,
+            dailyTasks,
+            repeatingTemplates,
+            dailyViewDate: todayKey,
+            currentView: cloudActiveGoal ? 'dashboard' : (supaUser.onboarding_completed ? 'dashboard' : 'onboarding'),
+          });
+
+          if (cloudActiveGoal) get().refreshDashboard();
+          return; // Done — skip localStorage path below
         }
       }
     } catch (err) {
@@ -239,6 +299,7 @@ export const useStore = create<AppState>((set, get) => ({
       console.warn('Supabase session check failed, using localStorage:', err);
     }
 
+    // ── Local path: load data from localStorage ──
     // Reset data layer provider cache
     resetDataLayerProvider();
 
