@@ -63,22 +63,38 @@ export function LandingPage() {
             <Button
               variant="glow"
               size="lg"
-              onClick={loginAsDemo}
+              onClick={() => setView('auth')}
               className="gap-2 px-6 h-13 text-base"
             >
-              <Zap className="w-5 h-5" />
-              Try a free Pomodoro session
+              Get Started
+              <ArrowRight className="w-5 h-5" />
             </Button>
             <Button
               variant="outline"
               size="lg"
-              onClick={() => setView('auth')}
+              onClick={loginAsDemo}
               className="gap-2 px-6 h-12"
             >
-              Create account
-              <ArrowRight className="w-4 h-4" />
+              <Zap className="w-4 h-4" />
+              Try without signing up
             </Button>
           </motion.div>
+
+          {/* Sign in link */}
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.45, duration: 0.6, ease }}
+            className="mt-4 text-sm text-white/30"
+          >
+            Already have an account?{' '}
+            <button
+              onClick={() => setView('auth')}
+              className="text-cyan-400/70 hover:text-cyan-400 underline underline-offset-2 transition-colors"
+            >
+              Sign in
+            </button>
+          </motion.p>
 
           {/* Features */}
           <motion.div
@@ -136,7 +152,7 @@ export function LandingPage() {
       {/* Footer */}
       <footer className="py-6 text-center">
         <p className="text-xs text-white/15">
-          Built with intention. Your data stays on your device.
+          Built with intention. Your data syncs securely across devices.
         </p>
       </footer>
     </div>

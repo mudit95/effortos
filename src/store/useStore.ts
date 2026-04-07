@@ -422,6 +422,14 @@ export const useStore = create<AppState>((set, get) => ({
 
     const goal = get().createNewGoal(onboardingData as OnboardingData);
     storage.updateUser({ onboarding_completed: true });
+    // Sync onboarding_completed flag to Supabase
+    cloudSync(async () => {
+      const supabase = createClient();
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (authUser) {
+        await supabase.from('profiles').update({ onboarding_completed: true }).eq('id', authUser.id);
+      }
+    });
 
     set({
       user: { ...user, onboarding_completed: true },

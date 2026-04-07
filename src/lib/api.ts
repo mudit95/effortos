@@ -179,17 +179,40 @@ export async function getGoalById(id: string): Promise<Goal | null> {
 export async function createGoal(data: Omit<Goal, 'id' | 'created_at' | 'updated_at'> & { id?: string; created_at?: string; updated_at?: string }): Promise<Goal | null> {
   const supabase = getSupabase();
 
-  // Separate milestones, feedback, and non-column fields from the goal row
-  const { milestones, feedback_bias_log, id: _id, created_at: _ca, updated_at: _ua, ...goalData } = data as Goal;
+  // Extract milestones and feedback separately
+  const { milestones, feedback_bias_log } = data;
+
+  // Build insert payload with ONLY valid database columns — no extra fields
+  const insertData: Record<string, unknown> = {
+    user_id: data.user_id,
+    title: data.title,
+    estimated_sessions_initial: data.estimated_sessions_initial,
+    estimated_sessions_current: data.estimated_sessions_current,
+    sessions_completed: data.sessions_completed ?? 0,
+    user_time_bias: data.user_time_bias ?? 0,
+    experience_level: data.experience_level,
+    daily_availability: data.daily_availability,
+    consistency_level: data.consistency_level,
+    confidence_score: data.confidence_score,
+    difficulty: data.difficulty,
+    recommended_sessions_per_day: data.recommended_sessions_per_day,
+    estimated_days: data.estimated_days,
+    status: data.status || 'active',
+  };
+  // Only include optional fields if they have real values
+  if (data.description) insertData.description = data.description;
+  if (data.deadline) insertData.deadline = data.deadline;
+  if (data.paused_at) insertData.paused_at = data.paused_at;
+  if (data.completed_at) insertData.completed_at = data.completed_at;
 
   const { data: row, error } = await supabase
     .from('goals')
-    .insert(goalData)
+    .insert(insertData)
     .select()
     .single();
 
   if (error || !row) {
-    console.warn('Failed to create goal:', error?.message || error);
+    console.warn('Failed to create goal:', error?.message || error, 'Data:', JSON.stringify(insertData).slice(0, 200));
     return null;
   }
 
