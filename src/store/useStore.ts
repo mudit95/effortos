@@ -777,6 +777,7 @@ export const useStore = create<AppState>((set, get) => ({
       timeRemaining: focusDuration,
       currentSessionId: session.id,
       isBreak: false,
+      currentView: 'focus',
     });
   },
 
