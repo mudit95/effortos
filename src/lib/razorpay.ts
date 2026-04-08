@@ -1,13 +1,21 @@
 import Razorpay from 'razorpay';
 
-if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
-  console.warn('Razorpay credentials not configured — payment features disabled.');
-}
+let _instance: Razorpay | null = null;
 
-export const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID || '',
-  key_secret: process.env.RAZORPAY_KEY_SECRET || '',
-});
+/** Lazily creates a Razorpay instance — avoids crashing at build time when env vars are missing */
+export function getRazorpay(): Razorpay {
+  if (!_instance) {
+    const keyId = process.env.RAZORPAY_KEY_ID;
+    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+
+    if (!keyId || !keySecret) {
+      throw new Error('Razorpay credentials not configured');
+    }
+
+    _instance = new Razorpay({ key_id: keyId, key_secret: keySecret });
+  }
+  return _instance;
+}
 
 /** Plan ID — create this once in your Razorpay dashboard or via the setup script */
 export const PLAN_ID = process.env.RAZORPAY_PLAN_ID || '';

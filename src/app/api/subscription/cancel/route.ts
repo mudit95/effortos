@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { razorpay } from '@/lib/razorpay';
+import { getRazorpay } from '@/lib/razorpay';
 import { createClient } from '@/lib/supabase/server';
 
 /**
@@ -26,7 +26,7 @@ export async function POST() {
     }
 
     // Cancel at end of cycle so user keeps access until period ends
-    await razorpay.subscriptions.cancel(sub.razorpay_subscription_id, true);
+    await getRazorpay().subscriptions.cancel(sub.razorpay_subscription_id, true);
 
     await supabase
       .from('subscriptions')

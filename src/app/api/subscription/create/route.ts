@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { razorpay, PLAN_ID, TRIAL_DAYS } from '@/lib/razorpay';
+import { getRazorpay, PLAN_ID, TRIAL_DAYS } from '@/lib/razorpay';
 import { createClient } from '@/lib/supabase/server';
 
 /**
@@ -39,7 +39,7 @@ export async function POST() {
     const trialEnd = Math.floor(Date.now() / 1000) + (TRIAL_DAYS * 24 * 60 * 60);
 
     // Create Razorpay subscription with trial via start_at
-    const subscription = await razorpay.subscriptions.create({
+    const subscription = await getRazorpay().subscriptions.create({
       plan_id: PLAN_ID,
       total_count: 120, // Max 10 years of monthly billing
       quantity: 1,
