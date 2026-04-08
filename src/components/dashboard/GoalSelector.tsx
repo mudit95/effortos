@@ -37,7 +37,8 @@ export function GoalSelector() {
         <h3 className="text-[10px] text-white/25 uppercase tracking-widest flex-shrink-0">Goals</h3>
         <button
           onClick={() => setExpanded(!expanded)}
-          className="text-white/20 hover:text-white/40 transition-colors p-0.5"
+          className="text-white/20 hover:text-white/40 transition-colors p-1 rounded-md hover:bg-white/5"
+          title={expanded ? 'Collapse goals' : 'Expand goals'}
         >
           {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
         </button>
@@ -81,7 +82,7 @@ export function GoalSelector() {
               </div>
 
               <div className="text-left min-w-0">
-                <p className="text-xs font-medium truncate max-w-[140px]">{goal.title}</p>
+                <p className="text-xs font-medium truncate max-w-[200px]" title={goal.title}>{goal.title}</p>
                 <p className="text-[9px] text-white/25">
                   {goal.sessions_completed}/{goal.estimated_sessions_current}
                   {goal.status === 'paused' && (

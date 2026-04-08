@@ -103,7 +103,7 @@ export function TimerDisplay({ compact = false, onEnterFocus }: TimerDisplayProp
 
         {timerState === 'running' && (
           <>
-            <Button variant="secondary" size="icon" onClick={resetTimer}>
+            <Button variant="secondary" size="icon" onClick={resetTimer} aria-label="Reset timer" title="Reset">
               <RotateCcw className="w-4 h-4" />
             </Button>
             <Button variant="glow" size="lg" onClick={pauseTimer} className="gap-2 px-8">
@@ -111,7 +111,7 @@ export function TimerDisplay({ compact = false, onEnterFocus }: TimerDisplayProp
               Pause
             </Button>
             {onEnterFocus && (
-              <Button variant="secondary" size="icon" onClick={onEnterFocus}>
+              <Button variant="secondary" size="icon" onClick={onEnterFocus} aria-label="Enter focus mode" title="Focus mode">
                 <Maximize2 className="w-4 h-4" />
               </Button>
             )}
@@ -120,7 +120,7 @@ export function TimerDisplay({ compact = false, onEnterFocus }: TimerDisplayProp
 
         {timerState === 'paused' && (
           <>
-            <Button variant="secondary" size="icon" onClick={resetTimer}>
+            <Button variant="secondary" size="icon" onClick={resetTimer} aria-label="Reset timer" title="Reset">
               <RotateCcw className="w-4 h-4" />
             </Button>
             <Button variant="glow" size="lg" onClick={resumeTimer} className="gap-2 px-8">

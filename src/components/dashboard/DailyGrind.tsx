@@ -421,7 +421,11 @@ export function DailyGrind() {
   }, [showAddTask]);
 
   const handleAddTask = () => {
-    if (!newTaskTitle.trim()) return;
+    if (!newTaskTitle.trim()) {
+      addToast('Please enter a task name', 'warning');
+      inputRef.current?.focus();
+      return;
+    }
     addDailyTaskForDate(newTaskTitle.trim(), dailyViewDate, newTaskPomodoros, newTaskRepeating, newTaskTag);
     setNewTaskTitle('');
     setNewTaskPomodoros(1);
@@ -588,7 +592,10 @@ export function DailyGrind() {
             {/* Plan Tomorrow button */}
             {isToday && (
               <button
-                onClick={goToTomorrow}
+                onClick={() => {
+                  goToTomorrow();
+                  addToast('Switched to tomorrow — add tasks for your next day', 'info');
+                }}
                 className="flex items-center gap-1.5 text-xs text-white/20 hover:text-[var(--accent,#22d3ee)]/60 transition-colors"
               >
                 <Calendar className="w-3.5 h-3.5" />
@@ -822,7 +829,7 @@ export function DailyGrind() {
 
       {/* Right sidebar: insights */}
       <div className="lg:col-span-4 space-y-4">
-        {/* Goal progress bar — clickable to reports */}
+        {/* Today's Charter progress */}
         {activeGoal && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
@@ -830,14 +837,20 @@ export function DailyGrind() {
             transition={{ delay: 0.05, duration: 0.4, ease }}
             className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]"
           >
-            <h3 className="text-[10px] text-white/25 uppercase tracking-widest mb-3">Goal Progress</h3>
-            <p className="text-sm font-medium text-white/70 mb-2 truncate">{activeGoal.title}</p>
-            <GoalProgressBar
-              sessionsCompleted={activeGoal.sessions_completed}
-              sessionsTotal={activeGoal.estimated_sessions_current}
-              milestones={activeGoal.milestones}
-              onClick={() => useStore.getState().openGoalReport(activeGoal.id)}
-            />
+            <h3 className="text-[10px] text-white/25 uppercase tracking-widest mb-3">Today's Charter</h3>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-white/70">{donePomodoros} of {totalPomodoros} pomodoros</p>
+              <span className="text-xs text-white/30">{totalPomodoros > 0 ? Math.round((donePomodoros / totalPomodoros) * 100) : 0}%</span>
+            </div>
+            <div className="h-2 rounded-full bg-white/[0.04] overflow-hidden">
+              <motion.div
+                className="h-full rounded-full"
+                style={{ backgroundColor: 'var(--accent, #22d3ee)' }}
+                animate={{ width: `${totalPomodoros > 0 ? (donePomodoros / totalPomodoros) * 100 : 0}%` }}
+                transition={{ duration: 0.5, ease }}
+              />
+            </div>
+            <p className="text-[10px] text-white/20 mt-2">{completedTasks.length} of {dailyTasks.length} tasks completed</p>
           </motion.div>
         )}
 

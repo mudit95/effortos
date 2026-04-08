@@ -104,6 +104,10 @@ input[type='date']::-webkit-calendar-picker-indicator {
   cursor: pointer;
 }
 
+#__next, main {
+  min-height: 0;
+}
+
 /* Smooth animations */
 @media (prefers-reduced-motion: reduce) {
   *,

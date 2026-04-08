@@ -187,7 +187,7 @@ export function GoalDetailReport() {
           icon={<Calendar className="w-3 h-3 text-green-400" />}
           label="Consistency"
           value={`${stats.consistency}%`}
-          sub={`${stats.activeDays} of ${stats.daysExisting} days`}
+          sub={stats.daysExisting <= 7 ? `${stats.activeDays} active day${stats.activeDays !== 1 ? 's' : ''} so far` : `${stats.activeDays} of ${stats.daysExisting} days`}
         />
         <StatCard
           icon={<TrendingUp className="w-3 h-3 text-purple-400" />}

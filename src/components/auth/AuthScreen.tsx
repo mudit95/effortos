@@ -19,6 +19,7 @@ export function AuthScreen() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [confirmationSent, setConfirmationSent] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   const loginAsDemo = useStore(s => s.loginAsDemo);
   const initializeApp = useStore(s => s.initializeApp);
@@ -111,6 +112,33 @@ export function AuthScreen() {
         redirectTo: `${window.location.origin}/auth/callback`,
       },
     });
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email.trim() || !emailRegex.test(email)) {
+      setError('Please enter a valid email address');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    try {
+      const supabase = createClient();
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/auth/reset-password`,
+      });
+
+      if (resetError) {
+        setError(resetError.message);
+        return;
+      }
+
+      setResetSent(true);
+    } catch (err) {
+      setError('Failed to send reset link. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (confirmationSent) {
@@ -340,6 +368,19 @@ export function AuthScreen() {
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
+
+              {resetSent ? (
+                <p className="text-green-400 text-xs text-center">Reset link sent to {email}</p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleForgotPassword}
+                  disabled={loading}
+                  className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors w-full text-center py-2 disabled:opacity-50"
+                >
+                  Forgot password?
+                </button>
+              )}
 
               {error && (
                 <p className="text-red-400 text-xs text-center">{error}</p>

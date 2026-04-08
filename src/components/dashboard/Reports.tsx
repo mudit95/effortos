@@ -210,13 +210,13 @@ export function Reports() {
   const reportGoalId = useStore(s => s.reportGoalId);
   const focusDuration = user?.settings?.focus_duration || 25 * 60;
 
+  const [period, setPeriod] = useState<ReportPeriod>('daily');
+  const [offset, setOffset] = useState(0); // 0 = current, -1 = previous, etc.
+
   // Show goal detail report when a specific goal is selected
   if (reportGoalId) {
     return <GoalDetailReport />;
   }
-
-  const [period, setPeriod] = useState<ReportPeriod>('daily');
-  const [offset, setOffset] = useState(0); // 0 = current, -1 = previous, etc.
 
   const today = new Date();
 

@@ -19,6 +19,7 @@ import { Sparkles } from 'lucide-react';
 
 export function AppShell() {
   const { currentView, isLoading, initializeApp } = useStore();
+  const dashboardMode = useStore(s => s.dashboardMode);
 
   // Register service worker for PWA
   useServiceWorker();
@@ -48,6 +49,25 @@ export function AppShell() {
       subscription.unsubscribe();
     };
   }, [initializeApp]);
+
+  useEffect(() => {
+    if (currentView === 'dashboard') {
+      const modeLabels: Record<string, string> = {
+        daily: 'Daily Grind',
+        longterm: 'Long Term',
+        reports: 'Reports',
+      };
+      document.title = `${modeLabels[dashboardMode] || 'Dashboard'} — EffortOS`;
+    } else {
+      const titles: Record<string, string> = {
+        landing: 'EffortOS — AI-Powered Effort Tracking',
+        auth: 'Sign In — EffortOS',
+        onboarding: 'Set Your Goal — EffortOS',
+        focus: 'Focus Mode — EffortOS',
+      };
+      document.title = titles[currentView] || 'EffortOS';
+    }
+  }, [currentView, dashboardMode]);
 
   if (isLoading) {
     return (

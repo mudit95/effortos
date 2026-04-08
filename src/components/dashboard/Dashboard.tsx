@@ -250,19 +250,19 @@ function LongTermView({
       </motion.div>
 
       {/* Goal title bar */}
-      <motion.div {...fadeUp()} className="flex items-start justify-between mb-6 sm:mb-8">
-        <div className="min-w-0 flex-1">
-          <p className="text-xs text-white/30 uppercase tracking-wider mb-1">Current Goal</p>
-          <h1 className="text-lg sm:text-xl font-bold text-white leading-tight truncate pr-4">
+      <motion.div {...fadeUp()} className="flex flex-col items-center mb-6 sm:mb-8">
+        <div className="min-w-0 flex-1 w-full">
+          <p className="text-xs text-white/30 uppercase tracking-wider mb-1 text-center">Current Goal</p>
+          <h1 className="text-xl sm:text-2xl font-bold text-white leading-tight truncate pr-4 text-center">
             {activeGoal.title}
           </h1>
           {dashboardStats && (
-            <p className="text-xs text-white/30 mt-1">
+            <p className="text-xs text-white/30 mt-1 text-center">
               {dashboardStats.sessions_done}/{activeGoal.estimated_sessions_current} sessions &middot; {dashboardStats.total_hours}h invested &middot; {dashboardStats.current_streak} day streak
             </p>
           )}
         </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
+        <div className="flex items-center gap-1 mt-2">
           <Button variant="ghost" size="icon" onClick={() => setShowEditGoal(true)} className="w-8 h-8" aria-label="Edit goal">
             <Edit3 className="w-3.5 h-3.5" />
           </Button>
@@ -313,7 +313,7 @@ function LongTermView({
           {...fadeUp(0.2)}
           className="flex flex-col items-center"
         >
-          <div className="w-full flex justify-center transform scale-110 sm:scale-125 origin-center">
+          <div className="w-full flex justify-center transform scale-100 sm:scale-110 origin-center">
             <TimerDisplay onEnterFocus={() => setView('focus')} />
           </div>
 
@@ -321,7 +321,7 @@ function LongTermView({
             variant="ghost"
             size="sm"
             onClick={() => setView('focus')}
-            className="mt-5 gap-1 text-xs text-white/30 hover:text-white/60"
+            className="mt-8 gap-1 text-xs text-white/30 hover:text-white/60"
           >
             Enter Focus Mode
             <ChevronRight className="w-3 h-3" />

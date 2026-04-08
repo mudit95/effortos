@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, useMotionValue, useTransform, animate } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
-import { Sparkles, ArrowRight, Zap, Brain, BarChart3, Target, Clock, Users, Timer } from 'lucide-react';
+import { Sparkles, ArrowRight, Zap, Brain, BarChart3, Target, Clock } from 'lucide-react';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
@@ -42,33 +42,20 @@ function RotatingWord() {
   );
 }
 
-function AnimatedCounter({ target, suffix = '', duration = 2 }: { target: number; suffix?: string; duration?: number }) {
-  const count = useMotionValue(0);
-  const rounded = useTransform(count, (v) => Math.round(v));
-  const [display, setDisplay] = useState(0);
-
-  useEffect(() => {
-    const controls = animate(count, target, { duration, ease: [0.22, 1, 0.36, 1] });
-    const unsub = rounded.on('change', (v) => setDisplay(v));
-    return () => { controls.stop(); unsub(); };
-  }, [target, count, rounded, duration]);
-
-  return <>{display.toLocaleString()}{suffix}</>;
-}
 
 /* ── Floating background elements ──────────────────────────────────── */
 
 const FLOATING_LABELS = [
-  { text: 'Coding', color: 'rgba(34,211,238,0.18)', border: 'rgba(34,211,238,0.06)', x: '4%', y: '8%', dur: 7, delay: 0 },
-  { text: 'Writing', color: 'rgba(59,130,246,0.18)', border: 'rgba(59,130,246,0.06)', x: '82%', y: '14%', dur: 8.5, delay: 0.8 },
-  { text: 'Fitness', color: 'rgba(34,197,94,0.18)', border: 'rgba(34,197,94,0.06)', x: '6%', y: '62%', dur: 9, delay: 1.5 },
-  { text: 'Music', color: 'rgba(168,85,247,0.18)', border: 'rgba(168,85,247,0.06)', x: '78%', y: '72%', dur: 7.5, delay: 2 },
-  { text: 'Design', color: 'rgba(234,179,8,0.18)', border: 'rgba(234,179,8,0.06)', x: '68%', y: '35%', dur: 10, delay: 3 },
-  { text: 'Learning', color: 'rgba(239,68,68,0.18)', border: 'rgba(239,68,68,0.06)', x: '2%', y: '38%', dur: 8, delay: 0.5 },
-  { text: 'Reading', color: 'rgba(34,211,238,0.14)', border: 'rgba(34,211,238,0.05)', x: '35%', y: '82%', dur: 9.5, delay: 4 },
-  { text: 'Research', color: 'rgba(168,85,247,0.14)', border: 'rgba(168,85,247,0.05)', x: '52%', y: '5%', dur: 8.5, delay: 1.2 },
-  { text: 'Practice', color: 'rgba(34,197,94,0.14)', border: 'rgba(34,197,94,0.05)', x: '88%', y: '48%', dur: 7.8, delay: 2.5 },
-  { text: 'Startup', color: 'rgba(239,68,68,0.14)', border: 'rgba(239,68,68,0.05)', x: '42%', y: '55%', dur: 9.2, delay: 3.5 },
+  { text: 'Coding', color: 'rgba(34,211,238,0.35)', border: 'rgba(34,211,238,0.12)', x: '4%', y: '8%', dur: 7, delay: 0 },
+  { text: 'Writing', color: 'rgba(59,130,246,0.35)', border: 'rgba(59,130,246,0.12)', x: '82%', y: '14%', dur: 8.5, delay: 0.8 },
+  { text: 'Fitness', color: 'rgba(34,197,94,0.35)', border: 'rgba(34,197,94,0.12)', x: '6%', y: '62%', dur: 9, delay: 1.5 },
+  { text: 'Music', color: 'rgba(168,85,247,0.35)', border: 'rgba(168,85,247,0.12)', x: '78%', y: '72%', dur: 7.5, delay: 2 },
+  { text: 'Design', color: 'rgba(234,179,8,0.35)', border: 'rgba(234,179,8,0.12)', x: '68%', y: '35%', dur: 10, delay: 3 },
+  { text: 'Learning', color: 'rgba(239,68,68,0.35)', border: 'rgba(239,68,68,0.12)', x: '2%', y: '38%', dur: 8, delay: 0.5 },
+  { text: 'Reading', color: 'rgba(34,211,238,0.28)', border: 'rgba(34,211,238,0.10)', x: '35%', y: '82%', dur: 9.5, delay: 4 },
+  { text: 'Research', color: 'rgba(168,85,247,0.28)', border: 'rgba(168,85,247,0.10)', x: '52%', y: '5%', dur: 8.5, delay: 1.2 },
+  { text: 'Practice', color: 'rgba(34,197,94,0.28)', border: 'rgba(34,197,94,0.10)', x: '88%', y: '48%', dur: 7.8, delay: 2.5 },
+  { text: 'Startup', color: 'rgba(239,68,68,0.28)', border: 'rgba(239,68,68,0.10)', x: '42%', y: '55%', dur: 9.2, delay: 3.5 },
 ];
 
 // Icon SVG paths (outline style)
@@ -115,7 +102,7 @@ function FloatingBackground() {
       {FLOATING_LABELS.map((label) => (
         <motion.span
           key={label.text}
-          className="absolute text-[9px] font-semibold tracking-[0.12em] uppercase px-2.5 py-1 rounded-full select-none"
+          className="absolute text-[11px] font-semibold tracking-[0.12em] uppercase px-2.5 py-1 rounded-full select-none"
           style={{
             left: label.x,
             top: label.y,
@@ -144,7 +131,7 @@ function FloatingBackground() {
           key={i}
           viewBox="0 0 24 24"
           fill="none"
-          stroke="rgba(255,255,255,0.05)"
+          stroke="rgba(255,255,255,0.10)"
           strokeWidth={1.2}
           className="absolute select-none"
           style={{
@@ -180,11 +167,10 @@ const EXAMPLE_GOALS = [
 
 export function LandingPage() {
   const setView = useStore(s => s.setView);
-  const loginAsDemo = useStore(s => s.loginAsDemo);
   const [hoveredGoal, setHoveredGoal] = useState<number | null>(null);
 
   return (
-    <div className="min-h-screen flex flex-col relative overflow-hidden bg-[#080b10]">
+    <div className="flex flex-col relative overflow-hidden bg-[#080b10]">
       {/* Floating background: word bubbles + icon outlines */}
       <FloatingBackground />
 
@@ -222,7 +208,7 @@ export function LandingPage() {
             transition={{ delay: 0.25, duration: 0.6, ease }}
             className="text-base sm:text-lg text-white/40 mb-10 max-w-md mx-auto leading-relaxed"
           >
-            EffortOS learns from your pace to predict how long things actually take. Powered by AI estimation and Pomodoro focus sessions.
+            Track your goals with AI that adapts to your real pace. Set a target, focus with Pomodoro sessions, and watch your estimates get smarter over time.
           </motion.p>
 
           {/* CTAs */}
@@ -240,15 +226,6 @@ export function LandingPage() {
             >
               Get Started
               <ArrowRight className="w-5 h-5" />
-            </Button>
-            <Button
-              variant="outline"
-              size="lg"
-              onClick={loginAsDemo}
-              className="gap-2 px-6 h-12"
-            >
-              <Zap className="w-4 h-4" />
-              Try without signing up
             </Button>
           </motion.div>
 
@@ -268,31 +245,18 @@ export function LandingPage() {
             </button>
           </motion.p>
 
-          {/* Live stats bar */}
+          {/* Trust line */}
           <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
             transition={{ delay: 0.5, duration: 0.6 }}
-            className="flex items-center justify-center gap-6 sm:gap-10 mt-12 mb-12"
+            className="flex items-center justify-center gap-2 mt-10 mb-10"
           >
-            {[
-              { icon: Timer, value: 15000, suffix: '+', label: 'Sessions completed' },
-              { icon: Users, value: 200, suffix: '+', label: 'Active users' },
-              { icon: Target, value: 95, suffix: '%', label: 'Goal accuracy' },
-            ].map((stat, i) => (
-              <motion.div
-                key={stat.label}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.6 + i * 0.1 }}
-                className="text-center"
-              >
-                <p className="text-xl sm:text-2xl font-bold text-white">
-                  <AnimatedCounter target={stat.value} suffix={stat.suffix} duration={2 + i * 0.3} />
-                </p>
-                <p className="text-[10px] sm:text-xs text-white/25 mt-0.5">{stat.label}</p>
-              </motion.div>
-            ))}
+            <span className="text-xs text-white/20">AI-powered</span>
+            <span className="text-white/10">·</span>
+            <span className="text-xs text-white/20">Pomodoro-based</span>
+            <span className="text-white/10">·</span>
+            <span className="text-xs text-white/20">Adapts to your pace</span>
           </motion.div>
 
           {/* Features */}

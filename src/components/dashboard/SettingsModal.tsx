@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
-import { X, Bell, Volume2, Clock, Palette, Check } from 'lucide-react';
+import { X, Bell, Volume2, Clock, Palette, Check, CreditCard } from 'lucide-react';
 
 const THEMES = [
   {
@@ -110,6 +110,9 @@ export function SettingsModal() {
   const user = useStore(s => s.user);
   const updateSettings = useStore(s => s.updateSettings);
   const requestNotificationPermission = useStore(s => s.requestNotificationPermission);
+  const subscription = useStore(s => s.subscription);
+  const subscriptionLoading = useStore(s => s.subscriptionLoading);
+  const cancelSubscription = useStore(s => s.cancelSubscription);
 
   const [focusMin, setFocusMin] = useState(
     Math.round((user?.settings?.focus_duration || 1500) / 60)
@@ -120,6 +123,15 @@ export function SettingsModal() {
   const [notifications, setNotifications] = useState(user?.settings?.notifications_enabled ?? true);
   const [sound, setSound] = useState(user?.settings?.sound_enabled ?? true);
   const [activeTheme, setActiveTheme] = useState(getStoredTheme());
+
+  // Close on Escape
+  React.useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && showSettings) setShowSettings(false);
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [showSettings, setShowSettings]);
 
   if (!user) return null;
 
@@ -147,6 +159,7 @@ export function SettingsModal() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
+          onClick={(e) => e.target === e.currentTarget && setShowSettings(false)}
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
         >
           <motion.div
@@ -280,6 +293,57 @@ export function SettingsModal() {
                 <p className="text-xs text-white/20 mt-1">
                   Timezone: {user.timezone}
                 </p>
+              </div>
+
+              {/* Subscription */}
+              <div className="pt-4 border-t border-white/[0.06]">
+                <div className="flex items-center gap-2 mb-3">
+                  <CreditCard className="w-4 h-4 text-cyan-400" />
+                  <h4 className="text-sm font-medium text-white/70">Subscription</h4>
+                </div>
+                {subscriptionLoading ? (
+                  <p className="text-xs text-white/30">Loading...</p>
+                ) : subscription.status === 'active' ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-green-400/70">Active subscription — $4.99/month</p>
+                    {subscription.current_period_end && (
+                      <p className="text-[11px] text-white/25">
+                        Next billing: {new Date(subscription.current_period_end).toLocaleDateString()}
+                      </p>
+                    )}
+                    <button
+                      onClick={() => {
+                        if (confirm('Are you sure you want to cancel? You will retain access until the end of your billing period.')) {
+                          cancelSubscription();
+                          setShowSettings(false);
+                        }
+                      }}
+                      className="text-xs text-red-400/50 hover:text-red-400 transition-colors"
+                    >
+                      Cancel subscription
+                    </button>
+                  </div>
+                ) : subscription.status === 'trialing' ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-cyan-400/70">Free trial active</p>
+                    {subscription.trial_ends_at && (
+                      <p className="text-[11px] text-white/25">
+                        Trial ends: {new Date(subscription.trial_ends_at).toLocaleDateString()}
+                      </p>
+                    )}
+                  </div>
+                ) : subscription.status === 'cancelled' ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-yellow-400/70">Subscription cancelled</p>
+                    {subscription.current_period_end && (
+                      <p className="text-[11px] text-white/25">
+                        Access until: {new Date(subscription.current_period_end).toLocaleDateString()}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-white/30">No active subscription</p>
+                )}
               </div>
             </div>
 
