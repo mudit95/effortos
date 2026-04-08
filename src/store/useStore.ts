@@ -592,45 +592,57 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   deleteGoal: (goalId) => {
-    storage.updateGoal(goalId, { status: 'abandoned' });
-    const goals = storage.getGoals();
+    // Update store directly (source of truth for cloud users)
+    const updatedGoals = get().goals.map(g =>
+      g.id === goalId ? { ...g, status: 'abandoned' as const, updated_at: new Date().toISOString() } : g
+    );
+    const visibleGoals = updatedGoals.filter(g => g.status !== 'abandoned');
     const { activeGoal } = get();
-    const newActive = activeGoal?.id === goalId ? (goals.find(g => g.status === 'active') || null) : activeGoal;
-    set({ goals, activeGoal: newActive });
-    get().refreshDashboard();
+    const newActive = activeGoal?.id === goalId
+      ? (visibleGoals.find(g => g.status === 'active') || null)
+      : activeGoal;
+    set({ goals: visibleGoals, activeGoal: newActive });
+    // Sync to localStorage and cloud
+    storage.updateGoal(goalId, { status: 'abandoned' });
     cloudSync(() => api.updateGoal(goalId, { status: 'abandoned' }));
+    get().refreshDashboard();
   },
 
   pauseGoal: (goalId) => {
+    const now = new Date().toISOString();
+    const updatedGoals = get().goals.map(g =>
+      g.id === goalId ? { ...g, status: 'paused' as const, paused_at: now, updated_at: now } : g
+    );
+    const active = updatedGoals.find(g => g.status === 'active') || null;
+    set({ goals: updatedGoals, activeGoal: active });
     storage.pauseGoal(goalId);
-    const goals = storage.getGoals();
-    const active = goals.find(g => g.status === 'active') || null;
-    set({ goals, activeGoal: active });
     get().addToast('Goal paused', 'info');
     get().refreshDashboard();
     cloudSync(() => api.pauseGoal(goalId));
   },
 
   resumeGoal: (goalId) => {
-    // Pause any other active goal first
-    const goals = storage.getGoals();
-    goals.forEach(g => {
-      if (g.status === 'active' && g.id !== goalId) {
+    const now = new Date().toISOString();
+    // Pause any other active goal first, then resume target
+    const updatedGoals = get().goals.map(g => {
+      if (g.id === goalId) return { ...g, status: 'active' as const, paused_at: undefined, updated_at: now };
+      if (g.status === 'active') {
         storage.pauseGoal(g.id);
         cloudSync(() => api.pauseGoal(g.id));
+        return { ...g, status: 'paused' as const, paused_at: now, updated_at: now };
       }
+      return g;
     });
-    storage.resumeGoal(goalId);
-    const updatedGoals = storage.getGoals();
     const active = updatedGoals.find(g => g.id === goalId) || null;
     set({ goals: updatedGoals, activeGoal: active });
+    storage.resumeGoal(goalId);
     get().addToast('Goal resumed', 'success');
     get().refreshDashboard();
     cloudSync(() => api.resumeGoal(goalId));
   },
 
   switchToGoal: (goalId) => {
-    const goal = storage.getGoalById(goalId);
+    const goal = get().goals.find(g => g.id === goalId);
     if (!goal) return;
     if (goal.status === 'paused') {
       get().resumeGoal(goalId);
@@ -641,7 +653,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   updateGoalProgress: (goalId) => {
-    const goal = storage.getGoalById(goalId);
+    const goal = get().goals.find(g => g.id === goalId) || storage.getGoalById(goalId);
     if (!goal) return;
 
     const newCompleted = goal.sessions_completed + 1;
@@ -693,14 +705,16 @@ export const useStore = create<AppState>((set, get) => ({
     // Check if feedback should be triggered
     const needsFeedback = shouldTriggerFeedback(updated);
 
-    const refreshedGoal = storage.getGoalById(goalId);
+    const refreshedGoal = storage.getGoalById(goalId) || get().goals.find(g => g.id === goalId);
 
     // Show celebration if completed
     const isNowComplete = refreshedGoal?.status === 'completed';
 
+    // Update store goals with refreshed data
+    const storeGoals = get().goals.map(g => g.id === goalId && refreshedGoal ? refreshedGoal : g);
     set({
-      activeGoal: refreshedGoal,
-      goals: storage.getGoals(),
+      activeGoal: refreshedGoal || null,
+      goals: storeGoals,
       recalibrationResult: recalResult,
       showFeedback: needsFeedback && !isNowComplete,
       feedbackGoalId: needsFeedback && !isNowComplete ? goalId : null,

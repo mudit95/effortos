@@ -7,7 +7,7 @@ import { useStore } from '@/store/useStore';
 import {
   X, Trophy, Pause, Play, Target, Clock, Trash2,
   Edit3, CheckCircle2, AlertCircle, Calendar, Flame,
-  ChevronDown, ChevronUp, BarChart3,
+  ChevronDown, ChevronUp, BarChart3, Check,
 } from 'lucide-react';
 import { sessionsToHours, formatDate } from '@/lib/utils';
 import * as storage from '@/lib/storage';
@@ -35,6 +35,9 @@ function GoalCard({
   onResume,
   onEdit,
   onDelete,
+  selectionMode,
+  isSelected,
+  onToggleSelect,
 }: {
   goal: ReturnType<typeof storage.getGoals>[0];
   isActiveGoal: boolean;
@@ -43,6 +46,9 @@ function GoalCard({
   onResume: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  selectionMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const statusConfig = getStatusConfig(goal.status);
@@ -53,6 +59,11 @@ function GoalCard({
   const hoursInvested = sessionsToHours(goal.sessions_completed);
   const startedDate = formatDate(goal.created_at);
   const daysElapsed = Math.max(1, Math.floor((Date.now() - new Date(goal.created_at).getTime()) / (1000 * 60 * 60 * 24)));
+
+  // Calculate days remaining from deadline
+  const daysRemaining = (goal as any).deadline
+    ? Math.ceil((new Date((goal as any).deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    : null;
 
   // Calculate milestones progress
   const milestonesCompleted = goal.milestones.filter(m => m.completed).length;
@@ -72,6 +83,19 @@ function GoalCard({
       {/* Main row */}
       <div className="p-4">
         <div className="flex items-start gap-3">
+          {/* Selection checkbox */}
+          {selectionMode && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleSelect?.(); }}
+              className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all flex-shrink-0 mt-3.5 ${
+                isSelected
+                  ? 'bg-cyan-500 border-cyan-500'
+                  : 'border-white/20 hover:border-white/40'
+              }`}
+            >
+              {isSelected && <Check className="w-3 h-3 text-white" />}
+            </button>
+          )}
           {/* Progress ring */}
           <div className="relative w-12 h-12 flex-shrink-0">
             <svg width="48" height="48" viewBox="0 0 48 48" className="transform -rotate-90">
@@ -119,6 +143,14 @@ function GoalCard({
                 <Clock className="w-3 h-3" />
                 {hoursInvested}h
               </span>
+              {daysRemaining !== null && (
+                <span className={`flex items-center gap-1 ${
+                  daysRemaining < 0 ? 'text-red-400/70' : daysRemaining < 7 ? 'text-yellow-400/70' : 'text-white/35'
+                }`}>
+                  <Flame className="w-3 h-3" />
+                  {daysRemaining > 0 ? `${daysRemaining}d left` : 'Overdue'}
+                </span>
+              )}
             </div>
 
             {/* Progress bar */}
@@ -283,9 +315,12 @@ export function GoalHistoryModal() {
   const activeGoal = useStore(s => s.activeGoal);
   const setShowEditGoal = useStore(s => s.setShowEditGoal);
   const addToast = useStore(s => s.addToast);
+  const deleteGoal = useStore(s => s.deleteGoal);
 
   const goals = useStore(s => s.goals);
   const [filter, setFilter] = useState<'all' | 'active' | 'paused' | 'completed'>('all');
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const allGoals = goals
     .filter(g => g.status !== 'abandoned')
@@ -309,10 +344,37 @@ export function GoalHistoryModal() {
   const totalHours = sessionsToHours(totalPomodoros);
   const completedCount = allGoals.filter(g => g.status === 'completed').length;
 
-  const deleteGoal = useStore(s => s.deleteGoal);
   const handleDelete = (goalId: string) => {
     deleteGoal(goalId);
     addToast('Goal removed', 'info');
+  };
+
+  const handleBulkDelete = () => {
+    selectedIds.forEach(id => deleteGoal(id));
+    setSelectedIds(new Set());
+    addToast(`Deleted ${selectedIds.size} goal(s)`, 'info');
+  };
+
+  const handleBulkPause = () => {
+    const activeSelected = filteredGoals.filter(g => selectedIds.has(g.id) && g.status === 'active');
+    activeSelected.forEach(g => pauseGoal(g.id));
+    addToast(`Paused ${activeSelected.length} goal(s)`, 'info');
+  };
+
+  const handleBulkResume = () => {
+    const pausedSelected = filteredGoals.filter(g => selectedIds.has(g.id) && g.status === 'paused');
+    pausedSelected.forEach(g => resumeGoal(g.id));
+    setSelectedIds(new Set());
+    addToast(`Resumed ${pausedSelected.length} goal(s)`, 'info');
+  };
+
+  const handleSelectAll = () => {
+    const newSelectedIds = new Set(filteredGoals.map(g => g.id));
+    setSelectedIds(newSelectedIds);
+  };
+
+  const handleDeselectAll = () => {
+    setSelectedIds(new Set());
   };
 
   return (
@@ -339,12 +401,27 @@ export function GoalHistoryModal() {
                   {totalPomodoros} pomodoros &middot; {totalHours}h invested &middot; {completedCount} completed
                 </p>
               </div>
-              <button
-                onClick={() => setShowGoalHistory(false)}
-                className="text-white/30 hover:text-white/60 transition-colors p-1.5 rounded-lg hover:bg-white/5"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant={selectionMode ? "glow" : "ghost"}
+                  size="sm"
+                  onClick={() => {
+                    setSelectionMode(!selectionMode);
+                    if (!selectionMode) {
+                      setSelectedIds(new Set());
+                    }
+                  }}
+                  className="text-xs h-8"
+                >
+                  {selectionMode ? 'Done' : 'Select'}
+                </Button>
+                <button
+                  onClick={() => setShowGoalHistory(false)}
+                  className="text-white/30 hover:text-white/60 transition-colors p-1.5 rounded-lg hover:bg-white/5"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             {/* Filter tabs */}
@@ -391,6 +468,16 @@ export function GoalHistoryModal() {
                       setTimeout(() => setShowEditGoal(true), 200);
                     }}
                     onDelete={() => handleDelete(goal.id)}
+                    selectionMode={selectionMode}
+                    isSelected={selectedIds.has(goal.id)}
+                    onToggleSelect={() => {
+                      setSelectedIds(prev => {
+                        const next = new Set(prev);
+                        if (next.has(goal.id)) next.delete(goal.id);
+                        else next.add(goal.id);
+                        return next;
+                      });
+                    }}
                   />
                 ))
               ) : (
@@ -400,6 +487,66 @@ export function GoalHistoryModal() {
                 </div>
               )}
             </div>
+
+            {/* Bulk action bar */}
+            {selectionMode && selectedIds.size > 0 && (
+              <motion.div
+                initial={{ y: 20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 20, opacity: 0 }}
+                className="sticky bottom-0 border-t border-white/[0.06] bg-[#131820]/95 backdrop-blur-sm p-4 space-y-3"
+              >
+                <div className="flex items-center justify-between text-sm text-white/60 mb-2">
+                  <span>{selectedIds.size} selected</span>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSelectAll}
+                      className="text-xs text-white/40 hover:text-white/60 transition-colors"
+                    >
+                      Select All
+                    </button>
+                    <button
+                      onClick={handleDeselectAll}
+                      className="text-xs text-white/40 hover:text-white/60 transition-colors"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleBulkPause}
+                    disabled={!filteredGoals.some(g => selectedIds.has(g.id) && g.status === 'active')}
+                    className="gap-1 text-xs h-8 text-yellow-400/60 hover:text-yellow-400 disabled:opacity-40"
+                  >
+                    <Pause className="w-3 h-3" />
+                    Pause Selected
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleBulkResume}
+                    disabled={!filteredGoals.some(g => selectedIds.has(g.id) && g.status === 'paused')}
+                    className="gap-1 text-xs h-8 text-cyan-400/60 hover:text-cyan-400 disabled:opacity-40"
+                  >
+                    <Play className="w-3 h-3" />
+                    Activate Selected
+                  </Button>
+                  <div className="flex-1" />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleBulkDelete}
+                    className="gap-1 text-xs h-8 text-red-400/60 hover:text-red-400 hover:bg-red-500/10"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    Delete Selected
+                  </Button>
+                </div>
+              </motion.div>
+            )}
           </motion.div>
         </motion.div>
       )}

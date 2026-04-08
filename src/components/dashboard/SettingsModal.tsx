@@ -4,7 +4,9 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
-import { X, Bell, Volume2, Clock, Palette, Check, CreditCard } from 'lucide-react';
+import { X, Bell, Volume2, Clock, Palette, Check, CreditCard, AlertTriangle } from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
+import * as storage from '@/lib/storage';
 
 const THEMES = [
   {
@@ -124,6 +126,11 @@ export function SettingsModal() {
   const [sound, setSound] = useState(user?.settings?.sound_enabled ?? true);
   const [activeTheme, setActiveTheme] = useState(getStoredTheme());
 
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetError, setResetError] = useState('');
+
   // Close on Escape
   React.useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
@@ -150,6 +157,73 @@ export function SettingsModal() {
   const handleThemeSelect = (themeId: string) => {
     setActiveTheme(themeId);
     applyTheme(themeId);
+  };
+
+  const handleResetAccount = async () => {
+    if (!resetPassword) return;
+    setResetLoading(true);
+    setResetError('');
+
+    try {
+      const supabase = createClient();
+
+      // Verify password by attempting to sign in with current email
+      const { error: authError } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password: resetPassword,
+      });
+
+      if (authError) {
+        setResetError('Incorrect password');
+        setResetLoading(false);
+        return;
+      }
+
+      // Get current user
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) {
+        setResetError('Authentication failed');
+        setResetLoading(false);
+        return;
+      }
+
+      // Delete all user data from Supabase tables
+      // Order matters due to foreign keys: feedback_entries -> sessions -> milestones -> goals -> daily_tasks -> repeating_templates
+      await supabase.from('feedback_entries').delete().eq('user_id', authUser.id);
+      await supabase.from('sessions').delete().eq('user_id', authUser.id);
+      await supabase.from('milestones').delete().eq('user_id', authUser.id);
+      await supabase.from('goals').delete().eq('user_id', authUser.id);
+      await supabase.from('daily_tasks').delete().eq('user_id', authUser.id);
+      await supabase.from('repeating_templates').delete().eq('user_id', authUser.id);
+
+      // Reset profile
+      await supabase.from('profiles').update({ onboarding_completed: false }).eq('id', authUser.id);
+
+      // Clear localStorage
+      storage.clearAllData();
+
+      // Reset store and go to onboarding
+      useStore.setState({
+        goals: [],
+        activeGoal: null,
+        dashboardStats: null,
+        dailyTasks: [],
+        repeatingTemplates: [],
+        timerState: 'idle',
+        timeRemaining: 25 * 60,
+        currentSessionId: null,
+        showSettings: false,
+        currentView: 'onboarding',
+        onboardingStep: 0,
+        onboardingData: {},
+        user: { ...user, onboarding_completed: false },
+      });
+
+    } catch (err) {
+      setResetError('Something went wrong. Please try again.');
+    } finally {
+      setResetLoading(false);
+    }
   };
 
   return (
@@ -343,6 +417,71 @@ export function SettingsModal() {
                   </div>
                 ) : (
                   <p className="text-xs text-white/30">No active subscription</p>
+                )}
+              </div>
+
+              {/* Danger Zone */}
+              <div className="pt-4 border-t border-red-500/10">
+                <div className="flex items-center gap-2 mb-3">
+                  <AlertTriangle className="w-4 h-4 text-red-400" />
+                  <h4 className="text-sm font-medium text-red-400/70">Danger Zone</h4>
+                </div>
+
+                {!showResetConfirm ? (
+                  <button
+                    onClick={() => setShowResetConfirm(true)}
+                    className="text-xs text-red-400/50 hover:text-red-400 transition-colors px-3 py-2 rounded-lg border border-red-500/10 hover:border-red-500/20 hover:bg-red-500/5"
+                  >
+                    Reset to Day 1
+                  </button>
+                ) : (
+                  <div className="space-y-3 p-3 rounded-xl bg-red-500/5 border border-red-500/10">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs text-red-400 font-medium">This will permanently delete:</p>
+                        <ul className="text-[11px] text-red-400/60 mt-1 space-y-0.5">
+                          <li>• All your goals and progress</li>
+                          <li>• All session history and streaks</li>
+                          <li>• All daily tasks and plans</li>
+                          <li>• All AI coach data</li>
+                        </ul>
+                        <p className="text-[11px] text-red-400/60 mt-2">
+                          Your account (email & password) will be preserved. You'll start fresh from onboarding.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] text-white/30 block mb-1">Enter your password to confirm</label>
+                      <input
+                        type="password"
+                        value={resetPassword}
+                        onChange={(e) => { setResetPassword(e.target.value); setResetError(''); }}
+                        placeholder="Your password"
+                        className="w-full h-9 rounded-lg border border-red-500/20 bg-white/5 px-3 text-sm text-white placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-red-500/30"
+                      />
+                      {resetError && (
+                        <p className="text-[10px] text-red-400 mt-1">{resetError}</p>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => { setShowResetConfirm(false); setResetPassword(''); setResetError(''); }}
+                        className="flex-1 px-3 py-2 rounded-lg text-xs text-white/40 hover:text-white/60 hover:bg-white/5 transition-all"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleResetAccount}
+                        disabled={!resetPassword || resetLoading}
+                        className="flex-1 px-3 py-2 rounded-lg text-xs text-white font-medium bg-red-500/80 hover:bg-red-500 transition-all disabled:opacity-40"
+                      >
+                        {resetLoading ? 'Resetting...' : 'Reset Everything'}
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
