@@ -173,6 +173,7 @@ export interface DailyTask {
   pomodoros_done: number;     // how many completed
   date: string;               // YYYY-MM-DD
   tag?: TaskTagId;            // effort category
+  goal_id?: string;           // link to long-term goal
   created_at: string;
   completed_at?: string;
   order: number;              // for sorting/reordering

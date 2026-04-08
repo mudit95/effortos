@@ -56,6 +56,10 @@ export interface PlanMyDayRequest {
   context: CoachContext;
   targetDate: string; // YYYY-MM-DD
   existingTasks: TaskSummary[];
+  intake?: {
+    hoursAvailable: number;
+    priorities: string;
+  };
 }
 
 export interface SessionDebriefRequest {
@@ -95,14 +99,26 @@ Formatting rules:
 - Numbers and metrics should be specific ("12 sessions in 5 days" not "several sessions").`;
 
 export function buildPlanMyDayPrompt(req: PlanMyDayRequest): { system: string; user: string } {
-  const { context, targetDate, existingTasks } = req;
+  const { context, targetDate, existingTasks, intake } = req;
   const activeGoals = context.goals.filter(g => g.status === 'active');
   const focusMin = Math.round(context.focusDuration / 60);
+  const focusSeconds = context.focusDuration;
 
+  // Calculate max pomodoros from intake hours if provided
+  const maxPomodoros = intake?.hoursAvailable
+    ? Math.floor((intake.hoursAvailable * 60) / focusMin)
+    : null;
+
+  // Build goals block with IDs for AI reference and deadline proximity
   const goalsBlock = activeGoals.map(g => {
     const remaining = Math.max(0, g.sessionsEstimated - g.sessionsCompleted);
     const pct = g.sessionsEstimated > 0 ? Math.round((g.sessionsCompleted / g.sessionsEstimated) * 100) : 0;
-    return `- "${g.title}" (${pct}% done, ${remaining} sessions left, ${g.difficulty} difficulty${g.deadline ? `, deadline: ${g.deadline}` : ''})`;
+    let deadlineInfo = '';
+    if (g.deadline) {
+      const daysUntil = Math.ceil((new Date(g.deadline).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+      deadlineInfo = ` deadline in ${daysUntil} days`;
+    }
+    return `- ID: ${g.id} | "${g.title}" (${pct}% done, ${remaining} sessions left, ${g.difficulty} difficulty${deadlineInfo})`;
   }).join('\n');
 
   const recentBlock = context.recentSessions.slice(0, 10).map(s =>
@@ -113,32 +129,50 @@ export function buildPlanMyDayPrompt(req: PlanMyDayRequest): { system: string; u
     ? existingTasks.map(t => `  - "${t.title}" (${t.pomodorosTarget} pomodoros${t.tag ? `, ${t.tag}` : ''}${t.repeating ? ', repeating' : ''})`).join('\n')
     : '  None yet';
 
+  const intakeBlock = intake
+    ? `Available time: ${intake.hoursAvailable} hours (max ~${maxPomodoros} pomodoros)
+
+Must-do priorities:
+${intake.priorities}`
+    : '';
+
   return {
     system: `${COACH_PERSONA}
 
 You are helping plan the user's day. Suggest a realistic set of tasks with pomodoro targets.
 
-Rules:
+Rules for task suggestion:
 - Each pomodoro is ${focusMin} minutes of focused work
-- Most people can do 4-8 pomodoros in a productive day
-- Consider their availability, active goals, and recent patterns
-- If they already have tasks, suggest additions/adjustments, don't replace everything
-- Include a mix of goal-driven work and maintenance/admin if relevant
-- Be specific about task titles — "Write auth middleware" not "Work on project"
+${maxPomodoros ? `- Max capacity today: ${maxPomodoros} pomodoros (${intake?.hoursAvailable} hours available)` : '- Typical day: 4-8 pomodoros'}
+- If intake priorities are provided, schedule those FIRST with realistic pomodoro allocations
+- After must-do tasks, fill remaining capacity with work on active long-term goals
+- For goal-linked tasks, use the exact goal ID from the context (e.g., "goal_abc123")
+- Include descriptive task titles referencing the goal (e.g., "React: Build a form component" not just "Work on React")
+- If a goal deadline is within 7 days, it should appear in deadlineWarnings
+- Order tasks intelligently: high-priority first, then goal work by deadline proximity, then lighter tasks
+- Consider their recent patterns and confidence scores
 
-Return a JSON object with this structure:
+Return a JSON object with this structure (must include all fields):
 {
   "greeting": "Short personalized greeting (1 sentence)",
   "suggestedTasks": [
-    { "title": "specific task name", "pomodoros": 1-4, "tag": "startup|job|learning|personal|health|creative", "reason": "brief reason" }
+    {
+      "title": "specific task name",
+      "pomodoros": 1-4,
+      "tag": "startup|job|learning|personal|health|creative",
+      "reason": "brief reason why this task",
+      "goal_id": "exact-goal-id-or-null",
+      "isGoalWork": true-or-false
+    }
   ],
   "totalPomodoros": number,
   "estimatedHours": number,
-  "insight": "One sentence about their recent pattern or suggestion"
+  "insight": "One sentence about their pattern or motivational nudge",
+  "deadlineWarnings": ["array of warnings for goals with deadlines within 7 days"]
 }`,
     user: `Plan ${targetDate === new Date().toISOString().split('T')[0] ? 'today' : targetDate} for ${context.userName}.
-
-Active goals:
+${intakeBlock ? `\n${intakeBlock}\n` : '\n'}
+Active goals (use goal IDs for task linking):
 ${goalsBlock || '  No active goals'}
 
 Recent sessions (last 10):

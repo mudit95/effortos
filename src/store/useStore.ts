@@ -107,6 +107,7 @@ interface AppState {
   reportGoalId: string | null;
 
   // AI Coach
+  showAIPlanWizard: boolean;
   coachPlan: PlanMyDayResponse | null;
   coachPlanLoading: boolean;
   coachDebrief: SessionDebriefResponse | null;
@@ -159,8 +160,8 @@ interface AppState {
 
   // Daily Grind actions
   setDashboardMode: (mode: DashboardMode) => void;
-  addDailyTask: (title: string, pomodorosTarget?: number, repeating?: boolean, tag?: TaskTagId) => void;
-  addDailyTaskForDate: (title: string, date: string, pomodorosTarget?: number, repeating?: boolean, tag?: TaskTagId) => void;
+  addDailyTask: (title: string, pomodorosTarget?: number, repeating?: boolean, tag?: TaskTagId, goalId?: string) => void;
+  addDailyTaskForDate: (title: string, date: string, pomodorosTarget?: number, repeating?: boolean, tag?: TaskTagId, goalId?: string) => void;
   toggleTaskComplete: (taskId: string) => void;
   deleteDailyTask: (taskId: string) => void;
   setActiveDailyTask: (taskId: string | null) => void;
@@ -182,7 +183,8 @@ interface AppState {
   openGoalReport: (goalId: string) => void;
 
   // AI Coach actions
-  requestPlanMyDay: () => void;
+  setShowAIPlanWizard: (show: boolean) => void;
+  requestPlanMyDay: (intake?: { hoursAvailable: number; priorities: string }) => void;
   requestSessionDebrief: (sessionNumber: number, totalForGoal: number, taskTitle?: string, notes?: string) => void;
   requestWeeklyInsight: (weekSessions: Session[], previousWeekCount: number) => void;
   dismissCoachPlan: () => void;
@@ -238,6 +240,7 @@ export const useStore = create<AppState>((set, get) => ({
   subscriptionLoading: true,
   showPaywall: false,
   reportGoalId: null,
+  showAIPlanWizard: false,
   coachPlan: null,
   coachPlanLoading: false,
   coachDebrief: null,
@@ -925,6 +928,14 @@ export const useStore = create<AppState>((set, get) => ({
           completed: updatedTask.completed,
         }));
       }
+
+      // If this daily task is linked to a long-term goal, increment that goal's progress too
+      if (taskIndex >= 0) {
+        const completedTask = get().dailyTasks.find(t => t.id === activeDailyTaskId);
+        if (completedTask?.goal_id && completedTask.goal_id !== activeGoal?.id) {
+          get().updateGoalProgress(completedTask.goal_id);
+        }
+      }
     }
 
     // Play pomodoro complete sound
@@ -1114,7 +1125,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({ dashboardMode: mode });
   },
 
-  addDailyTask: (title, pomodorosTarget = 1, repeating = false, tag) => {
+  addDailyTask: (title, pomodorosTarget = 1, repeating = false, tag, goalId) => {
     const todayKey = new Date().toISOString().split('T')[0];
     const now = new Date().toISOString();
 
@@ -1128,6 +1139,7 @@ export const useStore = create<AppState>((set, get) => ({
       completed: false,
       repeating: repeating || false,
       tag: tag || undefined,
+      goal_id: goalId || undefined,
       created_at: now,
       order: get().dailyTasks.length,
     };
@@ -1142,7 +1154,7 @@ export const useStore = create<AppState>((set, get) => ({
     cloudSync(() => api.createDailyTask(title, pomodorosTarget, repeating, tag));
   },
 
-  addDailyTaskForDate: (title, date, pomodorosTarget = 1, repeating = false, tag) => {
+  addDailyTaskForDate: (title, date, pomodorosTarget = 1, repeating = false, tag, goalId) => {
     const now = new Date().toISOString();
 
     // Build task object in memory
@@ -1155,6 +1167,7 @@ export const useStore = create<AppState>((set, get) => ({
       completed: false,
       repeating: repeating || false,
       tag: tag || undefined,
+      goal_id: goalId || undefined,
       created_at: now,
       order: get().dailyTasks.length,
     };
@@ -1421,7 +1434,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   // ─── AI Coach Actions ───────────────────────────────────────────
 
-  requestPlanMyDay: async () => {
+  requestPlanMyDay: async (intake) => {
     const { user, goals, dailyTasks, dailyViewDate } = get();
     if (!user) return;
     set({ coachPlanLoading: true, coachPlan: null });
@@ -1442,6 +1455,7 @@ export const useStore = create<AppState>((set, get) => ({
         context,
         targetDate: dailyViewDate,
         existingTasks: taskSummaries,
+        intake: intake || undefined,
       });
       set({ coachPlan: plan, coachPlanLoading: false });
     } catch (err) {
@@ -1576,6 +1590,7 @@ export const useStore = create<AppState>((set, get) => ({
   setShowManualSession: (show) => set({ showManualSession: show }),
   setShowEditGoal: (show) => set({ showEditGoal: show }),
   setShowExitConfirm: (show) => set({ showExitConfirm: show }),
+  setShowAIPlanWizard: (show) => set({ showAIPlanWizard: show }),
   setRemoteTimerInfo: (info) => set({ remoteTimerInfo: info }),
 
   requestNotificationPermission: () => {

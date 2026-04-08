@@ -18,6 +18,7 @@ import { CoachPlanPanel } from './CoachPlanPanel';
 import { CoachDebriefCard } from './CoachDebriefCard';
 import { MotivationMessage } from './MotivationMessage';
 import { GoalProgressBar } from './GoalProgressBar';
+import { AIPlanWizard } from './AIPlanWizard';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
@@ -382,6 +383,8 @@ export function DailyGrind() {
     coachPlanLoading,
     activeGoal,
     dashboardStats,
+    goals,
+    setShowAIPlanWizard,
   } = useStore();
 
   const {
@@ -588,11 +591,11 @@ export function DailyGrind() {
           <div className="mt-2 flex items-center gap-4">
             {/* AI Plan My Day button */}
             <button
-              onClick={() => requestPlanMyDay()}
+              onClick={() => setShowAIPlanWizard(true)}
               disabled={coachPlanLoading}
-              className="flex items-center gap-1.5 text-xs text-cyan-400/40 hover:text-cyan-400/80 transition-colors disabled:opacity-40"
+              className="relative flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/20 hover:border-cyan-500/40 text-cyan-400 text-sm font-medium transition-all hover:shadow-[0_0_20px_rgba(34,211,238,0.15)] disabled:opacity-40"
             >
-              <Sparkles className="w-3.5 h-3.5" />
+              <Sparkles className="w-4 h-4" />
               {coachPlanLoading ? 'Planning...' : 'AI Plan My Day'}
             </button>
 
@@ -613,6 +616,7 @@ export function DailyGrind() {
         </motion.div>
 
         {/* ── AI Coach Panels ── */}
+        <AIPlanWizard />
         <CoachPlanPanel />
         <CoachDebriefCard />
 
@@ -660,6 +664,7 @@ export function DailyGrind() {
                 onStart={() => handleStartPomodoro(task.id)}
                 onExtend={() => updateDailyTaskDetails(task.id, { pomodoros_target: task.pomodoros_target + 1 })}
                 timerBusy={isTimerActive}
+                goals={goals}
               />
             ))}
           </AnimatePresence>
@@ -808,6 +813,7 @@ export function DailyGrind() {
                   onExtend={() => {}}
                   timerBusy={false}
                   completed
+                  goals={goals}
                 />
               ))}
             </div>
@@ -972,6 +978,7 @@ function TaskRow({
   onExtend,
   timerBusy,
   completed = false,
+  goals = [],
 }: {
   task: DailyTask;
   isActive: boolean;
@@ -982,8 +989,10 @@ function TaskRow({
   onExtend: () => void;
   timerBusy: boolean;
   completed?: boolean;
+  goals?: any[];
 }) {
   const tagInfo = getTagInfo(task.tag as TaskTagId);
+  const linkedGoal = task.goal_id ? goals.find(g => g.id === task.goal_id) : null;
 
   return (
     <motion.div
@@ -997,7 +1006,7 @@ function TaskRow({
           : completed
             ? 'border border-transparent opacity-40'
             : 'hover:bg-white/[0.02] border border-transparent'
-      }`}
+      } ${task.goal_id ? 'border-l-2 border-l-violet-500/50' : ''}`}
     >
       {/* Play / Checkbox area */}
       {!completed && isToday ? (
@@ -1036,6 +1045,11 @@ function TaskRow({
           </p>
           {task.repeating && !completed && (
             <Repeat className="w-2.5 h-2.5 text-white/15 flex-shrink-0" />
+          )}
+          {linkedGoal && !completed && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-400/80 flex-shrink-0 whitespace-nowrap truncate max-w-[100px]">
+              {linkedGoal.title}
+            </span>
           )}
         </div>
         <div className="flex items-center gap-2 mt-1">

@@ -15,10 +15,13 @@ export interface PlanMyDayResponse {
     pomodoros: number;
     tag: string;
     reason: string;
+    goal_id?: string;
+    isGoalWork?: boolean;
   }[];
   totalPomodoros: number;
   estimatedHours: number;
   insight: string;
+  deadlineWarnings?: string[];
 }
 
 export interface SessionDebriefResponse {
