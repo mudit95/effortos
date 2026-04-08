@@ -33,19 +33,25 @@ export function AppShell() {
     const theme = getStoredTheme();
     applyTheme(theme);
 
-    // Listen for Supabase auth state changes (sign-in, sign-out, token refresh)
-    const supabase = createClient();
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event: string) => {
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          initializeApp();
+    // Listen for Supabase auth state changes (sign-in, token refresh)
+    let subscription: { unsubscribe: () => void } | null = null;
+    try {
+      const supabase = createClient();
+      const { data } = supabase.auth.onAuthStateChange(
+        (event: string) => {
+          if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+            initializeApp();
+          }
+          // SIGNED_OUT is handled by the logout() action — no need to re-initialize
         }
-        // SIGNED_OUT is handled by the logout() action — no need to re-initialize
-      }
-    );
+      );
+      subscription = data.subscription;
+    } catch (err) {
+      console.warn('Supabase auth listener setup failed:', err);
+    }
 
     return () => {
-      subscription.unsubscribe();
+      subscription?.unsubscribe();
     };
   }, [initializeApp]);
 

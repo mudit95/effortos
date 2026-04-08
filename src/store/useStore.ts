@@ -249,6 +249,12 @@ export const useStore = create<AppState>((set, get) => ({
   currentView: 'landing',
 
   initializeApp: async () => {
+    // If user explicitly logged out (currentView === 'landing' and not loading), skip re-init
+    const currentState = get();
+    if (currentState.currentView === 'landing' && !currentState.isLoading && !currentState.isAuthenticated) {
+      return;
+    }
+
     let isCloud = false;
 
     try {
@@ -450,25 +456,38 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   logout: async () => {
-    // Sign out of Supabase if connected
-    if (isSupabaseConfigured()) try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
-    } catch {
-      // Continue with local logout even if Supabase fails
-    }
-    storage.clearAllData();
+    // Reset state FIRST to show landing page immediately
     set({
       user: null,
       isAuthenticated: false,
       activeGoal: null,
       goals: [],
+      dailyTasks: [],
+      repeatingTemplates: [],
       timerState: 'idle',
       timeRemaining: 25 * 60,
       currentSessionId: null,
       dashboardStats: null,
+      isBreak: false,
+      showFeedback: false,
+      feedbackGoalId: null,
+      showSessionNotes: false,
+      showCelebration: false,
+      coachPlan: null,
+      coachDebrief: null,
+      coachWeekly: null,
       currentView: 'landing',
+      isLoading: false,
     });
+
+    // Then clear storage and sign out in background
+    try { storage.clearAllData(); } catch {}
+    if (isSupabaseConfigured()) try {
+      const supabase = createClient();
+      await supabase.auth.signOut();
+    } catch {
+      // Continue even if Supabase signOut fails
+    }
   },
 
   setOnboardingStep: (step) => set({ onboardingStep: step }),
