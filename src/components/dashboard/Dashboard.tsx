@@ -253,56 +253,57 @@ function LongTermView({
         </button>
       </motion.div>
 
-      {/* Compact goal header — one row */}
-      <motion.div {...fadeUp()} className="flex items-center justify-between mb-3">
-        <div className="min-w-0 flex-1">
-          <p className="text-[10px] text-white/25 uppercase tracking-wider">Current Goal</p>
-          <h1 className="text-base sm:text-lg font-semibold text-white truncate">{activeGoal.title}</h1>
+      {/* Two-column layout: Goal info (left) + Timer (right) — no scroll needed */}
+      <motion.div {...fadeUp()} className="flex flex-col md:flex-row gap-4 md:gap-8 mb-6">
+        {/* Left column — Goal details */}
+        <div className="flex-1 min-w-0">
+          {/* Goal header */}
+          <div className="flex items-center justify-between mb-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] text-white/25 uppercase tracking-wider">Current Goal</p>
+              <h1 className="text-base sm:text-lg font-semibold text-white truncate">{activeGoal.title}</h1>
+            </div>
+            <div className="flex items-center gap-1 shrink-0 ml-2">
+              <Button variant="ghost" size="icon" onClick={() => setShowEditGoal(true)} className="w-7 h-7" aria-label="Edit goal">
+                <Edit3 className="w-3 h-3" />
+              </Button>
+              <Button variant="ghost" size="icon" onClick={() => setShowManualSession(true)} className="w-7 h-7" aria-label="Log manual session">
+                <PlusCircle className="w-3 h-3" />
+              </Button>
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <div className="mb-2">
+            <GoalProgressBar
+              sessionsCompleted={activeGoal.sessions_completed}
+              sessionsTotal={activeGoal.estimated_sessions_current}
+              milestones={activeGoal.milestones}
+              onClick={() => useStore.getState().openGoalReport(activeGoal.id)}
+            />
+          </div>
+
+          {/* Stats line */}
+          {dashboardStats && (
+            <p className="text-xs text-white/30">
+              {dashboardStats.sessions_done}/{activeGoal.estimated_sessions_current} sessions &middot; {dashboardStats.total_hours}h invested &middot; {dashboardStats.current_streak} day streak
+            </p>
+          )}
         </div>
-        <div className="flex items-center gap-1 shrink-0 ml-2">
-          <Button variant="ghost" size="icon" onClick={() => setShowEditGoal(true)} className="w-7 h-7" aria-label="Edit goal">
-            <Edit3 className="w-3 h-3" />
-          </Button>
-          <Button variant="ghost" size="icon" onClick={() => setShowManualSession(true)} className="w-7 h-7" aria-label="Log manual session">
-            <PlusCircle className="w-3 h-3" />
-          </Button>
-        </div>
-      </motion.div>
 
-      {/* Progress bar with milestones — clickable to reports */}
-      <motion.div {...fadeUp(0.05)} className="mb-2">
-        <GoalProgressBar
-          sessionsCompleted={activeGoal.sessions_completed}
-          sessionsTotal={activeGoal.estimated_sessions_current}
-          milestones={activeGoal.milestones}
-          onClick={() => useStore.getState().openGoalReport(activeGoal.id)}
-        />
-      </motion.div>
-
-      {/* Stats line */}
-      {dashboardStats && (
-        <motion.div {...fadeUp(0.08)} className="mb-6">
-          <p className="text-xs text-white/30">
-            {dashboardStats.sessions_done}/{activeGoal.estimated_sessions_current} sessions &middot; {dashboardStats.total_hours}h invested &middot; {dashboardStats.current_streak} day streak
-          </p>
-        </motion.div>
-      )}
-
-      {/* Timer + Controls area — visible without scrolling */}
-      <motion.div {...fadeUp(0.1)} className="flex flex-col items-center mb-6">
-        <div className="w-full flex justify-center transform scale-100 sm:scale-110 origin-center">
+        {/* Right column — Timer + controls */}
+        <div className="flex flex-col items-center justify-center shrink-0">
           <TimerDisplay onEnterFocus={() => setView('focus')} />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setView('focus')}
+            className="mt-3 gap-1 text-xs text-white/30 hover:text-white/60"
+          >
+            Enter Focus Mode
+            <ChevronRight className="w-3 h-3" />
+          </Button>
         </div>
-
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setView('focus')}
-          className="mt-4 gap-1 text-xs text-white/30 hover:text-white/60"
-        >
-          Enter Focus Mode
-          <ChevronRight className="w-3 h-3" />
-        </Button>
       </motion.div>
 
       {/* Below the fold — AI content and confidence banner */}
