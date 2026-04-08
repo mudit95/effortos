@@ -6,6 +6,8 @@ import { useStore } from '@/store/useStore';
 import { Button } from '@/components/ui/button';
 import { EffortRing } from './EffortRing';
 import { MilestoneTracker } from './MilestoneTracker';
+import { GoalProgressBar } from './GoalProgressBar';
+import { MotivationMessage } from './MotivationMessage';
 import { FeedbackModal } from './FeedbackModal';
 import { SessionNotesModal } from './SessionNotesModal';
 import { CelebrationScreen } from './CelebrationScreen';
@@ -17,6 +19,7 @@ import { ModeToggle } from './ModeToggle';
 import { GoalSelector } from './GoalSelector';
 import { DailyGrind } from './DailyGrind';
 import { Reports } from './Reports';
+import { CoachWeeklyCard } from './CoachWeeklyCard';
 import { TimerDisplay } from '@/components/timer/TimerDisplay';
 import {
   Target, LogOut, Plus,
@@ -268,23 +271,35 @@ function LongTermView({
         </motion.div>
       )}
 
-      {/* Clean centered layout: Ring + Timer + Milestones */}
+      {/* Progress bar with milestones — clickable to reports */}
+      <motion.div {...fadeUp(0.1)} className="mb-6">
+        <GoalProgressBar
+          sessionsCompleted={activeGoal.sessions_completed}
+          sessionsTotal={activeGoal.estimated_sessions_current}
+          milestones={activeGoal.milestones}
+          onClick={() => useStore.getState().openGoalReport(activeGoal.id)}
+        />
+      </motion.div>
+
+      {/* Clean centered layout: Motivation + Timer */}
       <div className="max-w-xl mx-auto space-y-6">
-        {/* Effort ring + timer */}
+        {/* AI motivation message */}
+        <motion.div {...fadeUp(0.15)}>
+          <MotivationMessage
+            goalTitle={activeGoal.title}
+            sessionsCompleted={activeGoal.sessions_completed}
+            sessionsTotal={activeGoal.estimated_sessions_current}
+            streakDays={dashboardStats?.current_streak ?? 0}
+            userName={useStore.getState().user?.name || 'there'}
+          />
+        </motion.div>
+
+        {/* Large timer */}
         <motion.div
-          {...fadeUp(0.15)}
+          {...fadeUp(0.2)}
           className="flex flex-col items-center"
         >
-          <EffortRing
-            percentage={completionPct}
-            initialEstimate={activeGoal.estimated_sessions_initial}
-            currentEstimate={activeGoal.estimated_sessions_current}
-            sessionsCompleted={activeGoal.sessions_completed}
-            size={240}
-            className="sm:scale-110"
-          />
-
-          <div className="mt-6 sm:mt-8 w-full flex justify-center">
+          <div className="w-full flex justify-center transform scale-110 sm:scale-125 origin-center">
             <TimerDisplay onEnterFocus={() => setView('focus')} />
           </div>
 
@@ -292,19 +307,16 @@ function LongTermView({
             variant="ghost"
             size="sm"
             onClick={() => setView('focus')}
-            className="mt-3 gap-1 text-xs text-white/30 hover:text-white/60"
+            className="mt-5 gap-1 text-xs text-white/30 hover:text-white/60"
           >
             Enter Focus Mode
             <ChevronRight className="w-3 h-3" />
           </Button>
         </motion.div>
 
-        {/* Milestones */}
-        <motion.div {...fadeUp(0.25)}>
-          <MilestoneTracker
-            milestones={activeGoal.milestones}
-            sessionsCompleted={activeGoal.sessions_completed}
-          />
+        {/* Weekly AI Insights */}
+        <motion.div {...fadeUp(0.3)}>
+          <CoachWeeklyCard />
         </motion.div>
       </div>
     </>

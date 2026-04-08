@@ -146,7 +146,7 @@ export interface OnboardingData {
 export interface Toast {
   id: string;
   message: string;
-  type: 'success' | 'info' | 'warning';
+  type: 'success' | 'info' | 'warning' | 'error';
   duration?: number;
 }
 

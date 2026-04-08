@@ -10,10 +10,14 @@ import { TASK_TAGS, type TaskTagId, type DailyTask } from '@/types';
 import {
   Plus, Trash2, Play, Pause, RotateCcw, SkipForward,
   Repeat, ChevronLeft, ChevronRight, Maximize2, Circle,
-  CheckCircle2, Clock, Flame, Tag, PlusCircle, X, Calendar,
+  CheckCircle2, Clock, Flame, Tag, PlusCircle, X, Calendar, Sparkles,
 } from 'lucide-react';
 import * as storage from '@/lib/storage';
 import { PiPButton } from '@/components/timer/PiPButton';
+import { CoachPlanPanel } from './CoachPlanPanel';
+import { CoachDebriefCard } from './CoachDebriefCard';
+import { MotivationMessage } from './MotivationMessage';
+import { GoalProgressBar } from './GoalProgressBar';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
@@ -374,6 +378,10 @@ export function DailyGrind() {
     setView,
     addToast,
     refreshDailyTasks,
+    requestPlanMyDay,
+    coachPlanLoading,
+    activeGoal,
+    dashboardStats,
   } = useStore();
 
   const {
@@ -565,17 +573,46 @@ export function DailyGrind() {
             </div>
           )}
 
-          {/* Plan Tomorrow button */}
-          {isToday && (
+          {/* Plan buttons row */}
+          <div className="mt-2 flex items-center gap-4">
+            {/* AI Plan My Day button */}
             <button
-              onClick={goToTomorrow}
-              className="mt-2 flex items-center gap-1.5 text-xs text-white/20 hover:text-[var(--accent,#22d3ee)]/60 transition-colors"
+              onClick={() => requestPlanMyDay()}
+              disabled={coachPlanLoading}
+              className="flex items-center gap-1.5 text-xs text-cyan-400/40 hover:text-cyan-400/80 transition-colors disabled:opacity-40"
             >
-              <Calendar className="w-3.5 h-3.5" />
-              Plan Tomorrow
+              <Sparkles className="w-3.5 h-3.5" />
+              {coachPlanLoading ? 'Planning...' : 'AI Plan My Day'}
             </button>
-          )}
+
+            {/* Plan Tomorrow button */}
+            {isToday && (
+              <button
+                onClick={goToTomorrow}
+                className="flex items-center gap-1.5 text-xs text-white/20 hover:text-[var(--accent,#22d3ee)]/60 transition-colors"
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                Plan Tomorrow
+              </button>
+            )}
+          </div>
         </motion.div>
+
+        {/* ── AI Coach Panels ── */}
+        <CoachPlanPanel />
+        <CoachDebriefCard />
+
+        {/* AI motivation message — shown before timer starts */}
+        {isToday && !isTimerActive && activeGoal && (
+          <MotivationMessage
+            taskTitle={activeTask?.title}
+            goalTitle={activeGoal.title}
+            sessionsCompleted={activeGoal.sessions_completed}
+            sessionsTotal={activeGoal.estimated_sessions_current}
+            streakDays={dashboardStats?.current_streak ?? 0}
+            userName={user?.name || 'there'}
+          />
+        )}
 
         {/* ── LARGE CENTERED TIMER ─── when a pomodoro is active */}
         <AnimatePresence>
@@ -785,6 +822,25 @@ export function DailyGrind() {
 
       {/* Right sidebar: insights */}
       <div className="lg:col-span-4 space-y-4">
+        {/* Goal progress bar — clickable to reports */}
+        {activeGoal && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.05, duration: 0.4, ease }}
+            className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]"
+          >
+            <h3 className="text-[10px] text-white/25 uppercase tracking-widest mb-3">Goal Progress</h3>
+            <p className="text-sm font-medium text-white/70 mb-2 truncate">{activeGoal.title}</p>
+            <GoalProgressBar
+              sessionsCompleted={activeGoal.sessions_completed}
+              sessionsTotal={activeGoal.estimated_sessions_current}
+              milestones={activeGoal.milestones}
+              onClick={() => useStore.getState().openGoalReport(activeGoal.id)}
+            />
+          </motion.div>
+        )}
+
         {/* Today's stats */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}

@@ -3,7 +3,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store/useStore';
-import { CheckCircle2, Info, AlertTriangle, X } from 'lucide-react';
+import { CheckCircle2, Info, AlertTriangle, AlertCircle, X } from 'lucide-react';
 
 export function ToastContainer() {
   const toasts = useStore(s => s.toasts);
@@ -13,6 +13,7 @@ export function ToastContainer() {
     success: <CheckCircle2 className="w-4 h-4 text-green-400 flex-shrink-0" />,
     info: <Info className="w-4 h-4 text-cyan-400 flex-shrink-0" />,
     warning: <AlertTriangle className="w-4 h-4 text-yellow-400 flex-shrink-0" />,
+    error: <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />,
   };
 
   return (

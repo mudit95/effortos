@@ -13,6 +13,15 @@ import { playSound } from '@/lib/sounds';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { resetProvider as resetDataLayerProvider, migrateLocalDataToCloud } from '@/lib/dataLayer';
 import * as api from '@/lib/api';
+import {
+  buildCoachContext,
+  fetchPlanMyDay,
+  fetchSessionDebrief,
+  fetchWeeklyInsight,
+  type PlanMyDayResponse,
+  type SessionDebriefResponse,
+  type WeeklyInsightResponse,
+} from '@/lib/coachClient';
 
 /** Fire-and-forget Supabase write. Logs errors but never blocks. */
 function cloudSync(fn: () => Promise<unknown>): void {
@@ -88,6 +97,17 @@ interface AppState {
   onboardingStep: number;
   onboardingData: Partial<OnboardingData>;
 
+  // Reports deep-link
+  reportGoalId: string | null;
+
+  // AI Coach
+  coachPlan: PlanMyDayResponse | null;
+  coachPlanLoading: boolean;
+  coachDebrief: SessionDebriefResponse | null;
+  coachDebriefLoading: boolean;
+  coachWeekly: WeeklyInsightResponse | null;
+  coachWeeklyLoading: boolean;
+
   // View
   currentView: 'landing' | 'auth' | 'onboarding' | 'dashboard' | 'focus' | 'settings';
 
@@ -143,6 +163,18 @@ interface AppState {
   removeRepeatingTemplate: (templateId: string) => void;
   updateDailyTaskDetails: (taskId: string, updates: Partial<DailyTask>) => void;
 
+  // Reports
+  setReportGoalId: (goalId: string | null) => void;
+  openGoalReport: (goalId: string) => void;
+
+  // AI Coach actions
+  requestPlanMyDay: () => void;
+  requestSessionDebrief: (sessionNumber: number, totalForGoal: number, taskTitle?: string, notes?: string) => void;
+  requestWeeklyInsight: (weekSessions: Session[], previousWeekCount: number) => void;
+  dismissCoachPlan: () => void;
+  dismissCoachDebrief: () => void;
+  dismissCoachWeekly: () => void;
+
   refreshDashboard: () => void;
   setView: (view: AppState['currentView']) => void;
   setShowCelebration: (show: boolean) => void;
@@ -188,6 +220,13 @@ export const useStore = create<AppState>((set, get) => ({
   repeatingTemplates: [],
   activeDailyTaskId: null,
   dailyViewDate: new Date().toISOString().split('T')[0],
+  reportGoalId: null,
+  coachPlan: null,
+  coachPlanLoading: false,
+  coachDebrief: null,
+  coachDebriefLoading: false,
+  coachWeekly: null,
+  coachWeeklyLoading: false,
   onboardingStep: 0,
   onboardingData: {},
   currentView: 'landing',
@@ -763,6 +802,18 @@ export const useStore = create<AppState>((set, get) => ({
     // Send notification
     get().sendNotification('Session complete!', 'Great work. Take a break.');
 
+    // Fire AI session debrief in the background (non-blocking)
+    if (activeGoal) {
+      const taskTitle = activeDailyTaskId
+        ? get().dailyTasks.find(t => t.id === activeDailyTaskId)?.title
+        : undefined;
+      get().requestSessionDebrief(
+        activeGoal.sessions_completed,
+        activeGoal.estimated_sessions_current,
+        taskTitle,
+      );
+    }
+
     // Transition to break
     set({
       timerState: 'break',
@@ -993,6 +1044,110 @@ export const useStore = create<AppState>((set, get) => ({
     set({ dailyTasks: storage.getDailyTasksForDate(get().dailyViewDate) });
     cloudSync(() => api.updateDailyTask(taskId, updates));
   },
+
+  // ─── Reports ──────────────────────────────────────────────────────
+
+  setReportGoalId: (goalId) => set({ reportGoalId: goalId }),
+  openGoalReport: (goalId) => {
+    set({ reportGoalId: goalId, dashboardMode: 'reports' as DashboardMode });
+  },
+
+  // ─── AI Coach Actions ───────────────────────────────────────────
+
+  requestPlanMyDay: async () => {
+    const { user, goals, dailyTasks, dailyViewDate } = get();
+    if (!user) return;
+    set({ coachPlanLoading: true, coachPlan: null });
+    try {
+      const sessions = storage.getSessions();
+      const context = buildCoachContext(user, goals, sessions, dailyTasks);
+      const taskSummaries = dailyTasks.map(t => ({
+        title: t.title,
+        tag: t.tag || undefined,
+        pomodorosTarget: t.pomodoros_target,
+        pomodorosDone: t.pomodoros_done,
+        completed: t.completed,
+        repeating: t.repeating || false,
+      }));
+      const plan = await fetchPlanMyDay({
+        context,
+        targetDate: dailyViewDate,
+        existingTasks: taskSummaries,
+      });
+      set({ coachPlan: plan, coachPlanLoading: false });
+    } catch (err) {
+      console.error('Plan My Day failed:', err);
+      set({ coachPlanLoading: false });
+      get().addToast('AI Coach is unavailable right now. Try again later.', 'error');
+    }
+  },
+
+  requestSessionDebrief: async (sessionNumber, totalForGoal, taskTitle, notes) => {
+    const { user, goals, dailyTasks, activeGoal } = get();
+    if (!user || !activeGoal) return;
+    set({ coachDebriefLoading: true, coachDebrief: null });
+    try {
+      const sessions = storage.getSessions();
+      const context = buildCoachContext(user, goals, sessions, dailyTasks);
+      const focusDuration = user.settings?.focus_duration || 25 * 60;
+      const debrief = await fetchSessionDebrief({
+        context,
+        justCompleted: {
+          goalTitle: activeGoal.title,
+          taskTitle,
+          duration: focusDuration,
+          sessionNumber,
+          totalForGoal,
+          notes,
+        },
+      });
+      set({ coachDebrief: debrief, coachDebriefLoading: false });
+    } catch (err) {
+      console.error('Session Debrief failed:', err);
+      set({ coachDebriefLoading: false });
+    }
+  },
+
+  requestWeeklyInsight: async (weekSessions, previousWeekCount) => {
+    const { user, goals, dailyTasks } = get();
+    if (!user) return;
+    set({ coachWeeklyLoading: true, coachWeekly: null });
+    try {
+      const sessions = storage.getSessions();
+      const context = buildCoachContext(user, goals, sessions, dailyTasks);
+      const weekSessionSummaries = weekSessions
+        .filter(s => s.status === 'completed')
+        .map(s => ({
+          date: (s.end_time || s.start_time).split('T')[0],
+          duration: s.duration || (user.settings?.focus_duration || 25 * 60),
+          goalTitle: goals.find(g => g.id === s.goal_id)?.title,
+          notes: s.notes || undefined,
+        }));
+      const weekTaskSummaries = dailyTasks.map(t => ({
+        title: t.title,
+        tag: t.tag || undefined,
+        pomodorosTarget: t.pomodoros_target,
+        pomodorosDone: t.pomodoros_done,
+        completed: t.completed,
+        repeating: t.repeating || false,
+      }));
+      const insight = await fetchWeeklyInsight({
+        context,
+        weekSessions: weekSessionSummaries,
+        weekTasks: weekTaskSummaries,
+        previousWeekSessions: previousWeekCount,
+      });
+      set({ coachWeekly: insight, coachWeeklyLoading: false });
+    } catch (err) {
+      console.error('Weekly Insight failed:', err);
+      set({ coachWeeklyLoading: false });
+      get().addToast('Weekly insights unavailable right now.', 'error');
+    }
+  },
+
+  dismissCoachPlan: () => set({ coachPlan: null }),
+  dismissCoachDebrief: () => set({ coachDebrief: null }),
+  dismissCoachWeekly: () => set({ coachWeekly: null }),
 
   refreshDashboard: () => {
     const { activeGoal } = get();

@@ -203,9 +203,17 @@ function BarChart({
 }
 
 /* ── Main Reports Component ────────────────────────────────────────── */
+import { GoalDetailReport } from './GoalDetailReport';
+
 export function Reports() {
   const user = useStore(s => s.user);
+  const reportGoalId = useStore(s => s.reportGoalId);
   const focusDuration = user?.settings?.focus_duration || 25 * 60;
+
+  // Show goal detail report when a specific goal is selected
+  if (reportGoalId) {
+    return <GoalDetailReport />;
+  }
 
   const [period, setPeriod] = useState<ReportPeriod>('daily');
   const [offset, setOffset] = useState(0); // 0 = current, -1 = previous, etc.

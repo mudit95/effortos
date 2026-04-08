@@ -56,18 +56,119 @@ function AnimatedCounter({ target, suffix = '', duration = 2 }: { target: number
   return <>{display.toLocaleString()}{suffix}</>;
 }
 
-function FloatingOrb({ delay, size, x, y, color }: { delay: number; size: number; x: string; y: string; color: string }) {
+/* ── Floating background elements ──────────────────────────────────── */
+
+const FLOATING_LABELS = [
+  { text: 'Coding', color: 'rgba(34,211,238,0.18)', border: 'rgba(34,211,238,0.06)', x: '4%', y: '8%', dur: 7, delay: 0 },
+  { text: 'Writing', color: 'rgba(59,130,246,0.18)', border: 'rgba(59,130,246,0.06)', x: '82%', y: '14%', dur: 8.5, delay: 0.8 },
+  { text: 'Fitness', color: 'rgba(34,197,94,0.18)', border: 'rgba(34,197,94,0.06)', x: '6%', y: '62%', dur: 9, delay: 1.5 },
+  { text: 'Music', color: 'rgba(168,85,247,0.18)', border: 'rgba(168,85,247,0.06)', x: '78%', y: '72%', dur: 7.5, delay: 2 },
+  { text: 'Design', color: 'rgba(234,179,8,0.18)', border: 'rgba(234,179,8,0.06)', x: '68%', y: '35%', dur: 10, delay: 3 },
+  { text: 'Learning', color: 'rgba(239,68,68,0.18)', border: 'rgba(239,68,68,0.06)', x: '2%', y: '38%', dur: 8, delay: 0.5 },
+  { text: 'Reading', color: 'rgba(34,211,238,0.14)', border: 'rgba(34,211,238,0.05)', x: '35%', y: '82%', dur: 9.5, delay: 4 },
+  { text: 'Research', color: 'rgba(168,85,247,0.14)', border: 'rgba(168,85,247,0.05)', x: '52%', y: '5%', dur: 8.5, delay: 1.2 },
+  { text: 'Practice', color: 'rgba(34,197,94,0.14)', border: 'rgba(34,197,94,0.05)', x: '88%', y: '48%', dur: 7.8, delay: 2.5 },
+  { text: 'Startup', color: 'rgba(239,68,68,0.14)', border: 'rgba(239,68,68,0.05)', x: '42%', y: '55%', dur: 9.2, delay: 3.5 },
+];
+
+// Icon SVG paths (outline style)
+const ICON_PATHS = [
+  // Book
+  'M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253',
+  // Lightbulb
+  'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
+  // Code
+  'M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4',
+  // Music
+  'M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3',
+  // Heart
+  'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z',
+  // Globe
+  'M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+];
+
+const FLOATING_ICONS = [
+  { path: 0, x: '15%', y: '18%', size: 28, dur: 12, delay: 0.5 },
+  { path: 1, x: '75%', y: '25%', size: 26, dur: 14, delay: 1.5 },
+  { path: 2, x: '60%', y: '65%', size: 24, dur: 11, delay: 3 },
+  { path: 3, x: '22%', y: '78%', size: 26, dur: 13, delay: 2 },
+  { path: 4, x: '85%', y: '58%', size: 24, dur: 10, delay: 4 },
+  { path: 5, x: '48%', y: '12%', size: 22, dur: 15, delay: 1 },
+  { path: 2, x: '10%', y: '48%', size: 20, dur: 12.5, delay: 3.5 },
+  { path: 0, x: '92%', y: '82%', size: 22, dur: 11.5, delay: 2.5 },
+];
+
+function FloatingBackground() {
   return (
-    <motion.div
-      className="absolute rounded-full pointer-events-none"
-      style={{ width: size, height: size, left: x, top: y, background: color, filter: 'blur(60px)' }}
-      animate={{
-        y: [0, -30, 0, 30, 0],
-        x: [0, 15, 0, -15, 0],
-        opacity: [0.3, 0.6, 0.3],
-      }}
-      transition={{ duration: 8, delay, repeat: Infinity, ease: 'easeInOut' }}
-    />
+    <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+      {/* Subtle grid */}
+      <div
+        className="absolute inset-0 opacity-[0.015]"
+        style={{
+          backgroundImage:
+            'linear-gradient(rgba(255,255,255,1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,1) 1px, transparent 1px)',
+          backgroundSize: '60px 60px',
+        }}
+      />
+
+      {/* Floating word bubbles — small text to not compete with headline */}
+      {FLOATING_LABELS.map((label) => (
+        <motion.span
+          key={label.text}
+          className="absolute text-[9px] font-semibold tracking-[0.12em] uppercase px-2.5 py-1 rounded-full select-none"
+          style={{
+            left: label.x,
+            top: label.y,
+            color: label.color,
+            border: `1px solid ${label.border}`,
+            background: `${label.border}33`,
+          }}
+          animate={{
+            y: [0, -10, 0, 10, 0],
+            x: [0, 5, 0, -5, 0],
+          }}
+          transition={{
+            duration: label.dur,
+            delay: label.delay,
+            repeat: Infinity,
+            ease: 'easeInOut',
+          }}
+        >
+          {label.text}
+        </motion.span>
+      ))}
+
+      {/* Floating icon outlines */}
+      {FLOATING_ICONS.map((icon, i) => (
+        <motion.svg
+          key={i}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="rgba(255,255,255,0.05)"
+          strokeWidth={1.2}
+          className="absolute select-none"
+          style={{
+            left: icon.x,
+            top: icon.y,
+            width: icon.size,
+            height: icon.size,
+          }}
+          animate={{
+            y: [0, -12, 0, 12, 0],
+            x: [0, 6, 0, -6, 0],
+            rotate: [0, 3, 0, -3, 0],
+          }}
+          transition={{
+            duration: icon.dur,
+            delay: icon.delay,
+            repeat: Infinity,
+            ease: 'easeInOut',
+          }}
+        >
+          <path d={ICON_PATHS[icon.path]} />
+        </motion.svg>
+      ))}
+    </div>
   );
 }
 
@@ -84,11 +185,8 @@ export function LandingPage() {
 
   return (
     <div className="min-h-screen flex flex-col relative overflow-hidden">
-      {/* Ambient background orbs */}
-      <FloatingOrb delay={0} size={300} x="10%" y="20%" color="rgba(6,182,212,0.06)" />
-      <FloatingOrb delay={2} size={200} x="70%" y="10%" color="rgba(59,130,246,0.05)" />
-      <FloatingOrb delay={4} size={250} x="80%" y="60%" color="rgba(6,182,212,0.04)" />
-      <FloatingOrb delay={1} size={180} x="20%" y="70%" color="rgba(139,92,246,0.04)" />
+      {/* Floating background: word bubbles + icon outlines */}
+      <FloatingBackground />
 
       {/* Hero */}
       <div className="flex-1 flex items-center justify-center px-4 py-16 sm:py-20 relative z-10">
