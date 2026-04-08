@@ -4,13 +4,13 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
+import { Goal } from '@/types';
 import {
   X, Trophy, Pause, Play, Target, Clock, Trash2,
   Edit3, CheckCircle2, AlertCircle, Calendar, Flame,
   ChevronDown, ChevronUp, BarChart3, Check,
 } from 'lucide-react';
 import { sessionsToHours, formatDate } from '@/lib/utils';
-import * as storage from '@/lib/storage';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
@@ -39,7 +39,7 @@ function GoalCard({
   isSelected,
   onToggleSelect,
 }: {
-  goal: ReturnType<typeof storage.getGoals>[0];
+  goal: Goal;
   isActiveGoal: boolean;
   onSwitch: () => void;
   onPause: () => void;

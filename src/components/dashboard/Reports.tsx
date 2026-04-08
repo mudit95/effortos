@@ -1,10 +1,12 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store/useStore';
 import * as storage from '@/lib/storage';
+import * as api from '@/lib/api';
 import { sessionsToHours, formatDate } from '@/lib/utils';
+import { Session } from '@/types';
 import { TASK_TAGS, type TaskTagId, type DailyTask } from '@/types';
 import {
   BarChart3, Calendar, Clock, Flame, Target,
@@ -86,8 +88,8 @@ interface DayReport {
   tagBreakdown: Record<string, { label: string; color: string; count: number }>;
 }
 
-function aggregateDay(date: string, focusDuration: number): DayReport {
-  const tasks = storage.getDailyTasksForDate(date);
+function aggregateDay(date: string, focusDuration: number, tasksByDate: Record<string, DailyTask[]>): DayReport {
+  const tasks = tasksByDate[date] || [];
   const totalPomodoros = tasks.reduce((sum, t) => sum + t.pomodoros_target, 0);
   const completedPomodoros = tasks.reduce((sum, t) => sum + t.pomodoros_done, 0);
   const tasksCompleted = tasks.filter(t => t.completed).length;
@@ -119,8 +121,8 @@ interface PeriodReport {
   tasksSummary: { title: string; tag?: string; pomodoros: number; completed: boolean }[];
 }
 
-function aggregatePeriod(dates: string[], focusDuration: number): PeriodReport {
-  const days = dates.map(d => aggregateDay(d, focusDuration));
+function aggregatePeriod(dates: string[], focusDuration: number, tasksByDate: Record<string, DailyTask[]>): PeriodReport {
+  const days = dates.map(d => aggregateDay(d, focusDuration, tasksByDate));
   const totalPomodoros = days.reduce((s, d) => s + d.totalPomodoros, 0);
   const completedPomodoros = days.reduce((s, d) => s + d.completedPomodoros, 0);
   const totalTasks = days.reduce((s, d) => s + d.totalTasks, 0);
@@ -208,6 +210,7 @@ import { GoalDetailReport } from './GoalDetailReport';
 export function Reports() {
   const user = useStore(s => s.user);
   const reportGoalId = useStore(s => s.reportGoalId);
+  const dailyTasks = useStore(s => s.dailyTasks);
   const focusDuration = user?.settings?.focus_duration || 25 * 60;
 
   const [period, setPeriod] = useState<ReportPeriod>('daily');
@@ -244,7 +247,33 @@ export function Reports() {
     }
   }, [period, offset]);
 
-  const report = useMemo(() => aggregatePeriod(dateRange, focusDuration), [dateRange, focusDuration]);
+  // Fetch tasks for all dates in range from API (cloud-first)
+  const [tasksByDate, setTasksByDate] = useState<Record<string, DailyTask[]>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const todayKey = new Date().toISOString().split('T')[0];
+    async function fetchTasks() {
+      const result: Record<string, DailyTask[]> = {};
+      // For today, use store's dailyTasks
+      if (dateRange.includes(todayKey)) {
+        result[todayKey] = dailyTasks;
+      }
+      // Fetch other dates from API, fall back to localStorage
+      const otherDates = dateRange.filter(d => d !== todayKey);
+      await Promise.all(otherDates.map(async (date) => {
+        try {
+          result[date] = await api.getDailyTasksForDate(date);
+        } catch {
+          result[date] = storage.getDailyTasksForDate(date);
+        }
+      }));
+      if (!cancelled) setTasksByDate(result);
+    }
+    fetchTasks();
+    return () => { cancelled = true; };
+  }, [dateRange, dailyTasks]);
+
+  const report = useMemo(() => aggregatePeriod(dateRange, focusDuration, tasksByDate), [dateRange, focusDuration, tasksByDate]);
 
   const focusHours = Math.floor(report.totalFocusMinutes / 60);
   const focusMins = Math.round(report.totalFocusMinutes % 60);

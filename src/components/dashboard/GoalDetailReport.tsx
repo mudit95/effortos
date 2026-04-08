@@ -1,15 +1,15 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useStore } from '@/store/useStore';
-import * as storage from '@/lib/storage';
+import * as api from '@/lib/api';
 import { sessionsToHours, getStreaks } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { GoalProgressBar } from './GoalProgressBar';
 import {
   ArrowLeft, Clock, Flame, Target, TrendingUp,
-  Calendar, BarChart3, CheckCircle2,
+  Calendar, BarChart3, CheckCircle2, Loader,
 } from 'lucide-react';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
@@ -36,11 +36,38 @@ export function GoalDetailReport() {
   const goal = goals.find(g => g.id === reportGoalId);
   const focusDuration = user?.settings?.focus_duration || 25 * 60;
 
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [dailySessions, setDailySessions] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // Load sessions from API when goal changes
+  useEffect(() => {
+    if (!goal) {
+      setSessions([]);
+      setDailySessions([]);
+      return;
+    }
+
+    setLoading(true);
+    Promise.all([
+      api.getSessions(goal.id).then(s => s.filter(x => x.status === 'completed')),
+      api.getDailySessions(goal.id),
+    ])
+      .then(([s, ds]) => {
+        setSessions(s);
+        setDailySessions(ds);
+      })
+      .catch(err => {
+        console.error('Failed to load sessions:', err);
+        setSessions([]);
+        setDailySessions([]);
+      })
+      .finally(() => setLoading(false));
+  }, [goal?.id]);
+
   const stats = useMemo(() => {
     if (!goal) return null;
 
-    const sessions = storage.getSessions(goal.id).filter(s => s.status === 'completed');
-    const dailySessions = storage.getDailySessions(goal.id);
     const streaks = getStreaks(dailySessions);
 
     // Time spent today
@@ -127,9 +154,36 @@ export function GoalDetailReport() {
       estimationLabel,
       estimationDiff,
     };
-  }, [goal, focusDuration]);
+  }, [sessions, dailySessions, goal, focusDuration]);
 
-  if (!goal || !stats) return null;
+  if (!goal) return null;
+
+  // Show loading state while fetching sessions
+  if (loading) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease }}
+        className="space-y-5"
+      >
+        <div className="flex items-center gap-3 mb-5">
+          <button
+            onClick={() => setReportGoalId(null)}
+            className="text-white/30 hover:text-white/60 transition-colors p-1"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <h2 className="text-xl font-semibold text-white">Goal Report</h2>
+        </div>
+        <div className="flex items-center justify-center py-12">
+          <Loader className="w-6 h-6 text-white/40 animate-spin" />
+        </div>
+      </motion.div>
+    );
+  }
+
+  if (!stats) return null;
 
   const maxChartVal = Math.max(...stats.last7Days.map(d => d.value), 1);
 

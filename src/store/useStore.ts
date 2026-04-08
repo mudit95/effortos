@@ -4,8 +4,8 @@ import { create } from 'zustand';
 import {
   User, Goal, Session, TimerState, OnboardingData,
   DashboardStats, RecalibrationResult, Toast, UserSettings, DEFAULT_SETTINGS,
-  DashboardMode, DailyTask, RepeatingTaskTemplate, TaskTagId,
-  SubscriptionStatus, SubscriptionInfo,
+  DashboardMode, DailyTask, DailySession, RepeatingTaskTemplate, TaskTagId,
+  SubscriptionStatus, SubscriptionInfo, FeedbackEntry,
 } from '@/types';
 import * as storage from '@/lib/storage';
 import { estimateEffort, recalibrate, shouldTriggerFeedback, calculateTimeBias } from '@/lib/estimation';
@@ -288,13 +288,12 @@ export const useStore = create<AppState>((set, get) => ({
           // Also save to localStorage for offline/fast access
           storage.setUser(supaUser);
 
-          // Check if there's local data from demo mode to migrate
-          const localGoals = storage.getGoals();
-          if (localGoals.length > 0) {
-            migrateLocalDataToCloud().catch(() => {});
-          }
-
           // ── Cloud path: load data from Supabase ──
+          // Clear localStorage goals cache — cloud is the source of truth.
+          // This prevents stale cached goals from being mistaken for demo-mode
+          // data that needs migration on every reload.
+          try { localStorage.removeItem('effortos_goals'); } catch { /* ok */ }
+
           const cloudGoals = await api.getGoals();
           const cloudActiveGoal = cloudGoals.find(g => g.status === 'active') || null;
           const focusDuration = supaUser.settings?.focus_duration || 25 * 60;
@@ -536,7 +535,7 @@ export const useStore = create<AppState>((set, get) => ({
 
     const timeBias = calculateTimeBias(data.userTimeEstimate, estimation.estimated_sessions);
 
-    const goal = storage.createGoal({
+    const goalData = {
       user_id: user.id,
       title: data.goalTitle,
       estimated_sessions_initial: estimation.estimated_sessions,
@@ -553,41 +552,41 @@ export const useStore = create<AppState>((set, get) => ({
       recommended_sessions_per_day: estimation.recommended_sessions_per_day,
       estimated_days: estimation.estimated_days,
       milestones: estimation.milestones,
-      status: 'active',
-    });
+      status: 'active' as const,
+    };
 
-    const goals = storage.getGoals();
-    set({ goals, activeGoal: goal });
+    // Store-first: build goal object, update Zustand directly
+    const goal: Goal = {
+      ...goalData,
+      id: generateId(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
 
-    // Write-through: create goal in Supabase
-    cloudSync(() => api.createGoal({
-      user_id: user.id,
-      title: data.goalTitle,
-      estimated_sessions_initial: estimation.estimated_sessions,
-      estimated_sessions_current: estimation.estimated_sessions,
-      sessions_completed: 0,
-      user_time_bias: timeBias,
-      feedback_bias_log: [],
-      experience_level: data.experienceLevel,
-      daily_availability: data.dailyAvailability,
-      deadline: data.deadline,
-      consistency_level: data.consistencyLevel,
-      confidence_score: estimation.confidence_score,
-      difficulty: estimation.difficulty,
-      recommended_sessions_per_day: estimation.recommended_sessions_per_day,
-      estimated_days: estimation.estimated_days,
-      milestones: estimation.milestones,
-      status: 'active',
-    }));
+    const updatedGoals = [...get().goals, goal];
+    set({ goals: updatedGoals, activeGoal: goal });
+
+    // Sync to localStorage (offline cache) and cloud
+    // Note: we push the exact goal object (with our generated ID) to avoid ID mismatch
+    try {
+      const lsGoals = storage.getGoals();
+      lsGoals.push(goal);
+      localStorage.setItem('effortos_goals', JSON.stringify(lsGoals));
+    } catch { /* localStorage may be unavailable */ }
+    cloudSync(() => api.createGoal(goalData));
 
     return goal;
   },
 
   updateGoalDetails: (goalId, title, description) => {
-    storage.updateGoal(goalId, { title, description });
-    const goal = storage.getGoalById(goalId);
-    set({ activeGoal: goal, goals: storage.getGoals(), showEditGoal: false });
+    // Store-first: update in Zustand directly
+    const updatedGoals = get().goals.map(g =>
+      g.id === goalId ? { ...g, title, description, updated_at: new Date().toISOString() } : g
+    );
+    const updatedGoal = updatedGoals.find(g => g.id === goalId) || get().activeGoal;
+    set({ activeGoal: updatedGoal, goals: updatedGoals, showEditGoal: false });
     get().addToast('Goal updated', 'success');
+    storage.updateGoal(goalId, { title, description });
     cloudSync(() => api.updateGoal(goalId, { title, description }));
   },
 
@@ -653,20 +652,24 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   updateGoalProgress: (goalId) => {
-    const goal = get().goals.find(g => g.id === goalId) || storage.getGoalById(goalId);
+    // Read from store only (source of truth)
+    const goal = get().goals.find(g => g.id === goalId);
     if (!goal) return;
 
     const newCompleted = goal.sessions_completed + 1;
-    const updates: Partial<Goal> = { sessions_completed: newCompleted };
+    const now = new Date().toISOString();
+
+    // Apply updates in memory
+    let updatedGoal = { ...goal, sessions_completed: newCompleted };
 
     // Check milestones
-    const updatedMilestones = goal.milestones.map(m => {
+    const updatedMilestones = updatedGoal.milestones.map(m => {
       if (!m.completed && newCompleted >= m.session_target) {
-        return { ...m, completed: true, completed_at: new Date().toISOString() };
+        return { ...m, completed: true, completed_at: now };
       }
       return m;
     });
-    updates.milestones = updatedMilestones;
+    updatedGoal.milestones = updatedMilestones;
 
     // Check milestone just completed for toast
     const justCompleted = updatedMilestones.find(
@@ -677,25 +680,21 @@ export const useStore = create<AppState>((set, get) => ({
     }
 
     // Check if goal is complete
-    if (newCompleted >= goal.estimated_sessions_current) {
-      updates.status = 'completed';
-      updates.completed_at = new Date().toISOString();
+    if (newCompleted >= updatedGoal.estimated_sessions_current) {
+      updatedGoal.status = 'completed';
+      updatedGoal.completed_at = now;
     }
 
-    const updated = storage.updateGoal(goalId, updates);
-    if (!updated) return;
+    updatedGoal.updated_at = now;
 
-    // Recalibrate
-    const recalResult = recalibrate(updated);
-    const prevEstimate = updated.estimated_sessions_current;
-    const newEstimate = updated.sessions_completed + recalResult.remaining_sessions;
-
-    storage.updateGoal(goalId, {
-      estimated_sessions_current: newEstimate,
-    });
+    // Recalibrate on the updated goal
+    const recalResult = recalibrate(updatedGoal);
+    const prevEstimate = updatedGoal.estimated_sessions_current;
+    const newEstimate = updatedGoal.sessions_completed + recalResult.remaining_sessions;
+    updatedGoal.estimated_sessions_current = newEstimate;
 
     // Show recalibration toast if estimate changed meaningfully
-    if (Math.abs(newEstimate - prevEstimate) >= 2 && updated.sessions_completed >= 5) {
+    if (Math.abs(newEstimate - prevEstimate) >= 2 && updatedGoal.sessions_completed >= 5) {
       get().addToast(
         `Estimate adjusted: ${prevEstimate} → ${newEstimate} sessions`,
         'info'
@@ -703,36 +702,64 @@ export const useStore = create<AppState>((set, get) => ({
     }
 
     // Check if feedback should be triggered
-    const needsFeedback = shouldTriggerFeedback(updated);
+    const needsFeedback = shouldTriggerFeedback(updatedGoal);
+    const isNowComplete = updatedGoal.status === 'completed';
 
-    const refreshedGoal = storage.getGoalById(goalId) || get().goals.find(g => g.id === goalId);
-
-    // Show celebration if completed
-    const isNowComplete = refreshedGoal?.status === 'completed';
-
-    // Update store goals with refreshed data
-    const storeGoals = get().goals.map(g => g.id === goalId && refreshedGoal ? refreshedGoal : g);
+    // Update store directly
+    const updatedGoals = get().goals.map(g => g.id === goalId ? updatedGoal : g);
     set({
-      activeGoal: refreshedGoal || null,
-      goals: storeGoals,
+      activeGoal: updatedGoal,
+      goals: updatedGoals,
       recalibrationResult: recalResult,
       showFeedback: needsFeedback && !isNowComplete,
       feedbackGoalId: needsFeedback && !isNowComplete ? goalId : null,
       showCelebration: isNowComplete,
     });
 
+    // Sync to localStorage and cloud
+    storage.updateGoal(goalId, {
+      sessions_completed: newCompleted,
+      milestones: updatedMilestones,
+      status: updatedGoal.status,
+      completed_at: updatedGoal.completed_at,
+      estimated_sessions_current: newEstimate,
+      updated_at: now,
+    });
+    cloudSync(() => api.updateGoal(goalId, {
+      sessions_completed: newCompleted,
+      milestones: updatedMilestones,
+      status: updatedGoal.status,
+      completed_at: updatedGoal.completed_at,
+      estimated_sessions_current: newEstimate,
+      updated_at: now,
+    }));
+
     get().refreshDashboard();
   },
 
   completeGoal: (goalId) => {
-    storage.updateGoal(goalId, {
-      status: 'completed',
-      completed_at: new Date().toISOString(),
-    });
+    const now = new Date().toISOString();
+    // Update goal in store directly
+    const updatedGoals = get().goals.map(g =>
+      g.id === goalId
+        ? { ...g, status: 'completed' as const, completed_at: now, updated_at: now }
+        : g
+    );
     set({
-      goals: storage.getGoals(),
+      goals: updatedGoals,
       currentView: 'dashboard',
     });
+    // Sync to localStorage and cloud
+    storage.updateGoal(goalId, {
+      status: 'completed',
+      completed_at: now,
+      updated_at: now,
+    });
+    cloudSync(() => api.updateGoal(goalId, {
+      status: 'completed',
+      completed_at: now,
+      updated_at: now,
+    }));
   },
 
   startTimer: () => {
@@ -831,7 +858,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   completeTimerSession: () => {
-    const { currentSessionId, activeGoal, user, dashboardMode, activeDailyTaskId } = get();
+    const { currentSessionId, activeGoal, user, dashboardMode, activeDailyTaskId, dailyViewDate } = get();
     const focusDuration = user?.settings?.focus_duration || 25 * 60;
     const breakDuration = user?.settings?.break_duration || 5 * 60;
 
@@ -848,15 +875,37 @@ export const useStore = create<AppState>((set, get) => ({
 
     // If in daily grind mode with an active task, increment its pomodoro count
     if (dashboardMode === 'daily' && activeDailyTaskId) {
-      const updated = storage.incrementTaskPomodoro(activeDailyTaskId);
-      if (updated) {
-        set({ dailyTasks: storage.getDailyTasksForDate(get().dailyViewDate) });
-        if (updated.completed) {
-          get().addToast(`"${updated.title}" complete!`, 'success');
+      // Read task from store and mutate in memory
+      const taskIndex = get().dailyTasks.findIndex(t => t.id === activeDailyTaskId);
+      if (taskIndex >= 0) {
+        const task = get().dailyTasks[taskIndex];
+        const newPomodorosDone = (task.pomodoros_done || 0) + 1;
+        const isNowComplete = newPomodorosDone >= task.pomodoros_target;
+        const updatedTask: DailyTask = {
+          ...task,
+          pomodoros_done: newPomodorosDone,
+          completed: isNowComplete,
+        };
+
+        // Update store directly
+        const updatedTasks = [...get().dailyTasks];
+        updatedTasks[taskIndex] = updatedTask;
+        set({ dailyTasks: updatedTasks });
+
+        if (updatedTask.completed) {
+          get().addToast(`"${updatedTask.title}" complete!`, 'success');
         }
+
+        // Sync to localStorage and cloud
+        storage.updateDailyTask(activeDailyTaskId, {
+          pomodoros_done: updatedTask.pomodoros_done,
+          completed: updatedTask.completed,
+        });
+        cloudSync(() => api.updateDailyTask(activeDailyTaskId, {
+          pomodoros_done: updatedTask.pomodoros_done,
+          completed: updatedTask.completed,
+        }));
       }
-      // Write-through: increment daily task pomodoro in Supabase
-      cloudSync(() => api.incrementTaskPomodoro(activeDailyTaskId));
     }
 
     // Play pomodoro complete sound
@@ -928,34 +977,60 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   submitFeedback: (bias) => {
-    const { feedbackGoalId, activeGoal } = get();
+    const { feedbackGoalId } = get();
     if (!feedbackGoalId) return;
 
-    storage.addFeedback(feedbackGoalId, bias);
-    cloudSync(() => api.addFeedback(feedbackGoalId, bias));
+    // Read goal from store only (source of truth)
+    const goal = get().goals.find(g => g.id === feedbackGoalId);
+    if (!goal) return;
 
-    const goal = storage.getGoalById(feedbackGoalId);
-    if (goal) {
-      const result = recalibrate(goal);
-      const prevEstimate = goal.estimated_sessions_current;
-      const newEstimate = goal.sessions_completed + result.remaining_sessions;
-      storage.updateGoal(feedbackGoalId, {
-        estimated_sessions_current: newEstimate,
-      });
+    // Add feedback and recalibrate in memory
+    let updatedGoal = { ...goal };
+    const now = new Date().toISOString();
+    const newFeedbackEntry: FeedbackEntry = {
+      timestamp: now,
+      bias,
+      sessions_at_time: updatedGoal.sessions_completed,
+    };
+    const newFeedbackLog = [...(updatedGoal.feedback_bias_log || []), newFeedbackEntry];
+    updatedGoal.feedback_bias_log = newFeedbackLog;
+    updatedGoal.updated_at = now;
 
-      if (prevEstimate !== newEstimate) {
-        get().addToast(`Estimate updated: ${prevEstimate} → ${newEstimate} sessions`, 'success');
-      } else {
-        get().addToast('Feedback recorded. Estimate unchanged.', 'info');
-      }
+    const result = recalibrate(updatedGoal);
+    const prevEstimate = updatedGoal.estimated_sessions_current;
+    const newEstimate = updatedGoal.sessions_completed + result.remaining_sessions;
+    updatedGoal.estimated_sessions_current = newEstimate;
 
-      set({
-        activeGoal: storage.getGoalById(feedbackGoalId),
-        recalibrationResult: result,
-      });
+    // Update store directly
+    const updatedGoals = get().goals.map(g => g.id === feedbackGoalId ? updatedGoal : g);
+    set({
+      goals: updatedGoals,
+      activeGoal: updatedGoal,
+      recalibrationResult: result,
+      showFeedback: false,
+      feedbackGoalId: null,
+    });
+
+    if (prevEstimate !== newEstimate) {
+      get().addToast(`Estimate updated: ${prevEstimate} → ${newEstimate} sessions`, 'success');
+    } else {
+      get().addToast('Feedback recorded. Estimate unchanged.', 'info');
     }
 
-    set({ showFeedback: false, feedbackGoalId: null });
+    // Sync to localStorage and cloud
+    storage.addFeedback(feedbackGoalId, bias);
+    storage.updateGoal(feedbackGoalId, {
+      feedback_bias_log: newFeedbackLog,
+      estimated_sessions_current: newEstimate,
+      updated_at: now,
+    });
+    cloudSync(() => api.addFeedback(feedbackGoalId, bias));
+    cloudSync(() => api.updateGoal(feedbackGoalId, {
+      feedback_bias_log: newFeedbackLog,
+      estimated_sessions_current: newEstimate,
+      updated_at: now,
+    }));
+
     get().refreshDashboard();
   },
 
@@ -963,11 +1038,13 @@ export const useStore = create<AppState>((set, get) => ({
     set({ showFeedback: false, feedbackGoalId: null });
   },
 
-  submitSessionNotes: (notes) => {
+  submitSessionNotes: async (notes) => {
     // Find the most recent completed session and add notes
     const { activeGoal } = get();
     if (!activeGoal) return;
-    const sessions = storage.getCompletedSessions(activeGoal.id);
+    // Try cloud first, fall back to localStorage
+    let sessions: Session[] = [];
+    try { sessions = await api.getCompletedSessions(activeGoal.id); } catch { sessions = storage.getCompletedSessions(activeGoal.id); }
     const latest = sessions[sessions.length - 1];
     if (latest) {
       storage.updateSession(latest.id, { notes });
@@ -1019,32 +1096,84 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   addDailyTask: (title, pomodorosTarget = 1, repeating = false, tag) => {
-    storage.createDailyTask(title, pomodorosTarget, repeating, tag);
     const todayKey = new Date().toISOString().split('T')[0];
+    const now = new Date().toISOString();
+
+    // Build task object in memory
+    const newTask: DailyTask = {
+      id: generateId(),
+      title,
+      date: todayKey,
+      pomodoros_target: pomodorosTarget,
+      pomodoros_done: 0,
+      completed: false,
+      repeating: repeating || false,
+      tag: tag || undefined,
+      created_at: now,
+      order: get().dailyTasks.length,
+    };
+
+    // Update store directly by appending to current dailyTasks
     set({
-      dailyTasks: storage.getDailyTasksForDate(todayKey),
-      repeatingTemplates: storage.getRepeatingTemplates().filter(t => t.active),
+      dailyTasks: [...get().dailyTasks, newTask],
     });
+
+    // Sync to localStorage and cloud
+    storage.createDailyTask(title, pomodorosTarget, repeating, tag);
     cloudSync(() => api.createDailyTask(title, pomodorosTarget, repeating, tag));
   },
 
   addDailyTaskForDate: (title, date, pomodorosTarget = 1, repeating = false, tag) => {
+    const now = new Date().toISOString();
+
+    // Build task object in memory
+    const newTask: DailyTask = {
+      id: generateId(),
+      title,
+      date,
+      pomodoros_target: pomodorosTarget,
+      pomodoros_done: 0,
+      completed: false,
+      repeating: repeating || false,
+      tag: tag || undefined,
+      created_at: now,
+      order: get().dailyTasks.length,
+    };
+
+    // If the task is for the currently viewed date, append to store
+    // Otherwise, sync to storage/cloud only
+    if (date === get().dailyViewDate) {
+      set({
+        dailyTasks: [...get().dailyTasks, newTask],
+      });
+    }
+
+    // Sync to localStorage and cloud
     storage.createDailyTaskForDate(title, date, pomodorosTarget, repeating, tag);
-    set({
-      dailyTasks: storage.getDailyTasksForDate(get().dailyViewDate),
-      repeatingTemplates: storage.getRepeatingTemplates().filter(t => t.active),
-    });
     cloudSync(() => api.createDailyTaskForDate(title, date, pomodorosTarget, repeating, tag));
   },
 
   toggleTaskComplete: (taskId) => {
-    storage.toggleDailyTaskComplete(taskId);
-    set({ dailyTasks: storage.getDailyTasksForDate(get().dailyViewDate) });
+    // Toggle task directly in store
+    const taskIndex = get().dailyTasks.findIndex(t => t.id === taskId);
+    if (taskIndex < 0) return;
 
-    const task = storage.getAllDailyTasks().find(t => t.id === taskId);
-    if (task?.completed) {
-      get().addToast(`"${task.title}" done!`, 'success');
+    const task = get().dailyTasks[taskIndex];
+    const updatedTask: DailyTask = {
+      ...task,
+      completed: !task.completed,
+    };
+
+    const updatedTasks = [...get().dailyTasks];
+    updatedTasks[taskIndex] = updatedTask;
+    set({ dailyTasks: updatedTasks });
+
+    if (updatedTask.completed) {
+      get().addToast(`"${updatedTask.title}" done!`, 'success');
     }
+
+    // Sync to localStorage and cloud
+    storage.toggleDailyTaskComplete(taskId);
     cloudSync(() => api.toggleDailyTaskComplete(taskId));
   },
 
@@ -1069,14 +1198,33 @@ export const useStore = create<AppState>((set, get) => ({
     const { activeDailyTaskId, user } = get();
     if (!activeDailyTaskId) return;
 
-    const updated = storage.incrementTaskPomodoro(activeDailyTaskId);
-    if (updated) {
-      set({ dailyTasks: storage.getDailyTasksForDate(get().dailyViewDate) });
+    // Increment pomodoro count directly in store
+    const taskIndex = get().dailyTasks.findIndex(t => t.id === activeDailyTaskId);
+    if (taskIndex < 0) return;
 
-      if (updated.completed) {
-        get().addToast(`"${updated.title}" complete!`, 'success');
-      }
+    const task = get().dailyTasks[taskIndex];
+    const newPomodorosDone = (task.pomodoros_done || 0) + 1;
+    const isNowComplete = newPomodorosDone >= task.pomodoros_target;
+
+    const updatedTask: DailyTask = {
+      ...task,
+      pomodoros_done: newPomodorosDone,
+      completed: isNowComplete,
+    };
+
+    const updatedTasks = [...get().dailyTasks];
+    updatedTasks[taskIndex] = updatedTask;
+    set({ dailyTasks: updatedTasks });
+
+    if (isNowComplete) {
+      get().addToast(`"${updatedTask.title}" complete!`, 'success');
     }
+
+    // Sync to localStorage and cloud
+    storage.updateDailyTask(activeDailyTaskId, {
+      pomodoros_done: newPomodorosDone,
+      completed: isNowComplete,
+    });
     cloudSync(() => api.incrementTaskPomodoro(activeDailyTaskId));
 
     // Play pomodoro complete sound
@@ -1088,25 +1236,55 @@ export const useStore = create<AppState>((set, get) => ({
     get().sendNotification('Pomodoro complete!', 'Great work. Take a break.');
   },
 
-  setDailyViewDate: (date) => {
-    const tasks = storage.ensureRepeatingTasksForDate(date);
-    set({ dailyViewDate: date, dailyTasks: tasks });
+  setDailyViewDate: async (date) => {
+    set({ dailyViewDate: date });
+    // Try cloud first, fall back to localStorage
+    try {
+      const tasks = await api.ensureRepeatingTasksForDate(date);
+      set({ dailyTasks: tasks });
+    } catch {
+      const tasks = storage.ensureRepeatingTasksForDate(date);
+      set({ dailyTasks: tasks });
+    }
   },
 
-  refreshDailyTasks: () => {
+  refreshDailyTasks: async () => {
     const { dailyViewDate } = get();
-    set({ dailyTasks: storage.getDailyTasksForDate(dailyViewDate) });
+    try {
+      const tasks = await api.getDailyTasksForDate(dailyViewDate);
+      set({ dailyTasks: tasks });
+    } catch {
+      set({ dailyTasks: storage.getDailyTasksForDate(dailyViewDate) });
+    }
   },
 
   removeRepeatingTemplate: (templateId) => {
+    // Filter directly from store
+    const updatedTemplates = get().repeatingTemplates.filter(t => t.id !== templateId);
+    set({ repeatingTemplates: updatedTemplates });
+
+    // Sync to localStorage and cloud
     storage.removeRepeatingTemplate(templateId);
-    set({ repeatingTemplates: storage.getRepeatingTemplates().filter(t => t.active) });
     cloudSync(() => api.removeRepeatingTemplate(templateId));
   },
 
   updateDailyTaskDetails: (taskId, updates) => {
+    // Update task directly in store
+    const taskIndex = get().dailyTasks.findIndex(t => t.id === taskId);
+    if (taskIndex < 0) return;
+
+    const task = get().dailyTasks[taskIndex];
+    const updatedTask: DailyTask = {
+      ...task,
+      ...updates,
+    };
+
+    const updatedTasks = [...get().dailyTasks];
+    updatedTasks[taskIndex] = updatedTask;
+    set({ dailyTasks: updatedTasks });
+
+    // Sync to localStorage and cloud
     storage.updateDailyTask(taskId, updates);
-    set({ dailyTasks: storage.getDailyTasksForDate(get().dailyViewDate) });
     cloudSync(() => api.updateDailyTask(taskId, updates));
   },
 
@@ -1229,7 +1407,9 @@ export const useStore = create<AppState>((set, get) => ({
     if (!user) return;
     set({ coachPlanLoading: true, coachPlan: null });
     try {
-      const sessions = storage.getSessions();
+      // Try cloud first, fall back to localStorage for session history
+      let sessions: Session[] = [];
+      try { sessions = await api.getSessions(); } catch { sessions = storage.getSessions(); }
       const context = buildCoachContext(user, goals, sessions, dailyTasks);
       const taskSummaries = dailyTasks.map(t => ({
         title: t.title,
@@ -1257,7 +1437,9 @@ export const useStore = create<AppState>((set, get) => ({
     if (!user || !activeGoal) return;
     set({ coachDebriefLoading: true, coachDebrief: null });
     try {
-      const sessions = storage.getSessions();
+      // Try cloud first, fall back to localStorage for session history
+      let sessions: Session[] = [];
+      try { sessions = await api.getSessions(); } catch { sessions = storage.getSessions(); }
       const context = buildCoachContext(user, goals, sessions, dailyTasks);
       const focusDuration = user.settings?.focus_duration || 25 * 60;
       const debrief = await fetchSessionDebrief({
@@ -1283,7 +1465,9 @@ export const useStore = create<AppState>((set, get) => ({
     if (!user) return;
     set({ coachWeeklyLoading: true, coachWeekly: null });
     try {
-      const sessions = storage.getSessions();
+      // Try cloud first, fall back to localStorage for session history
+      let sessions: Session[] = [];
+      try { sessions = await api.getSessions(); } catch { sessions = storage.getSessions(); }
       const context = buildCoachContext(user, goals, sessions, dailyTasks);
       const weekSessionSummaries = weekSessions
         .filter(s => s.status === 'completed')
@@ -1319,14 +1503,16 @@ export const useStore = create<AppState>((set, get) => ({
   dismissCoachDebrief: () => set({ coachDebrief: null }),
   dismissCoachWeekly: () => set({ coachWeekly: null }),
 
-  refreshDashboard: () => {
+  refreshDashboard: async () => {
     const { activeGoal } = get();
     if (!activeGoal) {
       set({ dashboardStats: null });
       return;
     }
 
-    const dailySessions = storage.getDailySessions(activeGoal.id);
+    // Try cloud first, fall back to localStorage
+    let dailySessions: DailySession[] = [];
+    try { dailySessions = await api.getDailySessions(activeGoal.id); } catch { dailySessions = storage.getDailySessions(activeGoal.id); }
     const streaks = getStreaks(dailySessions);
 
     const sessionsRemaining = Math.max(0, activeGoal.estimated_sessions_current - activeGoal.sessions_completed);

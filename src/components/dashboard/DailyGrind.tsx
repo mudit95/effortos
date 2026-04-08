@@ -470,12 +470,19 @@ export function DailyGrind() {
 
   const handleManualPomodoro = (taskId: string | null, count: number) => {
     if (taskId) {
-      for (let i = 0; i < count; i++) {
-        storage.incrementTaskPomodoro(taskId);
-      }
-      refreshDailyTasks();
       const task = dailyTasks.find(t => t.id === taskId);
-      addToast(`Logged ${count} pomodoro${count > 1 ? 's' : ''} for "${task?.title || 'task'}"`, 'success');
+      if (task) {
+        const newPomodorosDone = (task.pomodoros_done || 0) + count;
+        const isNowComplete = newPomodorosDone >= task.pomodoros_target;
+
+        // Update through the store
+        updateDailyTaskDetails(taskId, {
+          pomodoros_done: newPomodorosDone,
+          completed: isNowComplete,
+        });
+
+        addToast(`Logged ${count} pomodoro${count > 1 ? 's' : ''} for "${task.title}"`, 'success');
+      }
     } else {
       // Unassigned — just show toast, counted in daily totals conceptually
       addToast(`Logged ${count} unassigned pomodoro${count > 1 ? 's' : ''}`, 'success');

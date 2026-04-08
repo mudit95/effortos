@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useStore } from '@/store/useStore';
 import { X, Trash2, AlertTriangle } from 'lucide-react';
-import * as storage from '@/lib/storage';
 
 export function EditGoalModal() {
   const showEditGoal = useStore(s => s.showEditGoal);
