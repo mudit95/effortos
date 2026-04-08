@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
+import { HintBanner } from '@/components/ui/HintBanner';
 import { useTimer } from '@/hooks/useTimer';
 import { useStore } from '@/store/useStore';
 import { formatDuration } from '@/lib/utils';
@@ -168,6 +169,13 @@ export function FocusMode() {
       >
         {activeGoal.title}
       </motion.p>
+
+      {/* Hint for focus mode */}
+      <div className="absolute top-20 left-1/2 transform -translate-x-1/2 w-full max-w-xs px-4">
+        <HintBanner id="focus-mode-intro">
+          Press <strong className="text-cyan-400/70">Space</strong> to pause/resume. Press <strong className="text-cyan-400/70">Escape</strong> to exit. Stay focused!
+        </HintBanner>
+      </div>
 
       {/* Giant timer ring — responsive */}
       <div className="relative w-64 h-64 sm:w-80 sm:h-80">

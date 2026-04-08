@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
+import { HintBanner } from '@/components/ui/HintBanner';
 import { useStore } from '@/store/useStore';
 import { Goal } from '@/types';
 import {
@@ -440,6 +441,13 @@ export function GoalHistoryModal() {
                   <span className="ml-1 text-[10px] opacity-50">{counts[f]}</span>
                 </button>
               ))}
+            </div>
+
+            {/* Hint for goal management */}
+            <div className="px-4 pt-3">
+              <HintBanner id="goal-history-intro">
+                Manage all your goals here. Use bulk actions to pause, activate, or remove goals. Goals near their deadline are highlighted.
+              </HintBanner>
             </div>
 
             {/* Goals list */}

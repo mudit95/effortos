@@ -17,6 +17,7 @@ import { EditGoalModal } from './EditGoalModal';
 import { ManualSessionModal } from './ManualSessionModal';
 import { ModeToggle } from './ModeToggle';
 import { GoalSelector } from './GoalSelector';
+import { WelcomeCard } from './WelcomeCard';
 import { DailyGrind } from './DailyGrind';
 import { Reports } from './Reports';
 import { CoachWeeklyCard } from './CoachWeeklyCard';
@@ -238,8 +239,11 @@ function LongTermView({
       {/* Goal list */}
       <GoalSelector />
 
+      {/* Welcome card for first-time users */}
+      <WelcomeCard />
+
       {/* Review all goals button */}
-      <motion.div {...fadeUp()} className="mb-4">
+      <motion.div {...fadeUp()} className="mb-2">
         <button
           onClick={() => setShowGoalHistory(true)}
           className="flex items-center gap-1.5 text-xs text-white/30 hover:text-white/60 transition-colors px-1"
@@ -249,44 +253,24 @@ function LongTermView({
         </button>
       </motion.div>
 
-      {/* Goal title bar */}
-      <motion.div {...fadeUp()} className="flex flex-col items-center mb-6 sm:mb-8">
-        <div className="min-w-0 flex-1 w-full">
-          <p className="text-xs text-white/30 uppercase tracking-wider mb-1 text-center">Current Goal</p>
-          <h1 className="text-xl sm:text-2xl font-bold text-white leading-tight truncate pr-4 text-center">
-            {activeGoal.title}
-          </h1>
-          {dashboardStats && (
-            <p className="text-xs text-white/30 mt-1 text-center">
-              {dashboardStats.sessions_done}/{activeGoal.estimated_sessions_current} sessions &middot; {dashboardStats.total_hours}h invested &middot; {dashboardStats.current_streak} day streak
-            </p>
-          )}
+      {/* Compact goal header — one row */}
+      <motion.div {...fadeUp()} className="flex items-center justify-between mb-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] text-white/25 uppercase tracking-wider">Current Goal</p>
+          <h1 className="text-base sm:text-lg font-semibold text-white truncate">{activeGoal.title}</h1>
         </div>
-        <div className="flex items-center gap-1 mt-2">
-          <Button variant="ghost" size="icon" onClick={() => setShowEditGoal(true)} className="w-8 h-8" aria-label="Edit goal">
-            <Edit3 className="w-3.5 h-3.5" />
+        <div className="flex items-center gap-1 shrink-0 ml-2">
+          <Button variant="ghost" size="icon" onClick={() => setShowEditGoal(true)} className="w-7 h-7" aria-label="Edit goal">
+            <Edit3 className="w-3 h-3" />
           </Button>
-          <Button variant="ghost" size="icon" onClick={() => setShowManualSession(true)} className="w-8 h-8" aria-label="Log manual session">
-            <PlusCircle className="w-3.5 h-3.5" />
+          <Button variant="ghost" size="icon" onClick={() => setShowManualSession(true)} className="w-7 h-7" aria-label="Log manual session">
+            <PlusCircle className="w-3 h-3" />
           </Button>
         </div>
       </motion.div>
 
-      {/* Confidence banner */}
-      {activeGoal.confidence_score < 0.5 && (
-        <motion.div
-          {...fadeUp(0.05)}
-          className="mb-4 flex items-center gap-2 px-4 py-2.5 bg-yellow-500/5 border border-yellow-500/10 rounded-xl"
-        >
-          <Shield className="w-4 h-4 text-yellow-400 flex-shrink-0" />
-          <p className="text-xs text-yellow-400/70">
-            This estimate has low confidence ({Math.round(activeGoal.confidence_score * 100)}%). It will improve as you complete more sessions.
-          </p>
-        </motion.div>
-      )}
-
       {/* Progress bar with milestones — clickable to reports */}
-      <motion.div {...fadeUp(0.1)} className="mb-6">
+      <motion.div {...fadeUp(0.05)} className="mb-2">
         <GoalProgressBar
           sessionsCompleted={activeGoal.sessions_completed}
           sessionsTotal={activeGoal.estimated_sessions_current}
@@ -295,44 +279,59 @@ function LongTermView({
         />
       </motion.div>
 
-      {/* Clean centered layout: Motivation + Timer */}
-      <div className="max-w-xl mx-auto space-y-6">
-        {/* AI motivation message */}
-        <motion.div {...fadeUp(0.15)}>
-          <MotivationMessage
-            goalTitle={activeGoal.title}
-            sessionsCompleted={activeGoal.sessions_completed}
-            sessionsTotal={activeGoal.estimated_sessions_current}
-            streakDays={dashboardStats?.current_streak ?? 0}
-            userName={useStore.getState().user?.name || 'there'}
-          />
+      {/* Stats line */}
+      {dashboardStats && (
+        <motion.div {...fadeUp(0.08)} className="mb-6">
+          <p className="text-xs text-white/30">
+            {dashboardStats.sessions_done}/{activeGoal.estimated_sessions_current} sessions &middot; {dashboardStats.total_hours}h invested &middot; {dashboardStats.current_streak} day streak
+          </p>
         </motion.div>
+      )}
 
-        {/* Large timer */}
-        <motion.div
-          {...fadeUp(0.2)}
-          className="flex flex-col items-center"
+      {/* Timer + Controls area — visible without scrolling */}
+      <motion.div {...fadeUp(0.1)} className="flex flex-col items-center mb-6">
+        <div className="w-full flex justify-center transform scale-100 sm:scale-110 origin-center">
+          <TimerDisplay onEnterFocus={() => setView('focus')} />
+        </div>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setView('focus')}
+          className="mt-4 gap-1 text-xs text-white/30 hover:text-white/60"
         >
-          <div className="w-full flex justify-center transform scale-100 sm:scale-110 origin-center">
-            <TimerDisplay onEnterFocus={() => setView('focus')} />
-          </div>
+          Enter Focus Mode
+          <ChevronRight className="w-3 h-3" />
+        </Button>
+      </motion.div>
 
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setView('focus')}
-            className="mt-8 gap-1 text-xs text-white/30 hover:text-white/60"
-          >
-            Enter Focus Mode
-            <ChevronRight className="w-3 h-3" />
-          </Button>
-        </motion.div>
+      {/* Below the fold — AI content and confidence banner */}
+      <motion.div {...fadeUp(0.15)} className="mt-6">
+        <MotivationMessage
+          goalTitle={activeGoal.title}
+          sessionsCompleted={activeGoal.sessions_completed}
+          sessionsTotal={activeGoal.estimated_sessions_current}
+          streakDays={dashboardStats?.current_streak ?? 0}
+          userName={useStore.getState().user?.name || 'there'}
+        />
+      </motion.div>
 
-        {/* Weekly AI Insights */}
-        <motion.div {...fadeUp(0.3)}>
-          <CoachWeeklyCard />
+      <motion.div {...fadeUp(0.2)} className="mt-4">
+        <CoachWeeklyCard />
+      </motion.div>
+
+      {/* Confidence banner — moved after AI content */}
+      {activeGoal.confidence_score < 0.5 && (
+        <motion.div
+          {...fadeUp(0.25)}
+          className="mt-4 flex items-center gap-2 px-4 py-2.5 bg-yellow-500/5 border border-yellow-500/10 rounded-xl"
+        >
+          <Shield className="w-4 h-4 text-yellow-400 flex-shrink-0" />
+          <p className="text-xs text-yellow-400/70">
+            This estimate has low confidence ({Math.round(activeGoal.confidence_score * 100)}%). It will improve as you complete more sessions.
+          </p>
         </motion.div>
-      </div>
+      )}
     </>
   );
 }

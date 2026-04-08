@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import * as storage from '@/lib/storage';
 import { PiPButton } from '@/components/timer/PiPButton';
+import { HintBanner } from '@/components/ui/HintBanner';
 import { CoachPlanPanel } from './CoachPlanPanel';
 import { CoachDebriefCard } from './CoachDebriefCard';
 import { MotivationMessage } from './MotivationMessage';
@@ -649,6 +650,11 @@ export function DailyGrind() {
             />
           )}
         </AnimatePresence>
+
+        {/* Hint for first-time Daily Grind users */}
+        <HintBanner id="daily-grind-intro">
+          Add tasks and assign pomodoros for your day. Use <strong className="text-cyan-400/70">AI Plan My Day</strong> to let AI build your schedule automatically.
+        </HintBanner>
 
         {/* Task list */}
         <div className="space-y-1">

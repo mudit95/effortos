@@ -8,6 +8,7 @@ import * as api from '@/lib/api';
 import { sessionsToHours, formatDate } from '@/lib/utils';
 import { Session } from '@/types';
 import { TASK_TAGS, type TaskTagId, type DailyTask } from '@/types';
+import { HintBanner } from '@/components/ui/HintBanner';
 import {
   BarChart3, Calendar, Clock, Flame, Target,
   ChevronLeft, ChevronRight, TrendingUp, CheckCircle2,
@@ -313,6 +314,11 @@ export function Reports() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
+      {/* Hint for first-time Reports users */}
+      <HintBanner id="reports-intro">
+        Track your streaks, pace, and patterns here. Switch between daily, weekly, and monthly views.
+      </HintBanner>
+
       {/* Period selector + navigation */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
