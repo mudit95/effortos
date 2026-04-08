@@ -5,7 +5,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useStore } from '@/store/useStore';
-import { X } from 'lucide-react';
+import { X, Trash2, AlertTriangle } from 'lucide-react';
+import * as storage from '@/lib/storage';
 
 export function EditGoalModal() {
   const showEditGoal = useStore(s => s.showEditGoal);
@@ -13,9 +14,12 @@ export function EditGoalModal() {
   const activeGoal = useStore(s => s.activeGoal);
   const updateGoalDetails = useStore(s => s.updateGoalDetails);
   const pauseGoal = useStore(s => s.pauseGoal);
+  const addToast = useStore(s => s.addToast);
 
   const [title, setTitle] = useState(activeGoal?.title || '');
   const [description, setDescription] = useState(activeGoal?.description || '');
+  const [showPauseConfirm, setShowPauseConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   if (!activeGoal) return null;
 
@@ -24,6 +28,8 @@ export function EditGoalModal() {
     if (showEditGoal && activeGoal) {
       setTitle(activeGoal.title);
       setDescription(activeGoal.description || '');
+      setShowPauseConfirm(false);
+      setShowDeleteConfirm(false);
     }
   }, [showEditGoal, activeGoal]);
 
@@ -76,21 +82,84 @@ export function EditGoalModal() {
               <Button
                 variant="glow"
                 className="w-full"
-                disabled={!title.trim() || title.trim().length < 5}
-                onClick={() => updateGoalDetails(activeGoal.id, title.trim(), description.trim() || undefined)}
+                disabled={!title.trim() || title.trim().length < 3}
+                onClick={() => {
+                  updateGoalDetails(activeGoal.id, title.trim(), description.trim() || undefined);
+                  addToast('Goal updated!', 'success');
+                }}
               >
                 Save Changes
               </Button>
-              <Button
-                variant="outline"
-                className="w-full text-yellow-400 border-yellow-400/20 hover:bg-yellow-400/5"
-                onClick={() => {
-                  pauseGoal(activeGoal.id);
-                  setShowEditGoal(false);
-                }}
-              >
-                Pause Goal
-              </Button>
+
+              {/* Pause with confirmation */}
+              {!showPauseConfirm ? (
+                <Button
+                  variant="outline"
+                  className="w-full text-yellow-400 border-yellow-400/20 hover:bg-yellow-400/5"
+                  onClick={() => setShowPauseConfirm(true)}
+                >
+                  Pause Goal
+                </Button>
+              ) : (
+                <div className="p-3 rounded-xl border border-yellow-400/20 bg-yellow-400/5 space-y-2">
+                  <p className="text-xs text-yellow-400/70 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3 h-3" />
+                    Your progress is saved. You can resume anytime.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button variant="ghost" size="sm" className="flex-1 text-xs" onClick={() => setShowPauseConfirm(false)}>
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1 text-xs text-yellow-400 border-yellow-400/20"
+                      onClick={() => {
+                        pauseGoal(activeGoal.id);
+                        setShowEditGoal(false);
+                        addToast('Goal paused. Resume it anytime from your goal list.', 'info');
+                      }}
+                    >
+                      Yes, Pause
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Delete with confirmation */}
+              {!showDeleteConfirm ? (
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="w-full flex items-center justify-center gap-1.5 text-xs text-red-400/40 hover:text-red-400 py-2 transition-colors"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Delete goal
+                </button>
+              ) : (
+                <div className="p-3 rounded-xl border border-red-400/20 bg-red-400/5 space-y-2">
+                  <p className="text-xs text-red-400/70 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3 h-3" />
+                    This will remove the goal and all its data. This can&apos;t be undone.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button variant="ghost" size="sm" className="flex-1 text-xs" onClick={() => setShowDeleteConfirm(false)}>
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1 text-xs text-red-400 border-red-400/20 hover:bg-red-400/10"
+                      onClick={() => {
+                        storage.updateGoal(activeGoal.id, { status: 'abandoned' });
+                        useStore.setState({ goals: storage.getGoals(), activeGoal: null, showEditGoal: false });
+                        addToast('Goal removed', 'info');
+                      }}
+                    >
+                      Yes, Delete
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           </motion.div>
         </motion.div>

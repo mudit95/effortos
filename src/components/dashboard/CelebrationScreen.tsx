@@ -102,16 +102,30 @@ export function CelebrationScreen() {
               transition={{ delay: 0.7 }}
               className="text-3xl font-bold text-white mb-2"
             >
-              Goal Complete!
+              You did it!
             </motion.h1>
 
             <motion.p
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.8 }}
-              className="text-white/50 mb-8"
+              className="text-white/60 mb-2 font-medium"
             >
               {activeGoal.title}
+            </motion.p>
+
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.9 }}
+              className="text-sm text-white/30 mb-8"
+            >
+              {activeGoal.sessions_completed <= activeGoal.estimated_sessions_initial
+                ? `You finished ${activeGoal.estimated_sessions_initial - activeGoal.sessions_completed} sessions ahead of schedule. That's real dedication.`
+                : daysSpent <= 7
+                ? `${daysSpent} days of focused effort. You should be proud.`
+                : `${daysSpent} days of consistent work. That takes serious commitment.`
+              }
             </motion.p>
 
             {/* Stats */}
@@ -139,18 +153,25 @@ export function CelebrationScreen() {
             </motion.div>
 
             {/* Accuracy */}
-            <motion.p
+            <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 1.1 }}
-              className="text-sm text-white/30 mb-8"
+              className="text-center mb-8 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]"
             >
-              Original estimate: {activeGoal.estimated_sessions_initial} sessions &middot;
-              Final: {activeGoal.sessions_completed} sessions
-              {activeGoal.sessions_completed <= activeGoal.estimated_sessions_initial
-                ? ' — Finished early!'
-                : ''}
-            </motion.p>
+              <p className="text-xs text-white/25 uppercase tracking-wider mb-1">Estimation accuracy</p>
+              <p className="text-sm text-white/50">
+                Estimated {activeGoal.estimated_sessions_initial} sessions, took {activeGoal.sessions_completed}
+              </p>
+              <p className="text-xs text-white/30 mt-1">
+                {Math.abs(activeGoal.sessions_completed - activeGoal.estimated_sessions_initial) <= 2
+                  ? 'Almost perfect prediction — your instincts are getting sharper!'
+                  : activeGoal.sessions_completed < activeGoal.estimated_sessions_initial
+                  ? 'Ahead of schedule! Your momentum is building.'
+                  : "It took a bit longer, and that's okay. Each goal teaches you to estimate better."
+                }
+              </p>
+            </motion.div>
 
             {/* Actions */}
             <motion.div

@@ -11,27 +11,27 @@ export function ModeToggle() {
   const setDashboardMode = useStore(s => s.setDashboardMode);
 
   const modes: { id: DashboardMode; label: string; icon: React.ReactNode }[] = [
-    { id: 'daily', label: 'Daily Grind', icon: <ListChecks className="w-3.5 h-3.5" /> },
-    { id: 'longterm', label: 'Long Term', icon: <Target className="w-3.5 h-3.5" /> },
-    { id: 'reports', label: 'Reports', icon: <BarChart3 className="w-3.5 h-3.5" /> },
+    { id: 'daily', label: 'Daily Grind', icon: <ListChecks className="w-4 h-4" /> },
+    { id: 'longterm', label: 'Long Term', icon: <Target className="w-4 h-4" /> },
+    { id: 'reports', label: 'Reports', icon: <BarChart3 className="w-4 h-4" /> },
   ];
 
   return (
-    <div className="inline-flex items-center rounded-xl bg-white/[0.03] border border-white/[0.06] p-0.5">
+    <div className="inline-flex items-center rounded-2xl bg-white/[0.04] border border-white/[0.08] p-1 gap-0.5">
       {modes.map((mode) => (
         <button
           key={mode.id}
           onClick={() => setDashboardMode(mode.id)}
-          className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-xs font-medium transition-colors"
+          className="relative flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium transition-colors"
         >
           {dashboardMode === mode.id && (
             <motion.div
               layoutId="mode-toggle-bg"
-              className="absolute inset-0 rounded-[10px] bg-white/[0.08] border border-white/[0.08]"
+              className="absolute inset-0 rounded-xl bg-white/[0.10] border border-white/[0.10] shadow-sm"
               transition={{ type: 'spring', stiffness: 500, damping: 35 }}
             />
           )}
-          <span className={`relative z-10 flex items-center gap-1.5 ${
+          <span className={`relative z-10 flex items-center gap-2 ${
             dashboardMode === mode.id ? 'text-white' : 'text-white/30 hover:text-white/50'
           }`}>
             {mode.icon}

@@ -933,11 +933,15 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   deleteDailyTask: (taskId) => {
-    storage.deleteDailyTask(taskId);
+    // Filter directly from Zustand state (not localStorage) to avoid
+    // the bug where cloud-loaded tasks aren't in localStorage
+    const newTasks = get().dailyTasks.filter(t => t.id !== taskId);
     set({
-      dailyTasks: storage.getDailyTasksForDate(get().dailyViewDate),
+      dailyTasks: newTasks,
       activeDailyTaskId: get().activeDailyTaskId === taskId ? null : get().activeDailyTaskId,
     });
+    // Also remove from localStorage cache
+    storage.deleteDailyTask(taskId);
     cloudSync(() => api.deleteDailyTask(taskId));
   },
 

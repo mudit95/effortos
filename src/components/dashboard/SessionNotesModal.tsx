@@ -40,7 +40,7 @@ export function SessionNotesModal() {
             <div className="flex items-start justify-between mb-4">
               <div className="flex items-center gap-2">
                 <PenLine className="w-4 h-4 text-cyan-400" />
-                <h3 className="text-base font-semibold text-white">Session complete!</h3>
+                <h3 className="text-base font-semibold text-white">Great session!</h3>
               </div>
               <button
                 onClick={() => { dismissSessionNotes(); setNotes(''); }}
@@ -52,7 +52,7 @@ export function SessionNotesModal() {
             </div>
 
             <p className="text-sm text-white/40 mb-4">
-              What did you accomplish? (optional)
+              Jot down what you worked on — future you will thank you.
             </p>
 
             <textarea

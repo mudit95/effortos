@@ -10,7 +10,7 @@ import { TASK_TAGS, type TaskTagId, type DailyTask } from '@/types';
 import {
   Plus, Trash2, Play, Pause, RotateCcw, SkipForward,
   Repeat, ChevronLeft, ChevronRight, Maximize2, Circle,
-  CheckCircle2, Clock, Flame, Tag, PlusCircle, X,
+  CheckCircle2, Clock, Flame, Tag, PlusCircle, X, Calendar,
 } from 'lucide-react';
 import * as storage from '@/lib/storage';
 import { PiPButton } from '@/components/timer/PiPButton';
@@ -440,6 +440,12 @@ export function DailyGrind() {
 
   const goToToday = () => setDailyViewDate(getTodayKey());
 
+  const goToTomorrow = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    setDailyViewDate(d.toISOString().split('T')[0]);
+  };
+
   const handleStartPomodoro = (taskId: string) => {
     setActiveDailyTask(taskId);
     _startTimer();
@@ -467,6 +473,11 @@ export function DailyGrind() {
   // Timer calculations
   const focusDuration = user?.settings?.focus_duration || 25 * 60;
   const breakDuration = user?.settings?.break_duration || 5 * 60;
+
+  // Total estimated work time (all pomodoros * focus duration)
+  const totalEstMinutes = totalPomodoros * (focusDuration / 60);
+  const totalEstHours = Math.floor(totalEstMinutes / 60);
+  const totalEstMins = Math.round(totalEstMinutes % 60);
   const progress = isBreak
     ? 1 - (timeRemaining / breakDuration)
     : 1 - (timeRemaining / focusDuration);
@@ -532,7 +543,7 @@ export function DailyGrind() {
 
           {/* Progress bar */}
           {totalPomodoros > 0 && (
-            <div className="h-1.5 rounded-full bg-white/[0.04] overflow-hidden">
+            <div className="h-1.5 rounded-full bg-white/[0.04] overflow-hidden mb-2">
               <motion.div
                 className="h-full rounded-full"
                 style={{ backgroundColor: 'var(--accent, #22d3ee)' }}
@@ -540,6 +551,29 @@ export function DailyGrind() {
                 transition={{ duration: 0.5, ease }}
               />
             </div>
+          )}
+
+          {/* Daily totals bar */}
+          {totalPomodoros > 0 && (
+            <div className="flex items-center justify-between text-xs text-white/30">
+              <span>
+                {donePomodoros} of {totalPomodoros} pomodoros done
+              </span>
+              <span>
+                {totalEstHours > 0 ? `${totalEstHours}h ` : ''}{totalEstMins}m total work planned
+              </span>
+            </div>
+          )}
+
+          {/* Plan Tomorrow button */}
+          {isToday && (
+            <button
+              onClick={goToTomorrow}
+              className="mt-2 flex items-center gap-1.5 text-xs text-white/20 hover:text-[var(--accent,#22d3ee)]/60 transition-colors"
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              Plan Tomorrow
+            </button>
           )}
         </motion.div>
 
@@ -573,6 +607,7 @@ export function DailyGrind() {
                 onToggle={() => toggleTaskComplete(task.id)}
                 onDelete={() => deleteDailyTask(task.id)}
                 onStart={() => handleStartPomodoro(task.id)}
+                onExtend={() => updateDailyTaskDetails(task.id, { pomodoros_target: task.pomodoros_target + 1 })}
                 timerBusy={isTimerActive}
               />
             ))}
@@ -719,6 +754,7 @@ export function DailyGrind() {
                   onToggle={() => toggleTaskComplete(task.id)}
                   onDelete={() => deleteDailyTask(task.id)}
                   onStart={() => {}}
+                  onExtend={() => {}}
                   timerBusy={false}
                   completed
                 />
@@ -857,6 +893,7 @@ function TaskRow({
   onToggle,
   onDelete,
   onStart,
+  onExtend,
   timerBusy,
   completed = false,
 }: {
@@ -866,6 +903,7 @@ function TaskRow({
   onToggle: () => void;
   onDelete: () => void;
   onStart: () => void;
+  onExtend: () => void;
   timerBusy: boolean;
   completed?: boolean;
 }) {
@@ -950,6 +988,17 @@ function TaskRow({
           </div>
         </div>
       </div>
+
+      {/* Extend by +1 pomodoro */}
+      {!completed && (
+        <button
+          onClick={onExtend}
+          className="flex-shrink-0 px-1.5 py-1 rounded-lg text-[10px] font-medium text-white/0 group-hover:text-white/20 hover:!text-[var(--accent,#22d3ee)] hover:bg-[var(--accent,#22d3ee)]/10 transition-all"
+          title="Add 1 more pomodoro"
+        >
+          +1
+        </button>
+      )}
 
       {/* Delete (on hover) */}
       {!completed && (

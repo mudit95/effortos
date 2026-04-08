@@ -133,6 +133,8 @@ export interface TimerConfig {
 
 export interface OnboardingData {
   goalTitle: string;
+  motivation?: string;
+  motivationNote?: string;
   experienceLevel: 'beginner' | 'intermediate' | 'advanced';
   dailyAvailability: number;
   deadline?: string;

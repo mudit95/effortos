@@ -16,7 +16,9 @@ export function GoalSelector() {
 
   const [expanded, setExpanded] = useState(false);
 
+  const MAX_GOALS = 5;
   const allGoals = goals.filter(g => g.status === 'active' || g.status === 'paused');
+  const canAddMore = allGoals.length < MAX_GOALS;
 
   // Don't render if only one goal
   if (allGoals.length <= 1) return null;
@@ -92,19 +94,25 @@ export function GoalSelector() {
         })}
 
         {/* New goal button */}
-        <button
-          onClick={() => {
-            useStore.setState({
-              onboardingStep: 0,
-              onboardingData: {},
-              currentView: 'onboarding',
-            });
-          }}
-          className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl border border-dashed border-white/[0.08] text-white/20 hover:text-white/40 hover:border-white/15 transition-all"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span className="text-xs">New</span>
-        </button>
+        {canAddMore ? (
+          <button
+            onClick={() => {
+              useStore.setState({
+                onboardingStep: 0,
+                onboardingData: {},
+                currentView: 'onboarding',
+              });
+            }}
+            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl border border-dashed border-white/[0.08] text-white/20 hover:text-white/40 hover:border-white/15 transition-all"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span className="text-xs">New</span>
+          </button>
+        ) : (
+          <span className="flex-shrink-0 text-[10px] text-white/15 px-2">
+            Max {MAX_GOALS} goals
+          </span>
+        )}
       </div>
 
       {/* Expanded detail view */}

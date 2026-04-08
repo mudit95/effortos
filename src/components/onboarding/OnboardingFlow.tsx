@@ -7,9 +7,9 @@ import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { SelectGroup } from '@/components/ui/select-group';
 import { useStore } from '@/store/useStore';
-import { ArrowRight, ArrowLeft, Target, Brain, Clock, Sparkles } from 'lucide-react';
+import { ArrowRight, ArrowLeft, Target, Brain, Clock, Sparkles, Heart } from 'lucide-react';
 
-const STEP_COUNT = 3;
+const STEP_COUNT = 4;
 
 const slideVariants = {
   enter: (direction: number) => ({
@@ -53,7 +53,7 @@ export function OnboardingFlow() {
       }
       setGoalError('');
     }
-    if (step === 1) {
+    if (step === 2) {
       if (!onboardingData.experienceLevel) {
         updateOnboardingData({ experienceLevel: 'intermediate' });
       }
@@ -79,6 +79,7 @@ export function OnboardingFlow() {
 
   const stepIcons = [
     <Target key="target" className="w-5 h-5" />,
+    <Heart key="heart" className="w-5 h-5" />,
     <Brain key="brain" className="w-5 h-5" />,
     <Clock key="clock" className="w-5 h-5" />,
   ];
@@ -128,12 +129,18 @@ export function OnboardingFlow() {
               />
             )}
             {step === 1 && (
-              <StepContextCalibration
+              <StepWhyMotivation
                 data={onboardingData}
                 onChange={updateOnboardingData}
               />
             )}
             {step === 2 && (
+              <StepContextCalibration
+                data={onboardingData}
+                onChange={updateOnboardingData}
+              />
+            )}
+            {step === 3 && (
               <StepUserPerception
                 data={onboardingData}
                 onChange={updateOnboardingData}
@@ -170,6 +177,58 @@ export function OnboardingFlow() {
             )}
           </Button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Step 1.5: Why — Motivation
+function StepWhyMotivation({ data, onChange }: {
+  data: Partial<import('@/types').OnboardingData>;
+  onChange: (d: Partial<import('@/types').OnboardingData>) => void;
+}) {
+  const motivations = [
+    { value: 'career', label: 'Career Growth', desc: 'Promotion, new job, or skill development' },
+    { value: 'personal', label: 'Personal Project', desc: 'Building something I care about' },
+    { value: 'learning', label: 'Learning', desc: 'Picking up a new skill or knowledge area' },
+    { value: 'health', label: 'Health & Habits', desc: 'Building better routines' },
+    { value: 'creative', label: 'Creative Work', desc: 'Art, writing, music, or design' },
+    { value: 'accountability', label: 'Accountability', desc: "I know what to do, I just don't do it" },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold text-white mb-2">Why does this matter to you?</h2>
+        <p className="text-white/40 text-sm">
+          Understanding your motivation helps us keep you on track when things get tough.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        {motivations.map(m => (
+          <button
+            key={m.value}
+            onClick={() => onChange({ motivation: m.value })}
+            className={`text-left p-3 rounded-xl border transition-all ${
+              data.motivation === m.value
+                ? 'border-cyan-500/30 bg-cyan-500/[0.06] text-white'
+                : 'border-white/[0.06] bg-white/[0.02] text-white/50 hover:text-white/70 hover:bg-white/[0.04]'
+            }`}
+          >
+            <p className="text-sm font-medium">{m.label}</p>
+            <p className="text-[11px] text-white/30 mt-0.5">{m.desc}</p>
+          </button>
+        ))}
+      </div>
+
+      <div>
+        <textarea
+          value={data.motivationNote || ''}
+          onChange={(e) => onChange({ motivationNote: e.target.value })}
+          placeholder="Anything else you want to share? (optional)"
+          className="w-full h-20 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white placeholder:text-white/25 transition-all duration-200 resize-none focus:outline-none focus:ring-2 focus:ring-cyan-500/50 text-sm"
+        />
       </div>
     </div>
   );

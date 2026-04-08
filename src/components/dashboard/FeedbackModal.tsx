@@ -18,11 +18,11 @@ export function FeedbackModal() {
     : 0;
 
   const options = [
-    { value: -2, label: 'Much less', description: '5+ fewer sessions needed', icon: <ChevronDown className="w-5 h-5" /> },
-    { value: -1, label: 'A bit less', description: '1-2 fewer sessions', icon: <ChevronDown className="w-4 h-4" /> },
-    { value: 0, label: 'About right', description: 'Estimate feels accurate', icon: <Minus className="w-4 h-4" /> },
-    { value: 1, label: 'A bit more', description: '1-2 extra sessions', icon: <ChevronUp className="w-4 h-4" /> },
-    { value: 2, label: 'Much more', description: '5+ more sessions needed', icon: <ChevronUp className="w-5 h-5" /> },
+    { value: -2, label: 'Way easier than expected', description: "I'll be done much sooner", icon: <ChevronDown className="w-5 h-5" /> },
+    { value: -1, label: 'Slightly easier', description: 'A session or two less than estimated', icon: <ChevronDown className="w-4 h-4" /> },
+    { value: 0, label: 'Right on track', description: 'The estimate feels spot on', icon: <Minus className="w-4 h-4" /> },
+    { value: 1, label: 'Slightly harder', description: 'Might need a couple more sessions', icon: <ChevronUp className="w-4 h-4" /> },
+    { value: 2, label: 'Much harder than expected', description: "This is going to take a while longer", icon: <ChevronUp className="w-5 h-5" /> },
   ];
 
   return (
@@ -42,7 +42,7 @@ export function FeedbackModal() {
             className="w-full max-w-sm bg-[#131820] border border-white/10 rounded-2xl p-6 shadow-2xl"
           >
             <div className="flex items-start justify-between mb-1">
-              <h3 className="text-lg font-semibold text-white">Quick check-in</h3>
+              <h3 className="text-lg font-semibold text-white">Nice work! Quick check-in</h3>
               <button
                 onClick={dismissFeedback}
                 className="text-white/30 hover:text-white/60 transition-colors p-1"
@@ -55,12 +55,13 @@ export function FeedbackModal() {
             {/* Context */}
             {activeGoal && (
               <p className="text-sm text-cyan-400/60 mb-1">
-                {activeGoal.sessions_completed} sessions completed
+                {activeGoal.sessions_completed} sessions done — you&apos;re making real progress
               </p>
             )}
 
             <p className="text-sm text-white/40 mb-5">
-              We estimate {remaining} more sessions. Does that feel right?
+              We think you have about {remaining} sessions left. How does that feel?
+              <span className="block text-xs text-white/20 mt-1">Your answer helps us give you better estimates over time.</span>
             </p>
 
             <div className="space-y-2 mb-6">

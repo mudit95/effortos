@@ -3,12 +3,8 @@
 import React, { useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store/useStore';
-import { Card, CardTitle, CardValue } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { EffortRing } from './EffortRing';
-import { TrajectoryGraph } from './TrajectoryGraph';
-import { ConsistencyGrid } from './ConsistencyGrid';
-import { ProjectionPanel } from './ProjectionPanel';
 import { MilestoneTracker } from './MilestoneTracker';
 import { FeedbackModal } from './FeedbackModal';
 import { SessionNotesModal } from './SessionNotesModal';
@@ -22,9 +18,8 @@ import { GoalSelector } from './GoalSelector';
 import { DailyGrind } from './DailyGrind';
 import { Reports } from './Reports';
 import { TimerDisplay } from '@/components/timer/TimerDisplay';
-import { sessionsToHours } from '@/lib/utils';
 import {
-  Target, Clock, Flame, TrendingUp, LogOut, Plus,
+  Target, LogOut, Plus,
   Sparkles, Settings, ChevronRight, BookOpen, Edit3,
   PlusCircle, Shield, List
 } from 'lucide-react';
@@ -150,7 +145,7 @@ export function Dashboard() {
               exit={{ opacity: 0, x: 20 }}
               transition={{ duration: 0.25, ease }}
             >
-              {activeGoal && dashboardStats ? (
+              {activeGoal ? (
                 <LongTermView
                   activeGoal={activeGoal}
                   dashboardStats={dashboardStats}
@@ -213,12 +208,14 @@ function LongTermView({
   setShowGoalHistory,
 }: {
   activeGoal: NonNullable<ReturnType<typeof useStore.getState>['activeGoal']>;
-  dashboardStats: NonNullable<ReturnType<typeof useStore.getState>['dashboardStats']>;
+  dashboardStats: ReturnType<typeof useStore.getState>['dashboardStats'];
   setView: (view: 'focus') => void;
   setShowEditGoal: (show: boolean) => void;
   setShowManualSession: (show: boolean) => void;
   setShowGoalHistory: (show: boolean) => void;
 }) {
+  const completionPct = dashboardStats?.completion_percentage ?? 0;
+
   return (
     <>
       {/* Goal list */}
@@ -242,6 +239,11 @@ function LongTermView({
           <h1 className="text-lg sm:text-xl font-bold text-white leading-tight truncate pr-4">
             {activeGoal.title}
           </h1>
+          {dashboardStats && (
+            <p className="text-xs text-white/30 mt-1">
+              {dashboardStats.sessions_done}/{activeGoal.estimated_sessions_current} sessions &middot; {dashboardStats.total_hours}h invested &middot; {dashboardStats.current_streak} day streak
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
           <Button variant="ghost" size="icon" onClick={() => setShowEditGoal(true)} className="w-8 h-8" aria-label="Edit goal">
@@ -266,126 +268,44 @@ function LongTermView({
         </motion.div>
       )}
 
-      {/* Responsive layout: stacked on mobile/tablet, 3-col on desktop */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6">
+      {/* Clean centered layout: Ring + Timer + Milestones */}
+      <div className="max-w-xl mx-auto space-y-6">
+        {/* Effort ring + timer */}
+        <motion.div
+          {...fadeUp(0.15)}
+          className="flex flex-col items-center"
+        >
+          <EffortRing
+            percentage={completionPct}
+            initialEstimate={activeGoal.estimated_sessions_initial}
+            currentEstimate={activeGoal.estimated_sessions_current}
+            sessionsCompleted={activeGoal.sessions_completed}
+            size={240}
+            className="sm:scale-110"
+          />
 
-        {/* LEFT: Stats + Milestones */}
-        <div className="lg:col-span-3 order-2 lg:order-1 space-y-4 sm:space-y-6">
-          <motion.div {...fadeUp(0.1)}>
-            <div className="grid grid-cols-2 lg:grid-cols-1 gap-3">
-              <Card variant="default">
-                <div className="flex items-center gap-2">
-                  <Target className="w-4 h-4 text-cyan-400" />
-                  <CardTitle>Sessions Done</CardTitle>
-                </div>
-                <CardValue>
-                  {dashboardStats.sessions_done}
-                  <span className="text-sm text-white/30 font-normal"> / {activeGoal.estimated_sessions_current}</span>
-                </CardValue>
-                <p className="text-xs text-white/20 mt-1">{dashboardStats.total_hours}h invested</p>
-              </Card>
+          <div className="mt-6 sm:mt-8 w-full flex justify-center">
+            <TimerDisplay onEnterFocus={() => setView('focus')} />
+          </div>
 
-              <Card variant="default">
-                <div className="flex items-center gap-2">
-                  <Flame className="w-4 h-4 text-orange-400" />
-                  <CardTitle>Streak</CardTitle>
-                </div>
-                <CardValue>
-                  {dashboardStats.current_streak}
-                  <span className="text-sm text-white/30 font-normal"> days</span>
-                </CardValue>
-                {dashboardStats.longest_streak > 0 && (
-                  <p className="text-xs text-white/20 mt-1">Best: {dashboardStats.longest_streak} days</p>
-                )}
-              </Card>
-
-              <Card variant="default">
-                <div className="flex items-center gap-2">
-                  <TrendingUp className="w-4 h-4 text-green-400" />
-                  <CardTitle>Confidence</CardTitle>
-                </div>
-                <CardValue>
-                  {Math.round(activeGoal.confidence_score * 100)}
-                  <span className="text-sm text-white/30 font-normal">%</span>
-                </CardValue>
-                <p className="text-xs text-white/20 mt-1">{activeGoal.difficulty} difficulty</p>
-              </Card>
-
-              <Card variant="default" className="lg:hidden">
-                <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-blue-400" />
-                  <CardTitle>Remaining</CardTitle>
-                </div>
-                <CardValue>
-                  {dashboardStats.sessions_remaining}
-                  <span className="text-sm text-white/30 font-normal"> sess</span>
-                </CardValue>
-                <p className="text-xs text-white/20 mt-1">~{sessionsToHours(dashboardStats.sessions_remaining)}h left</p>
-              </Card>
-            </div>
-          </motion.div>
-
-          <motion.div {...fadeUp(0.2)} className="hidden lg:block">
-            <MilestoneTracker
-              milestones={activeGoal.milestones}
-              sessionsCompleted={activeGoal.sessions_completed}
-            />
-          </motion.div>
-        </div>
-
-        {/* CENTER: Timer + Ring */}
-        <div className="lg:col-span-5 order-1 lg:order-2 space-y-4 sm:space-y-6">
-          <motion.div
-            {...fadeUp(0.15)}
-            className="flex flex-col items-center"
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setView('focus')}
+            className="mt-3 gap-1 text-xs text-white/30 hover:text-white/60"
           >
-            <EffortRing
-              percentage={dashboardStats.completion_percentage}
-              initialEstimate={activeGoal.estimated_sessions_initial}
-              currentEstimate={activeGoal.estimated_sessions_current}
-              sessionsCompleted={activeGoal.sessions_completed}
-              size={240}
-              className="sm:scale-110"
-            />
+            Enter Focus Mode
+            <ChevronRight className="w-3 h-3" />
+          </Button>
+        </motion.div>
 
-            <div className="mt-6 sm:mt-8 w-full flex justify-center">
-              <TimerDisplay onEnterFocus={() => setView('focus')} />
-            </div>
-
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setView('focus')}
-              className="mt-3 gap-1 text-xs text-white/30 hover:text-white/60"
-            >
-              Enter Focus Mode
-              <ChevronRight className="w-3 h-3" />
-            </Button>
-          </motion.div>
-        </div>
-
-        {/* RIGHT: Analytics */}
-        <div className="lg:col-span-4 order-3 space-y-4 sm:space-y-6">
-          <motion.div {...fadeUp(0.2)}>
-            <ProjectionPanel goal={activeGoal} stats={dashboardStats} />
-          </motion.div>
-
-          <motion.div {...fadeUp(0.25)}>
-            <TrajectoryGraph goal={activeGoal} />
-          </motion.div>
-
-          <motion.div {...fadeUp(0.3)}>
-            <ConsistencyGrid dailySessions={dashboardStats.daily_sessions} />
-          </motion.div>
-
-          {/* Milestones for mobile */}
-          <motion.div {...fadeUp(0.35)} className="lg:hidden">
-            <MilestoneTracker
-              milestones={activeGoal.milestones}
-              sessionsCompleted={activeGoal.sessions_completed}
-            />
-          </motion.div>
-        </div>
+        {/* Milestones */}
+        <motion.div {...fadeUp(0.25)}>
+          <MilestoneTracker
+            milestones={activeGoal.milestones}
+            sessionsCompleted={activeGoal.sessions_completed}
+          />
+        </motion.div>
       </div>
     </>
   );

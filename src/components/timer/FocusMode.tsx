@@ -148,10 +148,13 @@ export function FocusMode() {
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="absolute top-0 left-0 right-0 bg-green-500/10 border-b border-green-500/20 py-2 text-center"
+            className="absolute top-0 left-0 right-0 bg-green-500/10 border-b border-green-500/20 py-3 text-center"
           >
-            <p className="text-xs text-green-400">
-              Break time — next session starts automatically
+            <p className="text-sm text-green-400 font-medium">
+              You earned this break. Stretch, breathe, recharge.
+            </p>
+            <p className="text-[10px] text-green-400/50 mt-0.5">
+              Next session starts automatically when the timer ends
             </p>
           </motion.div>
         )}
@@ -265,8 +268,14 @@ export function FocusMode() {
 
       {/* Session counter + PiP */}
       <div className="mt-6 sm:mt-8 text-center">
-        <p className="text-xs text-white/15">
+        <p className="text-xs text-white/20">
           Session {activeGoal.sessions_completed + 1} of {activeGoal.estimated_sessions_current}
+          {dashboardStats && dashboardStats.completion_percentage >= 50 && dashboardStats.completion_percentage < 100
+            ? ' — past the halfway mark!'
+            : dashboardStats && dashboardStats.completion_percentage >= 90
+            ? ' — almost there!'
+            : ''
+          }
         </p>
         {dashboardStats && (
           <p className="text-xs text-white/10 mt-1">
@@ -293,9 +302,9 @@ export function FocusMode() {
               exit={{ scale: 0.95, y: 10 }}
               className="bg-[#131820] border border-white/10 rounded-2xl p-6 max-w-xs mx-4 text-center shadow-2xl"
             >
-              <h3 className="text-base font-semibold text-white mb-2">Leave session?</h3>
+              <h3 className="text-base font-semibold text-white mb-2">Step away?</h3>
               <p className="text-sm text-white/40 mb-6">
-                You have {formatDuration(timeRemaining)} remaining. This session will be discarded.
+                You have {formatDuration(timeRemaining)} left in this session. Leaving will discard this session&apos;s progress — consider pausing instead if you plan to come back.
               </p>
               <div className="flex gap-3">
                 <Button
