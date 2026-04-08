@@ -39,9 +39,8 @@ export function AppShell() {
       (event: string) => {
         if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
           initializeApp();
-        } else if (event === 'SIGNED_OUT') {
-          initializeApp();
         }
+        // SIGNED_OUT is handled by the logout() action — no need to re-initialize
       }
     );
 
