@@ -284,12 +284,14 @@ export function GoalHistoryModal() {
   const setShowEditGoal = useStore(s => s.setShowEditGoal);
   const addToast = useStore(s => s.addToast);
 
+  const goals = useStore(s => s.goals);
   const [filter, setFilter] = useState<'all' | 'active' | 'paused' | 'completed'>('all');
 
-  const allGoals = storage.getAllNonAbandonedGoals()
+  const allGoals = goals
+    .filter(g => g.status !== 'abandoned')
     .sort((a, b) => {
       // Active first, then paused, then completed
-      const order = { active: 0, paused: 1, completed: 2, abandoned: 3 };
+      const order: Record<string, number> = { active: 0, paused: 1, completed: 2, abandoned: 3 };
       const diff = (order[a.status] ?? 3) - (order[b.status] ?? 3);
       if (diff !== 0) return diff;
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
@@ -307,11 +309,10 @@ export function GoalHistoryModal() {
   const totalHours = sessionsToHours(totalPomodoros);
   const completedCount = allGoals.filter(g => g.status === 'completed').length;
 
+  const deleteGoal = useStore(s => s.deleteGoal);
   const handleDelete = (goalId: string) => {
-    storage.updateGoal(goalId, { status: 'abandoned' });
+    deleteGoal(goalId);
     addToast('Goal removed', 'info');
-    // Force re-render
-    useStore.setState({ goals: storage.getGoals() });
   };
 
   return (

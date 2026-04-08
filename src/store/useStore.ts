@@ -129,6 +129,7 @@ interface AppState {
 
   createNewGoal: (data: OnboardingData) => Goal;
   updateGoalDetails: (goalId: string, title: string, description?: string) => void;
+  deleteGoal: (goalId: string) => void;
   pauseGoal: (goalId: string) => void;
   resumeGoal: (goalId: string) => void;
   switchToGoal: (goalId: string) => void;
@@ -250,6 +251,7 @@ export const useStore = create<AppState>((set, get) => ({
   initializeApp: async () => {
     let isCloud = false;
 
+    try {
     // Check Supabase session first (only if configured)
     if (isSupabaseConfigured()) try {
       const supabase = createClient();
@@ -408,6 +410,11 @@ export const useStore = create<AppState>((set, get) => ({
     } else {
       set({ isLoading: false, currentView: 'landing' });
     }
+    } catch (fatalErr) {
+      // Global safety net — if anything in init crashes, show landing page
+      console.error('App initialization failed:', fatalErr);
+      set({ isLoading: false, currentView: 'landing', user: null, isAuthenticated: false });
+    }
   },
 
   login: (name: string, email: string) => {
@@ -477,7 +484,14 @@ export const useStore = create<AppState>((set, get) => ({
     const { onboardingData, user } = get();
     if (!user || !onboardingData.goalTitle) return;
 
-    const goal = get().createNewGoal(onboardingData as OnboardingData);
+    let goal: Goal;
+    try {
+      goal = get().createNewGoal(onboardingData as OnboardingData);
+    } catch {
+      // Max goals reached — go back to dashboard
+      set({ currentView: 'dashboard', onboardingStep: 0, onboardingData: {} });
+      return;
+    }
     storage.updateUser({ onboarding_completed: true });
     // Sync onboarding_completed flag to Supabase
     cloudSync(async () => {
@@ -502,6 +516,14 @@ export const useStore = create<AppState>((set, get) => ({
   createNewGoal: (data: OnboardingData) => {
     const { user } = get();
     if (!user) throw new Error('No user');
+
+    // Enforce 5 active goal limit
+    const currentGoals = get().goals;
+    const activeGoals = currentGoals.filter(g => g.status === 'active' || g.status === 'paused');
+    if (activeGoals.length >= 5) {
+      get().addToast('Maximum 5 active goals allowed. Pause or complete a goal first.', 'warning');
+      throw new Error('Max goals reached');
+    }
 
     const estimation = estimateEffort({
       goal: data.goalTitle,
@@ -567,6 +589,16 @@ export const useStore = create<AppState>((set, get) => ({
     set({ activeGoal: goal, goals: storage.getGoals(), showEditGoal: false });
     get().addToast('Goal updated', 'success');
     cloudSync(() => api.updateGoal(goalId, { title, description }));
+  },
+
+  deleteGoal: (goalId) => {
+    storage.updateGoal(goalId, { status: 'abandoned' });
+    const goals = storage.getGoals();
+    const { activeGoal } = get();
+    const newActive = activeGoal?.id === goalId ? (goals.find(g => g.status === 'active') || null) : activeGoal;
+    set({ goals, activeGoal: newActive });
+    get().refreshDashboard();
+    cloudSync(() => api.updateGoal(goalId, { status: 'abandoned' }));
   },
 
   pauseGoal: (goalId) => {

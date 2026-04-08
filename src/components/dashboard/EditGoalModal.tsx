@@ -150,8 +150,8 @@ export function EditGoalModal() {
                       size="sm"
                       className="flex-1 text-xs text-red-400 border-red-400/20 hover:bg-red-400/10"
                       onClick={() => {
-                        storage.updateGoal(activeGoal.id, { status: 'abandoned' });
-                        useStore.setState({ goals: storage.getGoals(), activeGoal: null, showEditGoal: false });
+                        useStore.getState().deleteGoal(activeGoal.id);
+                        useStore.setState({ showEditGoal: false });
                         addToast('Goal removed', 'info');
                       }}
                     >
