@@ -20,8 +20,6 @@ export function EditGoalModal() {
   const [showPauseConfirm, setShowPauseConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-  if (!activeGoal) return null;
-
   // Sync state when modal opens
   React.useEffect(() => {
     if (showEditGoal && activeGoal) {
@@ -31,6 +29,8 @@ export function EditGoalModal() {
       setShowDeleteConfirm(false);
     }
   }, [showEditGoal, activeGoal]);
+
+  if (!activeGoal) return null;
 
   return (
     <AnimatePresence>

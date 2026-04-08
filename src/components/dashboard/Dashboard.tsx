@@ -45,10 +45,19 @@ export function Dashboard() {
     subscription, subscriptionLoading, setShowPaywall,
   } = useStore();
 
+  // Check subscription — show paywall if expired
+  const isExpired = !subscriptionLoading && subscription.status === 'expired';
+
   useEffect(() => {
     refreshDashboard();
     requestNotificationPermission();
   }, [refreshDashboard, requestNotificationPermission]);
+
+  useEffect(() => {
+    if (isExpired) {
+      setShowPaywall(true);
+    }
+  }, [isExpired, setShowPaywall]);
 
   if (!user) {
     return (
@@ -57,15 +66,6 @@ export function Dashboard() {
       </div>
     );
   }
-
-  // Check subscription — show paywall if expired
-  const isExpired = !subscriptionLoading && subscription.status === 'expired';
-
-  useEffect(() => {
-    if (isExpired) {
-      setShowPaywall(true);
-    }
-  }, [isExpired, setShowPaywall]);
 
   // No active goal AND in longterm mode
   const showNoGoal = !activeGoal && dashboardMode === 'longterm';
