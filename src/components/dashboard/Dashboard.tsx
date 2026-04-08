@@ -20,6 +20,8 @@ import { GoalSelector } from './GoalSelector';
 import { DailyGrind } from './DailyGrind';
 import { Reports } from './Reports';
 import { CoachWeeklyCard } from './CoachWeeklyCard';
+import { PaywallModal } from '@/components/subscription/PaywallModal';
+import { TrialBanner } from '@/components/subscription/TrialBanner';
 import { TimerDisplay } from '@/components/timer/TimerDisplay';
 import {
   Target, LogOut, Plus,
@@ -40,6 +42,7 @@ export function Dashboard() {
     setView, refreshDashboard, logout,
     setShowSettings, setShowGoalHistory, setShowEditGoal, setShowManualSession,
     requestNotificationPermission,
+    subscription, subscriptionLoading, setShowPaywall,
   } = useStore();
 
   useEffect(() => {
@@ -54,6 +57,15 @@ export function Dashboard() {
       </div>
     );
   }
+
+  // Check subscription — show paywall if expired
+  const isExpired = !subscriptionLoading && subscription.status === 'expired';
+
+  useEffect(() => {
+    if (isExpired) {
+      setShowPaywall(true);
+    }
+  }, [isExpired, setShowPaywall]);
 
   // No active goal AND in longterm mode
   const showNoGoal = !activeGoal && dashboardMode === 'longterm';
@@ -106,6 +118,7 @@ export function Dashboard() {
 
   return (
     <div className="min-h-screen pb-8">
+      <TrialBanner />
       <DashboardHeader
         user={user}
         onLogout={logout}
@@ -197,6 +210,7 @@ export function Dashboard() {
       <GoalHistoryModal />
       <EditGoalModal />
       <ManualSessionModal />
+      <PaywallModal />
     </div>
   );
 }

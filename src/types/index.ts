@@ -186,3 +186,16 @@ export interface RepeatingTaskTemplate {
   created_at: string;
   active: boolean;
 }
+
+// Subscription types
+export type SubscriptionStatus = 'trialing' | 'active' | 'cancelled' | 'expired' | 'none';
+
+export interface SubscriptionInfo {
+  status: SubscriptionStatus;
+  razorpay_subscription_id?: string;
+  plan_id?: string;
+  trial_ends_at?: string;    // ISO date
+  current_period_end?: string; // ISO date
+  cancelled_at?: string;
+  created_at?: string;
+}

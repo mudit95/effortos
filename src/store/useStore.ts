@@ -5,6 +5,7 @@ import {
   User, Goal, Session, TimerState, OnboardingData,
   DashboardStats, RecalibrationResult, Toast, UserSettings, DEFAULT_SETTINGS,
   DashboardMode, DailyTask, RepeatingTaskTemplate, TaskTagId,
+  SubscriptionStatus, SubscriptionInfo,
 } from '@/types';
 import * as storage from '@/lib/storage';
 import { estimateEffort, recalibrate, shouldTriggerFeedback, calculateTimeBias } from '@/lib/estimation';
@@ -97,6 +98,11 @@ interface AppState {
   onboardingStep: number;
   onboardingData: Partial<OnboardingData>;
 
+  // Subscription
+  subscription: SubscriptionInfo;
+  subscriptionLoading: boolean;
+  showPaywall: boolean;
+
   // Reports deep-link
   reportGoalId: string | null;
 
@@ -163,6 +169,13 @@ interface AppState {
   removeRepeatingTemplate: (templateId: string) => void;
   updateDailyTaskDetails: (taskId: string, updates: Partial<DailyTask>) => void;
 
+  // Subscription
+  fetchSubscriptionStatus: () => void;
+  startTrial: () => void;
+  cancelSubscription: () => void;
+  setShowPaywall: (show: boolean) => void;
+  isSubscriptionActive: () => boolean;
+
   // Reports
   setReportGoalId: (goalId: string | null) => void;
   openGoalReport: (goalId: string) => void;
@@ -220,6 +233,9 @@ export const useStore = create<AppState>((set, get) => ({
   repeatingTemplates: [],
   activeDailyTaskId: null,
   dailyViewDate: new Date().toISOString().split('T')[0],
+  subscription: { status: 'none' as SubscriptionStatus },
+  subscriptionLoading: true,
+  showPaywall: false,
   reportGoalId: null,
   coachPlan: null,
   coachPlanLoading: false,
@@ -330,6 +346,8 @@ export const useStore = create<AppState>((set, get) => ({
           });
 
           if (cloudActiveGoal) get().refreshDashboard();
+          // Fetch subscription status in background
+          get().fetchSubscriptionStatus();
           return; // Done — skip localStorage path below
         }
       }
@@ -1043,6 +1061,111 @@ export const useStore = create<AppState>((set, get) => ({
     storage.updateDailyTask(taskId, updates);
     set({ dailyTasks: storage.getDailyTasksForDate(get().dailyViewDate) });
     cloudSync(() => api.updateDailyTask(taskId, updates));
+  },
+
+  // ─── Subscription ────────────────────────────────────────────────
+
+  fetchSubscriptionStatus: async () => {
+    set({ subscriptionLoading: true });
+    try {
+      const res = await fetch('/api/subscription/status');
+      if (!res.ok) {
+        set({ subscription: { status: 'none' }, subscriptionLoading: false });
+        return;
+      }
+      const data = await res.json();
+      set({
+        subscription: {
+          status: data.status,
+          razorpay_subscription_id: data.razorpay_subscription_id,
+          plan_id: data.plan_id,
+          trial_ends_at: data.trial_ends_at,
+          current_period_end: data.current_period_end,
+          cancelled_at: data.cancelled_at,
+          created_at: data.created_at,
+        },
+        subscriptionLoading: false,
+      });
+    } catch {
+      set({ subscription: { status: 'none' }, subscriptionLoading: false });
+    }
+  },
+
+  startTrial: async () => {
+    try {
+      const res = await fetch('/api/subscription/create', { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        get().addToast(err.error || 'Could not start trial', 'error');
+        return;
+      }
+      const data = await res.json();
+
+      // Open Razorpay checkout
+      if (typeof window !== 'undefined' && (window as unknown as Record<string, unknown>).Razorpay) {
+        const RazorpayConstructor = (window as unknown as Record<string, new (opts: Record<string, unknown>) => { open: () => void }>).Razorpay;
+        const rzp = new RazorpayConstructor({
+          key: data.key_id,
+          subscription_id: data.subscription_id,
+          name: 'EffortOS',
+          description: '3-day free trial, then $4.99/mo',
+          handler: async (response: { razorpay_payment_id: string; razorpay_subscription_id: string; razorpay_signature: string }) => {
+            // Verify payment
+            const verifyRes = await fetch('/api/subscription/verify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(response),
+            });
+            if (verifyRes.ok) {
+              set({
+                subscription: {
+                  status: 'trialing',
+                  razorpay_subscription_id: data.subscription_id,
+                  trial_ends_at: data.trial_ends_at,
+                },
+                showPaywall: false,
+              });
+              get().addToast('Trial started! You have 3 days of full access.', 'success');
+            } else {
+              get().addToast('Payment verification failed. Please try again.', 'error');
+            }
+          },
+          theme: { color: '#06b6d4' },
+        });
+        rzp.open();
+      }
+    } catch {
+      get().addToast('Could not connect to payment system', 'error');
+    }
+  },
+
+  cancelSubscription: async () => {
+    try {
+      const res = await fetch('/api/subscription/cancel', { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+        get().addToast(err.error || 'Could not cancel', 'error');
+        return;
+      }
+      const data = await res.json();
+      set({
+        subscription: {
+          ...get().subscription,
+          status: 'cancelled',
+          cancelled_at: new Date().toISOString(),
+        },
+      });
+      get().addToast(data.message || 'Subscription cancelled', 'info');
+    } catch {
+      get().addToast('Could not cancel subscription', 'error');
+    }
+  },
+
+  setShowPaywall: (show) => set({ showPaywall: show }),
+
+  isSubscriptionActive: () => {
+    const { subscription } = get();
+    return subscription.status === 'trialing' || subscription.status === 'active';
   },
 
   // ─── Reports ──────────────────────────────────────────────────────

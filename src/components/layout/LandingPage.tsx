@@ -184,7 +184,7 @@ export function LandingPage() {
   const [hoveredGoal, setHoveredGoal] = useState<number | null>(null);
 
   return (
-    <div className="min-h-screen flex flex-col relative overflow-hidden">
+    <div className="min-h-screen flex flex-col relative overflow-hidden bg-[#080b10]">
       {/* Floating background: word bubbles + icon outlines */}
       <FloatingBackground />
 
