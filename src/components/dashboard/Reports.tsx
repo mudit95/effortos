@@ -162,6 +162,7 @@ function aggregatePeriod(dates: string[], focusDuration: number, tasksByDate: Re
     });
   });
   const tasksSummary = Object.values(taskMap)
+    .filter(t => t.pomodoros > 0 || t.completed)
     .sort((a, b) => b.pomodoros - a.pomodoros);
 
   return { days, totalPomodoros, completedPomodoros, totalTasks, tasksCompleted, totalFocusMinutes, avgPomodorosPerDay, bestDay, tagBreakdown, tasksSummary };
