@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { SelectGroup } from '@/components/ui/select-group';
 import { useStore } from '@/store/useStore';
-import { ArrowRight, ArrowLeft, Target, Brain, Clock, Sparkles, Heart } from 'lucide-react';
+import { ArrowRight, ArrowLeft, Target, Brain, Clock, Sparkles, Heart, X } from 'lucide-react';
 
 const STEP_COUNT = 4;
 
@@ -86,7 +86,16 @@ export function OnboardingFlow() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
-      <div className="w-full max-w-lg">
+      <div className="w-full max-w-lg relative">
+        {/* Close button */}
+        <button
+          onClick={() => useStore.setState({ currentView: 'dashboard', onboardingStep: 0, onboardingData: {} })}
+          className="absolute top-0 right-0 text-white/30 hover:text-white/60 transition-colors p-1"
+          aria-label="Cancel"
+        >
+          <X className="w-5 h-5" />
+        </button>
+
         {/* Progress */}
         <div className="flex items-center gap-2 mb-8">
           {Array.from({ length: STEP_COUNT }).map((_, i) => (

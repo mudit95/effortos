@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button';
 import { EffortRing } from './EffortRing';
 import { MilestoneTracker } from './MilestoneTracker';
 import { GoalProgressBar } from './GoalProgressBar';
-import { MotivationMessage } from './MotivationMessage';
 import { FeedbackModal } from './FeedbackModal';
 import { SessionNotesModal } from './SessionNotesModal';
 import { CelebrationScreen } from './CelebrationScreen';
@@ -20,7 +19,8 @@ import { GoalSelector } from './GoalSelector';
 import { WelcomeCard } from './WelcomeCard';
 import { DailyGrind } from './DailyGrind';
 import { Reports } from './Reports';
-import { CoachWeeklyCard } from './CoachWeeklyCard';
+import { StreakCalendar } from './StreakCalendar';
+import { AIInsightCard, AIMotivationCard } from './AICards';
 import { PaywallModal } from '@/components/subscription/PaywallModal';
 import { TrialBanner } from '@/components/subscription/TrialBanner';
 import { TimerDisplay } from '@/components/timer/TimerDisplay';
@@ -306,9 +306,17 @@ function LongTermView({
         </div>
       </motion.div>
 
-      {/* Below the fold — AI content and confidence banner */}
-      <motion.div {...fadeUp(0.15)} className="mt-6">
-        <MotivationMessage
+      {/* Three-column: Calendar + AI Insights + Motivation */}
+      <motion.div {...fadeUp(0.12)} className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+        <StreakCalendar dailySessions={dashboardStats?.daily_sessions || []} />
+        <AIInsightCard
+          goalTitle={activeGoal.title}
+          sessionsCompleted={activeGoal.sessions_completed}
+          sessionsTotal={activeGoal.estimated_sessions_current}
+          streakDays={dashboardStats?.current_streak ?? 0}
+          context="longterm"
+        />
+        <AIMotivationCard
           goalTitle={activeGoal.title}
           sessionsCompleted={activeGoal.sessions_completed}
           sessionsTotal={activeGoal.estimated_sessions_current}
@@ -317,11 +325,7 @@ function LongTermView({
         />
       </motion.div>
 
-      <motion.div {...fadeUp(0.2)} className="mt-4">
-        <CoachWeeklyCard />
-      </motion.div>
-
-      {/* Confidence banner — moved after AI content */}
+      {/* Confidence banner */}
       {activeGoal.confidence_score < 0.5 && (
         <motion.div
           {...fadeUp(0.25)}

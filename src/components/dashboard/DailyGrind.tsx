@@ -20,6 +20,8 @@ import { CoachDebriefCard } from './CoachDebriefCard';
 import { MotivationMessage } from './MotivationMessage';
 import { GoalProgressBar } from './GoalProgressBar';
 import { AIPlanWizard } from './AIPlanWizard';
+import { StreakCalendar } from './StreakCalendar';
+import { AIInsightCard, AIMotivationCard } from './AICards';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
@@ -524,8 +526,27 @@ export function DailyGrind() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      {/* Left column: Calendar + AI */}
+      <div className="lg:col-span-3 space-y-4">
+        <StreakCalendar
+          dailySessions={dashboardStats?.daily_sessions || []}
+        />
+        <AIInsightCard
+          sessionsCompleted={donePomodoros}
+          sessionsTotal={totalPomodoros}
+          streakDays={dashboardStats?.current_streak ?? 0}
+          context="daily"
+        />
+        <AIMotivationCard
+          sessionsCompleted={donePomodoros}
+          sessionsTotal={totalPomodoros}
+          streakDays={dashboardStats?.current_streak ?? 0}
+          userName={useStore.getState().user?.name || 'there'}
+        />
+      </div>
+
       {/* Main column */}
-      <div className="lg:col-span-8 space-y-4">
+      <div className="lg:col-span-5 space-y-4">
         {/* Date nav + progress */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}

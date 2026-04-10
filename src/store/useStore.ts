@@ -301,9 +301,18 @@ export const useStore = create<AppState>((set, get) => ({
           // Clear localStorage goals cache — cloud is the source of truth.
           // This prevents stale cached goals from being mistaken for demo-mode
           // data that needs migration on every reload.
+
+          // Preserve localStorage goals as fallback
+          let cachedGoals: Goal[] = [];
+          try { cachedGoals = storage.getGoals(); } catch { /* ok */ }
           try { localStorage.removeItem('effortos_goals'); } catch { /* ok */ }
 
-          const cloudGoals = await api.getGoals();
+          let cloudGoals: Goal[];
+          try {
+            cloudGoals = await api.getGoals();
+          } catch {
+            cloudGoals = cachedGoals; // Restore from cache if cloud fails
+          }
           const cloudActiveGoal = cloudGoals.find(g => g.status === 'active') || null;
           const focusDuration = supaUser.settings?.focus_duration || 25 * 60;
 
