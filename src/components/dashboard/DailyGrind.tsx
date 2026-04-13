@@ -526,7 +526,7 @@ export function DailyGrind() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      {/* Left column: Calendar + AI */}
+      {/* Left column: Calendar + AI Insight */}
       <div className="lg:col-span-3 space-y-4">
         <StreakCalendar
           dailySessions={dashboardStats?.daily_sessions || []}
@@ -536,12 +536,6 @@ export function DailyGrind() {
           sessionsTotal={totalPomodoros}
           streakDays={dashboardStats?.current_streak ?? 0}
           context="daily"
-        />
-        <AIMotivationCard
-          sessionsCompleted={donePomodoros}
-          sessionsTotal={totalPomodoros}
-          streakDays={dashboardStats?.current_streak ?? 0}
-          userName={useStore.getState().user?.name || 'there'}
         />
       </div>
 
@@ -869,6 +863,12 @@ export function DailyGrind() {
 
       {/* Right sidebar: insights */}
       <div className="lg:col-span-4 space-y-4">
+        <AIMotivationCard
+          sessionsCompleted={donePomodoros}
+          sessionsTotal={totalPomodoros}
+          streakDays={dashboardStats?.current_streak ?? 0}
+          userName={useStore.getState().user?.name || 'there'}
+        />
         {/* Today's Charter progress */}
         {activeGoal && (
           <motion.div

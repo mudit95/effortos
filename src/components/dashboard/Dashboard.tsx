@@ -253,12 +253,12 @@ function LongTermView({
         </button>
       </motion.div>
 
-      {/* Two-column layout: Goal info (left) + Timer (right) — no scroll needed */}
-      <motion.div {...fadeUp()} className="flex flex-col md:flex-row gap-4 md:gap-8 mb-6">
-        {/* Left column — Goal details */}
-        <div className="flex-1 min-w-0">
+      {/* 3-column layout: Goal+Calendar (left) | Timer (center) | AI Cards (right) — all visible without scroll */}
+      <motion.div {...fadeUp()} className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 mb-4">
+        {/* Left column — Goal details + Streak Calendar */}
+        <div className="lg:col-span-5 space-y-3">
           {/* Goal header */}
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between">
             <div className="min-w-0 flex-1">
               <p className="text-[10px] text-white/25 uppercase tracking-wider">Current Goal</p>
               <h1 className="text-base sm:text-lg font-semibold text-white truncate">{activeGoal.title}</h1>
@@ -274,14 +274,12 @@ function LongTermView({
           </div>
 
           {/* Progress bar */}
-          <div className="mb-2">
-            <GoalProgressBar
-              sessionsCompleted={activeGoal.sessions_completed}
-              sessionsTotal={activeGoal.estimated_sessions_current}
-              milestones={activeGoal.milestones}
-              onClick={() => useStore.getState().openGoalReport(activeGoal.id)}
-            />
-          </div>
+          <GoalProgressBar
+            sessionsCompleted={activeGoal.sessions_completed}
+            sessionsTotal={activeGoal.estimated_sessions_current}
+            milestones={activeGoal.milestones}
+            onClick={() => useStore.getState().openGoalReport(activeGoal.id)}
+          />
 
           {/* Stats line */}
           {dashboardStats && (
@@ -289,10 +287,15 @@ function LongTermView({
               {dashboardStats.sessions_done}/{activeGoal.estimated_sessions_current} sessions &middot; {dashboardStats.total_hours}h invested &middot; {dashboardStats.current_streak} day streak
             </p>
           )}
+
+          {/* Streak Calendar */}
+          <div className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
+            <StreakCalendar dailySessions={dashboardStats?.daily_sessions || []} />
+          </div>
         </div>
 
-        {/* Right column — Timer + controls */}
-        <div className="flex flex-col items-center justify-center shrink-0">
+        {/* Center column — Timer + controls */}
+        <div className="lg:col-span-3 flex flex-col items-center justify-start pt-2">
           <TimerDisplay onEnterFocus={() => setView('focus')} />
           <Button
             variant="ghost"
@@ -304,25 +307,24 @@ function LongTermView({
             <ChevronRight className="w-3 h-3" />
           </Button>
         </div>
-      </motion.div>
 
-      {/* Three-column: Calendar + AI Insights + Motivation */}
-      <motion.div {...fadeUp(0.12)} className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
-        <StreakCalendar dailySessions={dashboardStats?.daily_sessions || []} />
-        <AIInsightCard
-          goalTitle={activeGoal.title}
-          sessionsCompleted={activeGoal.sessions_completed}
-          sessionsTotal={activeGoal.estimated_sessions_current}
-          streakDays={dashboardStats?.current_streak ?? 0}
-          context="longterm"
-        />
-        <AIMotivationCard
-          goalTitle={activeGoal.title}
-          sessionsCompleted={activeGoal.sessions_completed}
-          sessionsTotal={activeGoal.estimated_sessions_current}
-          streakDays={dashboardStats?.current_streak ?? 0}
-          userName={useStore.getState().user?.name || 'there'}
-        />
+        {/* Right column — AI Insight + Motivation stacked */}
+        <div className="lg:col-span-4 space-y-4">
+          <AIInsightCard
+            goalTitle={activeGoal.title}
+            sessionsCompleted={activeGoal.sessions_completed}
+            sessionsTotal={activeGoal.estimated_sessions_current}
+            streakDays={dashboardStats?.current_streak ?? 0}
+            context="longterm"
+          />
+          <AIMotivationCard
+            goalTitle={activeGoal.title}
+            sessionsCompleted={activeGoal.sessions_completed}
+            sessionsTotal={activeGoal.estimated_sessions_current}
+            streakDays={dashboardStats?.current_streak ?? 0}
+            userName={useStore.getState().user?.name || 'there'}
+          />
+        </div>
       </motion.div>
 
       {/* Confidence banner */}
