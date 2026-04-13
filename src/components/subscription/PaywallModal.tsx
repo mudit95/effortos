@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store/useStore';
 import { Button } from '@/components/ui/button';
-import { Sparkles, X, Shield, Zap, Brain, BarChart3, Clock } from 'lucide-react';
+import { Sparkles, X, Shield, Zap, Brain, BarChart3, Clock, Ticket } from 'lucide-react';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
@@ -21,6 +21,38 @@ export function PaywallModal() {
   const startTrial = useStore(s => s.startTrial);
   const subscription = useStore(s => s.subscription);
   const [loading, setLoading] = useState(false);
+  const [couponCode, setCouponCode] = useState('');
+  const [couponMsg, setCouponMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [redeeming, setRedeeming] = useState(false);
+
+  async function redeemCoupon() {
+    if (!couponCode.trim()) return;
+    setRedeeming(true);
+    setCouponMsg(null);
+    try {
+      const res = await fetch('/api/coupons/redeem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: couponCode.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCouponMsg({ type: 'err', text: data.error || 'Invalid code' });
+      } else if (data.applied === 'percent_off') {
+        setCouponMsg({ type: 'ok', text: `${data.percent}% off will apply at checkout.` });
+      } else if (data.applied === 'trial_extension') {
+        setCouponMsg({ type: 'ok', text: `Trial extended by ${data.value} days.` });
+        setTimeout(() => { useStore.getState().fetchSubscriptionStatus?.(); setShowPaywall(false); }, 1200);
+      } else if (data.applied === 'free_months') {
+        setCouponMsg({ type: 'ok', text: `${data.value} month(s) of premium granted.` });
+        setTimeout(() => { useStore.getState().fetchSubscriptionStatus?.(); setShowPaywall(false); }, 1200);
+      }
+    } catch {
+      setCouponMsg({ type: 'err', text: 'Network error. Try again.' });
+    } finally {
+      setRedeeming(false);
+    }
+  }
 
   const isExpired = subscription.status === 'expired';
   const trialEnded = isExpired && subscription.trial_ends_at;
@@ -106,6 +138,34 @@ export function PaywallModal() {
               <p className="text-xs text-white/25 mt-1">
                 {trialEnded ? 'Billed monthly. Cancel anytime.' : '3 days free, then $4.99/month. Cancel anytime.'}
               </p>
+            </div>
+
+            {/* Coupon code */}
+            <div className="mb-3">
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Ticket className="w-3.5 h-3.5 text-white/30 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    value={couponCode}
+                    onChange={e => setCouponCode(e.target.value.toUpperCase())}
+                    placeholder="Coupon code"
+                    className="w-full pl-8 pr-2 py-2 bg-white/[0.03] border border-white/[0.08] rounded-md text-sm text-white placeholder:text-white/25 focus:outline-none focus:border-white/20 uppercase"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={redeemCoupon}
+                  disabled={redeeming || !couponCode.trim()}
+                  className="px-3 text-xs rounded-md border border-white/[0.08] text-white/70 hover:border-white/20 hover:bg-white/[0.04] disabled:opacity-40"
+                >
+                  {redeeming ? '…' : 'Apply'}
+                </button>
+              </div>
+              {couponMsg && (
+                <p className={`text-[11px] mt-1.5 ${couponMsg.type === 'ok' ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {couponMsg.text}
+                </p>
+              )}
             </div>
 
             <Button
