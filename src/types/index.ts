@@ -189,7 +189,7 @@ export interface RepeatingTaskTemplate {
 }
 
 // Subscription types
-export type SubscriptionStatus = 'trialing' | 'active' | 'cancelled' | 'expired' | 'none';
+export type SubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'cancelled' | 'expired' | 'none';
 
 export interface SubscriptionInfo {
   status: SubscriptionStatus;
