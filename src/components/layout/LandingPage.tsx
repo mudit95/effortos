@@ -4,9 +4,57 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, useMotionValue, useTransform, animate } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
-import { Sparkles, ArrowRight, Zap, Brain, BarChart3, Target, Clock } from 'lucide-react';
+import { Sparkles, ArrowRight, Zap, Brain, BarChart3, Target, Clock, ChevronDown } from 'lucide-react';
+import Link from 'next/link';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
+
+function MoreMenu() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, []);
+
+  const pages = [
+    { href: '/legal/terms', label: 'Terms & Conditions' },
+    { href: '/legal/privacy', label: 'Privacy Policy' },
+    { href: '/legal/refund', label: 'Cancellation & Refund' },
+    { href: '/legal/shipping', label: 'Shipping & Exchange' },
+    { href: '/legal/contact', label: 'Contact Us' },
+  ];
+
+  return (
+    <div ref={ref} className="relative inline-block mt-2">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="inline-flex items-center gap-1 text-[11px] text-white/25 hover:text-white/50 transition-colors"
+        aria-expanded={open}
+      >
+        More <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 min-w-[190px] rounded-lg border border-white/[0.08] bg-[#0d1117] shadow-lg py-1 z-20">
+          {pages.map(p => (
+            <Link
+              key={p.href}
+              href={p.href}
+              className="block px-3 py-1.5 text-[11px] text-white/50 hover:text-white hover:bg-white/[0.04] text-left"
+              onClick={() => setOpen(false)}
+            >
+              {p.label}
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const ROTATING_WORDS = ['underestimating', 'guessing', 'procrastinating', 'winging it'];
 
@@ -343,6 +391,7 @@ export function LandingPage() {
         <p className="text-xs text-white/15">
           Built with intention. Your data syncs securely across devices.
         </p>
+        <MoreMenu />
       </footer>
     </div>
   );

@@ -24,7 +24,8 @@ export const PLAN_ID = process.env.RAZORPAY_PLAN_ID || '';
 export const TRIAL_DAYS = 3;
 
 /** Monthly price in smallest currency unit (paise for INR, cents for USD) */
-export const MONTHLY_PRICE = 499; // ₹4.99 = 499 paise, or $4.99 = 499 cents
+export const MONTHLY_PRICE = Number(process.env.RAZORPAY_MONTHLY_PRICE || 49900); // default ₹499 = 49900 paise
 
 /** Currency */
-export const CURRENCY = process.env.RAZORPAY_CURRENCY || 'USD';
+export const CURRENCY = process.env.RAZORPAY_CURRENCY || 'INR';
+

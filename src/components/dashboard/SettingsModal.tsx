@@ -7,6 +7,7 @@ import { useStore } from '@/store/useStore';
 import { X, Bell, Volume2, Clock, Palette, Check, CreditCard, AlertTriangle } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import * as storage from '@/lib/storage';
+import { DISPLAY_PRICE_PER_MONTH } from '@/lib/pricing';
 
 const THEMES = [
   {
@@ -379,7 +380,7 @@ export function SettingsModal() {
                   <p className="text-xs text-white/30">Loading...</p>
                 ) : subscription.status === 'active' ? (
                   <div className="space-y-2">
-                    <p className="text-xs text-green-400/70">Active subscription — $4.99/month</p>
+                    <p className="text-xs text-green-400/70">Active subscription — {DISPLAY_PRICE_PER_MONTH}</p>
                     {subscription.current_period_end && (
                       <p className="text-[11px] text-white/25">
                         Next billing: {new Date(subscription.current_period_end).toLocaleDateString()}

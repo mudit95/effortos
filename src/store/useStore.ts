@@ -1382,7 +1382,7 @@ export const useStore = create<AppState>((set, get) => ({
           key: data.key_id,
           subscription_id: data.subscription_id,
           name: 'EffortOS',
-          description: '3-day free trial, then $4.99/mo',
+          description: '3-day free trial, then ₹499/mo',
           handler: async (response: { razorpay_payment_id: string; razorpay_subscription_id: string; razorpay_signature: string }) => {
             // Verify payment
             const verifyRes = await fetch('/api/subscription/verify', {

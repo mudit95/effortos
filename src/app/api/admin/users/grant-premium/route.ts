@@ -16,7 +16,9 @@ export async function POST(req: Request) {
     .from('subscriptions')
     .select('*')
     .eq('user_id', userId)
-    .single();
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   const now = new Date();
   const baseMs = existing?.current_period_end
@@ -30,7 +32,7 @@ export async function POST(req: Request) {
     const { error } = await supabase
       .from('subscriptions')
       .update({ status: 'active', current_period_end: newPeriodEnd, cancelled_at: null })
-      .eq('user_id', userId);
+      .eq('id', existing.id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   } else {
     const { error } = await supabase

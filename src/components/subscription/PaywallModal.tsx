@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store/useStore';
 import { Button } from '@/components/ui/button';
 import { Sparkles, X, Shield, Zap, Brain, BarChart3, Clock, Ticket } from 'lucide-react';
+import { DISPLAY_PRICE, DISPLAY_PRICE_PER_MONTH } from '@/lib/pricing';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
@@ -148,11 +149,11 @@ export function PaywallModal() {
           <div className="px-6 py-5 border-t border-white/[0.06]">
             <div className="text-center mb-4">
               <div className="flex items-baseline justify-center gap-1">
-                <span className="text-3xl font-bold text-white">$4.99</span>
+                <span className="text-3xl font-bold text-white">{DISPLAY_PRICE}</span>
                 <span className="text-sm text-white/30">/month</span>
               </div>
               <p className="text-xs text-white/25 mt-1">
-                {trialEnded ? 'Billed monthly. Cancel anytime.' : '3 days free, then $4.99/month. Cancel anytime.'}
+                {trialEnded ? 'Billed monthly. Cancel anytime.' : `3 days free, then ${DISPLAY_PRICE_PER_MONTH}. Cancel anytime.`}
               </p>
             </div>
 
