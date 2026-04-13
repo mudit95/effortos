@@ -24,6 +24,7 @@ export function PaywallModal() {
   const [couponCode, setCouponCode] = useState('');
   const [couponMsg, setCouponMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [redeeming, setRedeeming] = useState(false);
+  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; coupon_id: string; razorpay_offer_id: string | null; percent: number } | null>(null);
 
   async function redeemCoupon() {
     if (!couponCode.trim()) return;
@@ -39,7 +40,18 @@ export function PaywallModal() {
       if (!res.ok) {
         setCouponMsg({ type: 'err', text: data.error || 'Invalid code' });
       } else if (data.applied === 'percent_off') {
-        setCouponMsg({ type: 'ok', text: `${data.percent}% off will apply at checkout.` });
+        setAppliedCoupon({
+          code: couponCode.trim().toUpperCase(),
+          coupon_id: data.coupon_id,
+          razorpay_offer_id: data.razorpay_offer_id,
+          percent: data.percent,
+        });
+        setCouponMsg({
+          type: data.razorpay_offer_id ? 'ok' : 'err',
+          text: data.razorpay_offer_id
+            ? `${data.percent}% off will apply at checkout.`
+            : `Code valid, but ${data.percent}% discount isn't configured at the processor yet. Contact support.`,
+        });
       } else if (data.applied === 'trial_extension') {
         setCouponMsg({ type: 'ok', text: `Trial extended by ${data.value} days.` });
         setTimeout(() => { useStore.getState().fetchSubscriptionStatus?.(); setShowPaywall(false); }, 1200);
@@ -59,7 +71,11 @@ export function PaywallModal() {
 
   const handleStartTrial = async () => {
     setLoading(true);
-    await startTrial();
+    await startTrial(appliedCoupon && appliedCoupon.razorpay_offer_id ? {
+      couponCode: appliedCoupon.code,
+      couponId: appliedCoupon.coupon_id,
+      offerId: appliedCoupon.razorpay_offer_id,
+    } : undefined);
     setLoading(false);
   };
 

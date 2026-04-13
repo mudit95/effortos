@@ -15,6 +15,7 @@ interface Coupon {
   expires_at: string | null;
   active: boolean;
   created_at: string;
+  razorpay_offer_id?: string | null;
 }
 
 const KIND_LABEL: Record<Coupon['kind'], string> = {
@@ -34,6 +35,7 @@ export function CouponsManager({ initial }: { initial: Coupon[] }) {
     description: '',
     max_redemptions: '',
     expires_at: '',
+    razorpay_offer_id: '',
   });
 
   async function submit(e: React.FormEvent) {
@@ -50,13 +52,14 @@ export function CouponsManager({ initial }: { initial: Coupon[] }) {
           description: form.description || null,
           max_redemptions: form.max_redemptions ? Number(form.max_redemptions) : null,
           expires_at: form.expires_at || null,
+          razorpay_offer_id: form.kind === 'percent_off' ? (form.razorpay_offer_id.trim() || null) : null,
         }),
       });
       if (!res.ok) {
         alert(await res.text());
       } else {
         setShowForm(false);
-        setForm({ code: '', kind: 'percent_off', discount_value: 10, description: '', max_redemptions: '', expires_at: '' });
+        setForm({ code: '', kind: 'percent_off', discount_value: 10, description: '', max_redemptions: '', expires_at: '', razorpay_offer_id: '' });
         router.refresh();
       }
     } finally {
@@ -138,6 +141,22 @@ export function CouponsManager({ initial }: { initial: Coupon[] }) {
               className="px-2 py-1.5 bg-white/[0.03] border border-white/[0.08] rounded text-sm text-white focus:outline-none focus:border-white/20"
             />
           </label>
+          {form.kind === 'percent_off' && (
+            <label className="col-span-2 text-xs text-white/50 flex flex-col gap-1">
+              Razorpay Offer ID (required for percent_off to actually discount checkout)
+              <input
+                value={form.razorpay_offer_id}
+                onChange={e => setForm({ ...form, razorpay_offer_id: e.target.value })}
+                placeholder="offer_PXXXXXXXXXXXXX"
+                className="px-2 py-1.5 bg-white/[0.03] border border-white/[0.08] rounded text-sm text-white focus:outline-none focus:border-white/20 font-mono"
+              />
+              <span className="text-[10px] text-white/30">
+                Create an Offer in Razorpay dashboard first (Offers → New), then paste its ID here.
+                Without this, the coupon will show the discount but payment won&apos;t be reduced.
+              </span>
+            </label>
+          )}
+
           <label className="col-span-1 text-xs text-white/50 flex flex-col gap-1">
             Expires at (optional)
             <input
@@ -176,7 +195,12 @@ export function CouponsManager({ initial }: { initial: Coupon[] }) {
           <tbody>
             {initial.map(c => (
               <tr key={c.id} className="border-t border-white/[0.04]">
-                <td className="px-4 py-3 font-mono text-white">{c.code}</td>
+                <td className="px-4 py-3 font-mono text-white">
+                  {c.code}
+                  {c.kind === 'percent_off' && !c.razorpay_offer_id && (
+                    <span className="ml-2 text-[9px] text-yellow-400" title="No Razorpay Offer ID — discount won't apply at checkout">⚠</span>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-white/60">{KIND_LABEL[c.kind]}</td>
                 <td className="px-4 py-3 text-white">{c.discount_value}</td>
                 <td className="px-4 py-3 text-white/60">

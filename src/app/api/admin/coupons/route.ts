@@ -6,7 +6,7 @@ export async function POST(req: Request) {
   if (!check.ok) return NextResponse.json({ error: check.reason }, { status: check.reason === 'unauthenticated' ? 401 : 403 });
 
   const body = await req.json();
-  const { code, kind, discount_value, description, max_redemptions, expires_at } = body;
+  const { code, kind, discount_value, description, max_redemptions, expires_at, razorpay_offer_id } = body;
 
   if (!code || !kind || !discount_value) {
     return NextResponse.json({ error: 'code, kind, discount_value required' }, { status: 400 });
@@ -24,6 +24,7 @@ export async function POST(req: Request) {
       description: description || null,
       max_redemptions: max_redemptions ? Number(max_redemptions) : null,
       expires_at: expires_at ? new Date(expires_at).toISOString() : null,
+      razorpay_offer_id: kind === 'percent_off' ? (razorpay_offer_id || null) : null,
       active: true,
       created_by: check.user.id,
     });

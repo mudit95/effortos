@@ -46,6 +46,42 @@ export async function POST(request: Request) {
       .eq('user_id', user.id)
       .eq('razorpay_subscription_id', razorpay_subscription_id);
 
+    // If a coupon was applied at subscribe time, record the redemption now
+    const { data: sub } = await supabase
+      .from('subscriptions')
+      .select('applied_coupon_id')
+      .eq('user_id', user.id)
+      .eq('razorpay_subscription_id', razorpay_subscription_id)
+      .single();
+
+    if (sub?.applied_coupon_id) {
+      const { data: alreadyRedeemed } = await supabase
+        .from('coupon_redemptions')
+        .select('id')
+        .eq('coupon_id', sub.applied_coupon_id)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (!alreadyRedeemed) {
+        await supabase.from('coupon_redemptions').insert({
+          coupon_id: sub.applied_coupon_id,
+          user_id: user.id,
+        });
+        // Increment redemption_count atomically via RPC-style fetch-then-update
+        const { data: coupon } = await supabase
+          .from('coupons')
+          .select('redemption_count')
+          .eq('id', sub.applied_coupon_id)
+          .single();
+        if (coupon) {
+          await supabase
+            .from('coupons')
+            .update({ redemption_count: (coupon.redemption_count ?? 0) + 1 })
+            .eq('id', sub.applied_coupon_id);
+        }
+      }
+    }
+
     return NextResponse.json({ success: true, status: 'trialing' });
   } catch (err) {
     console.error('Verify subscription error:', err);

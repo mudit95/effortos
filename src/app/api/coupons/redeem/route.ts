@@ -57,6 +57,7 @@ export async function POST(req: Request) {
       percent: Number(coupon.discount_value),
       coupon_id: coupon.id,
       code: coupon.code,
+      razorpay_offer_id: coupon.razorpay_offer_id ?? null,
     });
   }
 

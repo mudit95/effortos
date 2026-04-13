@@ -173,7 +173,7 @@ interface AppState {
 
   // Subscription
   fetchSubscriptionStatus: () => void;
-  startTrial: () => void;
+  startTrial: (opts?: { couponCode?: string; couponId?: string; offerId?: string }) => void;
   cancelSubscription: () => void;
   setShowPaywall: (show: boolean) => void;
   isSubscriptionActive: () => boolean;
@@ -1357,9 +1357,17 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  startTrial: async () => {
+  startTrial: async (opts) => {
     try {
-      const res = await fetch('/api/subscription/create', { method: 'POST' });
+      const res = await fetch('/api/subscription/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          couponCode: opts?.couponCode ?? null,
+          couponId: opts?.couponId ?? null,
+          offerId: opts?.offerId ?? null,
+        }),
+      });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'Unknown error' }));
         get().addToast(err.error || 'Could not start trial', 'error');
