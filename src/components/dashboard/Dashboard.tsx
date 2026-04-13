@@ -23,6 +23,7 @@ import { StreakCalendar } from './StreakCalendar';
 import { AIInsightCard, AIMotivationCard } from './AICards';
 import { PaywallModal } from '@/components/subscription/PaywallModal';
 import { TrialBanner } from '@/components/subscription/TrialBanner';
+import { PremiumGate } from '@/components/subscription/PremiumGate';
 import { TimerDisplay } from '@/components/timer/TimerDisplay';
 import {
   Target, LogOut, Plus,
@@ -142,7 +143,9 @@ export function Dashboard() {
               exit={{ opacity: 0, x: -20 }}
               transition={{ duration: 0.25, ease }}
             >
-              <DailyGrind />
+              <PremiumGate label="Daily Planner" minHeight="400px">
+                <DailyGrind />
+              </PremiumGate>
             </motion.div>
           ) : dashboardMode === 'reports' ? (
             <motion.div
@@ -152,7 +155,9 @@ export function Dashboard() {
               exit={{ opacity: 0, x: 20 }}
               transition={{ duration: 0.25, ease }}
             >
-              <Reports />
+              <PremiumGate label="Reports & Analytics" minHeight="400px">
+                <Reports />
+              </PremiumGate>
             </motion.div>
           ) : (
             <motion.div
@@ -289,9 +294,11 @@ function LongTermView({
           )}
 
           {/* Streak Calendar */}
-          <div className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
-            <StreakCalendar dailySessions={dashboardStats?.daily_sessions || []} />
-          </div>
+          <PremiumGate label="Streak Calendar" minHeight="200px">
+            <div className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
+              <StreakCalendar dailySessions={dashboardStats?.daily_sessions || []} />
+            </div>
+          </PremiumGate>
         </div>
 
         {/* Center column — Timer + controls */}
@@ -310,20 +317,24 @@ function LongTermView({
 
         {/* Right column — AI Insight + Motivation stacked */}
         <div className="lg:col-span-4 space-y-4">
-          <AIInsightCard
-            goalTitle={activeGoal.title}
-            sessionsCompleted={activeGoal.sessions_completed}
-            sessionsTotal={activeGoal.estimated_sessions_current}
-            streakDays={dashboardStats?.current_streak ?? 0}
-            context="longterm"
-          />
-          <AIMotivationCard
-            goalTitle={activeGoal.title}
-            sessionsCompleted={activeGoal.sessions_completed}
-            sessionsTotal={activeGoal.estimated_sessions_current}
-            streakDays={dashboardStats?.current_streak ?? 0}
-            userName={useStore.getState().user?.name || 'there'}
-          />
+          <PremiumGate label="AI Insight" minHeight="140px">
+            <AIInsightCard
+              goalTitle={activeGoal.title}
+              sessionsCompleted={activeGoal.sessions_completed}
+              sessionsTotal={activeGoal.estimated_sessions_current}
+              streakDays={dashboardStats?.current_streak ?? 0}
+              context="longterm"
+            />
+          </PremiumGate>
+          <PremiumGate label="AI Motivation" minHeight="140px">
+            <AIMotivationCard
+              goalTitle={activeGoal.title}
+              sessionsCompleted={activeGoal.sessions_completed}
+              sessionsTotal={activeGoal.estimated_sessions_current}
+              streakDays={dashboardStats?.current_streak ?? 0}
+              userName={useStore.getState().user?.name || 'there'}
+            />
+          </PremiumGate>
         </div>
       </motion.div>
 

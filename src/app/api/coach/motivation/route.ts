@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import { requireActiveSub } from '@/lib/subscription-guard';
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || '',
@@ -7,6 +8,8 @@ const anthropic = new Anthropic({
 
 export async function POST(request: Request) {
   try {
+    const gate = await requireActiveSub();
+    if (!gate.ok) return NextResponse.json({ error: gate.reason }, { status: gate.status });
     if (!process.env.ANTHROPIC_API_KEY) {
       return NextResponse.json({ error: 'AI Coach not configured' }, { status: 503 });
     }
