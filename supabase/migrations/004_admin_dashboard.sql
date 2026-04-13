@@ -4,6 +4,17 @@
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
+-- 0. Helper: check_is_admin() — SECURITY DEFINER to avoid RLS recursion
+-- ---------------------------------------------------------------------
+-- Declared first so RLS policies can reference it.
+-- A regular policy that queries profiles directly would recurse infinitely
+-- when evaluating SELECT on profiles itself.
+CREATE OR REPLACE FUNCTION check_is_admin(uid UUID)
+RETURNS BOOLEAN AS $$
+  SELECT COALESCE((SELECT is_admin FROM profiles WHERE id = uid), FALSE);
+$$ LANGUAGE sql STABLE SECURITY DEFINER;
+
+-- ---------------------------------------------------------------------
 -- 1. is_admin flag on profiles
 -- ---------------------------------------------------------------------
 -- If you don't have a profiles table, create a lightweight one keyed to auth.users
@@ -36,7 +47,7 @@ CREATE POLICY "Users can update own profile"
 DROP POLICY IF EXISTS "Admins can view all profiles" ON profiles;
 CREATE POLICY "Admins can view all profiles"
   ON profiles FOR SELECT
-  USING (EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.is_admin = TRUE));
+  USING (check_is_admin(auth.uid()));
 
 -- Trigger: create profile row on user signup
 CREATE OR REPLACE FUNCTION handle_new_user()
@@ -96,8 +107,8 @@ CREATE POLICY "Anyone can read active coupons"
 DROP POLICY IF EXISTS "Admins manage coupons" ON coupons;
 CREATE POLICY "Admins manage coupons"
   ON coupons FOR ALL
-  USING (EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.is_admin = TRUE))
-  WITH CHECK (EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.is_admin = TRUE));
+  USING (check_is_admin(auth.uid()))
+  WITH CHECK (check_is_admin(auth.uid()));
 
 -- ---------------------------------------------------------------------
 -- 3. Coupon redemptions
@@ -125,8 +136,8 @@ CREATE POLICY "Users view own redemptions"
 DROP POLICY IF EXISTS "Admins manage redemptions" ON coupon_redemptions;
 CREATE POLICY "Admins manage redemptions"
   ON coupon_redemptions FOR ALL
-  USING (EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.is_admin = TRUE))
-  WITH CHECK (EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.is_admin = TRUE));
+  USING (check_is_admin(auth.uid()))
+  WITH CHECK (check_is_admin(auth.uid()));
 
 -- ---------------------------------------------------------------------
 -- 4. Site content (editable text blocks)
@@ -149,8 +160,8 @@ CREATE POLICY "Anyone can read site content"
 DROP POLICY IF EXISTS "Admins write site content" ON site_content;
 CREATE POLICY "Admins write site content"
   ON site_content FOR ALL
-  USING (EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.is_admin = TRUE))
-  WITH CHECK (EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.is_admin = TRUE));
+  USING (check_is_admin(auth.uid()))
+  WITH CHECK (check_is_admin(auth.uid()));
 
 -- Seed default content keys
 INSERT INTO site_content (key, value, description) VALUES
@@ -159,14 +170,6 @@ INSERT INTO site_content (key, value, description) VALUES
   ('paywall.title', 'Your trial has ended', 'Paywall dialog title'),
   ('paywall.subtitle', 'Subscribe to continue tracking your effort.', 'Paywall dialog subtitle')
 ON CONFLICT (key) DO NOTHING;
-
--- ---------------------------------------------------------------------
--- 5. Helper: check_is_admin()
--- ---------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION check_is_admin(uid UUID)
-RETURNS BOOLEAN AS $$
-  SELECT COALESCE((SELECT is_admin FROM profiles WHERE id = uid), FALSE);
-$$ LANGUAGE sql STABLE SECURITY DEFINER;
 
 -- ---------------------------------------------------------------------
 -- 6. updated_at triggers
