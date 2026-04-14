@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
-import { X, Bell, Volume2, Clock, Palette, Check, CreditCard, AlertTriangle, Mail } from 'lucide-react';
+import { X, Bell, Volume2, Clock, Palette, Check, CreditCard, AlertTriangle, Mail, Globe } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import * as storage from '@/lib/storage';
 import { DISPLAY_PRICE_PER_MONTH } from '@/lib/pricing';
@@ -360,14 +360,12 @@ export function SettingsModal() {
                 </div>
               </div>
 
-              {/* User info */}
+              {/* User info + timezone */}
               <div className="pt-4 border-t border-white/[0.06]">
                 <p className="text-xs text-white/30">
                   Signed in as {user.name} ({user.email})
                 </p>
-                <p className="text-xs text-white/20 mt-1">
-                  Timezone: {user.timezone}
-                </p>
+                <TimezonePicker currentTimezone={user.timezone} />
               </div>
 
               {/* Subscription */}
@@ -500,6 +498,122 @@ export function SettingsModal() {
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+// ── Timezone Picker ──────────────────────────────────────────────
+
+/** Common timezones grouped by region. */
+const TIMEZONE_GROUPS: { label: string; zones: { value: string; label: string }[] }[] = [
+  {
+    label: 'India',
+    zones: [
+      { value: 'Asia/Kolkata', label: 'India (IST, UTC+5:30)' },
+    ],
+  },
+  {
+    label: 'Americas',
+    zones: [
+      { value: 'America/New_York', label: 'Eastern (ET, UTC-5)' },
+      { value: 'America/Chicago', label: 'Central (CT, UTC-6)' },
+      { value: 'America/Denver', label: 'Mountain (MT, UTC-7)' },
+      { value: 'America/Los_Angeles', label: 'Pacific (PT, UTC-8)' },
+      { value: 'America/Sao_Paulo', label: 'Brasilia (BRT, UTC-3)' },
+    ],
+  },
+  {
+    label: 'Europe',
+    zones: [
+      { value: 'Europe/London', label: 'London (GMT/BST)' },
+      { value: 'Europe/Berlin', label: 'Berlin (CET, UTC+1)' },
+      { value: 'Europe/Moscow', label: 'Moscow (MSK, UTC+3)' },
+    ],
+  },
+  {
+    label: 'Asia & Pacific',
+    zones: [
+      { value: 'Asia/Dubai', label: 'Dubai (GST, UTC+4)' },
+      { value: 'Asia/Singapore', label: 'Singapore (SGT, UTC+8)' },
+      { value: 'Asia/Tokyo', label: 'Tokyo (JST, UTC+9)' },
+      { value: 'Asia/Shanghai', label: 'China (CST, UTC+8)' },
+      { value: 'Australia/Sydney', label: 'Sydney (AEST, UTC+10)' },
+      { value: 'Pacific/Auckland', label: 'Auckland (NZST, UTC+12)' },
+    ],
+  },
+];
+
+function TimezonePicker({ currentTimezone }: { currentTimezone: string }) {
+  const [tz, setTz] = React.useState(currentTimezone || 'Asia/Kolkata');
+  const [saving, setSaving] = React.useState(false);
+  const [saved, setSaved] = React.useState(false);
+  const detectedTz = React.useMemo(() => {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return null; }
+  }, []);
+
+  const showDetectButton = detectedTz && detectedTz !== tz;
+
+  async function saveTz(newTz: string) {
+    setTz(newTz);
+    setSaving(true);
+    setSaved(false);
+
+    // Update profiles table
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      await supabase.from('profiles').update({ timezone: newTz }).eq('id', user.id);
+    }
+    // Also update email_preferences timezone
+    await fetch('/api/email-preferences', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ timezone: newTz }),
+    });
+
+    // Update local store
+    const currentUser = useStore.getState().user;
+    if (currentUser) {
+      useStore.setState({ user: { ...currentUser, timezone: newTz } });
+    }
+
+    setSaving(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  return (
+    <div className="mt-3">
+      <div className="flex items-center gap-2 mb-1.5">
+        <Globe className="w-3.5 h-3.5 text-white/30" />
+        <span className="text-xs text-white/40">Timezone</span>
+        {saving && <span className="text-[10px] text-cyan-400/60">saving...</span>}
+        {saved && <span className="text-[10px] text-green-400/60">saved</span>}
+      </div>
+      <select
+        value={tz}
+        onChange={e => saveTz(e.target.value)}
+        className="w-full px-3 py-2 bg-white/[0.04] border border-white/[0.06] rounded-lg text-xs text-white/70 focus:outline-none focus:border-cyan-500/30 appearance-none cursor-pointer"
+      >
+        {TIMEZONE_GROUPS.map(g => (
+          <optgroup key={g.label} label={g.label}>
+            {g.zones.map(z => (
+              <option key={z.value} value={z.value}>{z.label}</option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+      {showDetectButton && (
+        <button
+          onClick={() => saveTz(detectedTz)}
+          className="mt-1.5 text-[11px] text-cyan-400/60 hover:text-cyan-400 transition-colors"
+        >
+          Detect from browser → {detectedTz}
+        </button>
+      )}
+      <p className="text-[10px] text-white/20 mt-1">
+        Controls when morning (8 AM), afternoon (2 PM), and nightly (9 PM) emails arrive.
+      </p>
+    </div>
   );
 }
 

@@ -276,12 +276,30 @@ export const useStore = create<AppState>((set, get) => ({
           .single();
 
         if (profile) {
+          // Auto-detect timezone if the profile doesn't have one yet
+          let timezone = profile.timezone || 'UTC';
+          if (typeof window !== 'undefined' && (!profile.timezone || profile.timezone === 'UTC' || profile.timezone === 'Asia/Kolkata')) {
+            try {
+              const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+              if (detected && detected !== profile.timezone) {
+                timezone = detected;
+                // Persist detected timezone to profile + email_preferences (fire-and-forget)
+                supabase.from('profiles').update({ timezone: detected }).eq('id', profile.id).then(() => {});
+                fetch('/api/email-preferences', {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ timezone: detected }),
+                }).catch(() => {});
+              }
+            } catch { /* ignore */ }
+          }
+
           // Convert Supabase profile to local User shape
           const supaUser = {
             id: profile.id,
             name: profile.name || session.user.user_metadata?.name || '',
             email: profile.email || session.user.email || '',
-            timezone: profile.timezone || 'UTC',
+            timezone,
             created_at: profile.created_at,
             onboarding_completed: profile.onboarding_completed,
             avatar_url: profile.avatar_url,
