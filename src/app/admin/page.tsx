@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { requireAdmin } from '@/lib/admin';
-import { Users, Ticket, BarChart3, FileText } from 'lucide-react';
+import { Users, Ticket, BarChart3, FileText, Mail } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +34,7 @@ export default async function AdminOverviewPage() {
     { href: '/admin/coupons', label: 'Coupons', desc: 'Create, disable, and inspect redemptions.', icon: Ticket },
     { href: '/admin/metrics', label: 'Metrics', desc: 'Signups, DAU, MRR, conversion.', icon: BarChart3 },
     { href: '/admin/content', label: 'Content', desc: 'Edit landing copy, paywall text and more.', icon: FileText },
+    { href: '/admin/email', label: 'Email', desc: 'Send emails, view log, manage cron emails.', icon: Mail },
   ];
 
   return (

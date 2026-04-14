@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
-import { X, Bell, Volume2, Clock, Palette, Check, CreditCard, AlertTriangle } from 'lucide-react';
+import { X, Bell, Volume2, Clock, Palette, Check, CreditCard, AlertTriangle, Mail } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import * as storage from '@/lib/storage';
 import { DISPLAY_PRICE_PER_MONTH } from '@/lib/pricing';
@@ -422,6 +422,9 @@ export function SettingsModal() {
               </div>
 
               {/* Danger Zone */}
+              {/* Email preferences */}
+              <EmailPreferences />
+
               <div className="pt-4 border-t border-red-500/10">
                 <div className="flex items-center gap-2 mb-3">
                   <AlertTriangle className="w-4 h-4 text-red-400" />
@@ -497,5 +500,114 @@ export function SettingsModal() {
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+// ── Email Preferences Sub-component ──────────────────────────────
+
+function EmailPreferences() {
+  const [prefs, setPrefs] = React.useState<{
+    morning_email: boolean;
+    afternoon_email: boolean;
+    nightly_email: boolean;
+    admin_emails: boolean;
+    unsubscribed_all: boolean;
+  } | null>(null);
+  const [loaded, setLoaded] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    fetch('/api/email-preferences')
+      .then(r => r.json())
+      .then(d => { setPrefs(d); setLoaded(true); })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  async function toggle(key: keyof NonNullable<typeof prefs>) {
+    if (!prefs) return;
+    const newVal = !prefs[key];
+    const updated = { ...prefs, [key]: newVal };
+
+    // If unsubscribing all, disable everything
+    if (key === 'unsubscribed_all' && newVal) {
+      updated.morning_email = false;
+      updated.afternoon_email = false;
+      updated.nightly_email = false;
+      updated.admin_emails = false;
+    }
+    // If re-enabling any, turn off unsubscribed_all
+    if (key !== 'unsubscribed_all' && newVal) {
+      updated.unsubscribed_all = false;
+    }
+
+    setPrefs(updated);
+    setSaving(true);
+    await fetch('/api/email-preferences', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updated),
+    });
+    setSaving(false);
+  }
+
+  if (!loaded) return null;
+
+  const items = [
+    { key: 'morning_email' as const, label: 'Morning plan', desc: '8 AM — recap + plan your day' },
+    { key: 'afternoon_email' as const, label: 'Afternoon check-in', desc: '2 PM — progress + reminder' },
+    { key: 'nightly_email' as const, label: 'Nightly recap', desc: '9 PM — day summary + plan tomorrow' },
+    { key: 'admin_emails' as const, label: 'Product updates', desc: 'Announcements from EffortOS' },
+  ];
+
+  return (
+    <div className="pt-4 border-t border-white/[0.06]">
+      <div className="flex items-center gap-2 mb-3">
+        <Mail className="w-4 h-4 text-cyan-400" />
+        <h4 className="text-sm font-medium text-white/70">Email notifications</h4>
+        {saving && <span className="text-[10px] text-cyan-400/60">saving...</span>}
+      </div>
+      <div className="space-y-2">
+        {items.map(item => (
+          <label key={item.key} className="flex items-center justify-between py-1.5 cursor-pointer group">
+            <div>
+              <p className="text-xs text-white/70 group-hover:text-white/90 transition-colors">{item.label}</p>
+              <p className="text-[10px] text-white/30">{item.desc}</p>
+            </div>
+            <button
+              onClick={() => toggle(item.key)}
+              className={`w-8 h-4.5 rounded-full transition-colors relative ${
+                prefs?.[item.key] ? 'bg-cyan-500' : 'bg-white/10'
+              }`}
+              style={{ minWidth: 32, height: 18 }}
+            >
+              <span
+                className={`absolute top-[2px] w-[14px] h-[14px] rounded-full bg-white transition-transform ${
+                  prefs?.[item.key] ? 'translate-x-[16px]' : 'translate-x-[2px]'
+                }`}
+              />
+            </button>
+          </label>
+        ))}
+
+        <label className="flex items-center justify-between py-1.5 cursor-pointer group mt-2 pt-2 border-t border-white/[0.04]">
+          <div>
+            <p className="text-xs text-red-400/70">Unsubscribe from all</p>
+          </div>
+          <button
+            onClick={() => toggle('unsubscribed_all')}
+            className={`w-8 h-4.5 rounded-full transition-colors relative ${
+              prefs?.unsubscribed_all ? 'bg-red-500' : 'bg-white/10'
+            }`}
+            style={{ minWidth: 32, height: 18 }}
+          >
+            <span
+              className={`absolute top-[2px] w-[14px] h-[14px] rounded-full bg-white transition-transform ${
+                prefs?.unsubscribed_all ? 'translate-x-[16px]' : 'translate-x-[2px]'
+              }`}
+            />
+          </button>
+        </label>
+      </div>
+    </div>
   );
 }

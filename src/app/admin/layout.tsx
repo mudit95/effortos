@@ -2,7 +2,7 @@ import React from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { requireAdmin } from '@/lib/admin';
-import { LayoutDashboard, Users, Ticket, BarChart3, FileText, LogOut } from 'lucide-react';
+import { LayoutDashboard, Users, Ticket, BarChart3, FileText, Mail, LogOut } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +19,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: '/admin/coupons', label: 'Coupons', icon: Ticket },
     { href: '/admin/metrics', label: 'Metrics', icon: BarChart3 },
     { href: '/admin/content', label: 'Content', icon: FileText },
+    { href: '/admin/email', label: 'Email', icon: Mail },
   ];
 
   return (
