@@ -530,6 +530,8 @@ export function DailyGrind() {
       <div className="lg:col-span-3 space-y-4">
         <StreakCalendar
           dailySessions={dashboardStats?.daily_sessions || []}
+          recommendedDaily={activeGoal?.recommended_sessions_per_day}
+          focusDurationSec={user?.settings?.focus_duration ?? 25 * 60}
         />
         <AIInsightCard
           sessionsCompleted={donePomodoros}

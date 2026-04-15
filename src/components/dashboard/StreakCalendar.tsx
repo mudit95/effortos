@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { motion } from 'framer-motion';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ChevronLeft, ChevronRight, Flame, Clock, Target } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface DailySession {
@@ -17,15 +17,34 @@ interface StreakCalendarProps {
   dailyData?: Record<string, number>;
   currentStreak?: number;
   bestStreak?: number;
+  // NEW: target sessions per day for performance coloring
+  recommendedDaily?: number;
+  // NEW: focus duration in seconds (default 25 min)
+  focusDurationSec?: number;
   className?: string;
   onDayClick?: (date: string) => void;
 }
+
+type HoverInfo = {
+  dateStr: string;
+  day: number;
+  month: number;
+  year: number;
+  count: number;
+  perf: number; // 0-1 fill
+  isToday: boolean;
+  isFuture: boolean;
+  // anchor rect for positioning
+  rect: { left: number; top: number; width: number; height: number };
+};
 
 export function StreakCalendar({
   dailySessions,
   dailyData,
   currentStreak: providedCurrentStreak,
   bestStreak: providedBestStreak,
+  recommendedDaily,
+  focusDurationSec = 25 * 60,
   className = '',
   onDayClick,
 }: StreakCalendarProps) {
@@ -71,7 +90,6 @@ export function StreakCalendar({
         tempStreak++;
         best = Math.max(best, tempStreak);
       } else {
-        // Break in streak - check if this is today or yesterday
         const isToday =
           checkDate.getFullYear() === currentYear &&
           checkDate.getMonth() === currentMonth &&
@@ -85,8 +103,8 @@ export function StreakCalendar({
         }
       }
 
-      checkDate = new Date(checkDate.getTime() - 86400000); // Go back 1 day
-      if (checkDate.getFullYear() < currentYear - 2) break; // Don't go back too far
+      checkDate = new Date(checkDate.getTime() - 86400000);
+      if (checkDate.getFullYear() < currentYear - 2) break;
     }
 
     return { currentStreak: current, bestStreak: best };
@@ -102,36 +120,25 @@ export function StreakCalendar({
   const currentMonth = today.getMonth();
   const currentDay = today.getDate();
 
-  // Get the first day of the month
+  // First day of displayed month
   const firstDayOfMonth = new Date(displayDate.getFullYear(), displayDate.getMonth(), 1);
   const lastDayOfMonth = new Date(displayDate.getFullYear(), displayDate.getMonth() + 1, 0);
-
-  // 0 = Monday, 6 = Sunday (getDay returns 0 = Sunday, so we adjust)
   const firstDayOfWeek = (firstDayOfMonth.getDay() + 6) % 7;
   const daysInMonth = lastDayOfMonth.getDate();
 
-  // Format date as YYYY-MM-DD
-  const formatDate = (year: number, month: number, day: number): string => {
-    return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  };
+  const formatDate = (year: number, month: number, day: number): string =>
+    `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 
-  // Check if a date is today
-  const isToday = (year: number, month: number, day: number): boolean => {
-    return (
-      year === currentYear &&
-      month === currentMonth &&
-      day === currentDay
-    );
-  };
+  const isTodayDate = (year: number, month: number, day: number): boolean =>
+    year === currentYear && month === currentMonth && day === currentDay;
 
-  // Check if a date is in the future
-  const isFuture = (year: number, month: number, day: number): boolean => {
+  const isFutureDate = (year: number, month: number, day: number): boolean => {
     const checkDate = new Date(year, month, day);
     const todayDate = new Date(currentYear, currentMonth, currentDay);
     return checkDate > todayDate;
   };
 
-  // Calculate max value for the visible month
+  // Compute max value for this month so we can fall back if no target exists
   const maxValue = useMemo(() => {
     let max = 0;
     for (let day = 1; day <= daysInMonth; day++) {
@@ -142,58 +149,74 @@ export function StreakCalendar({
     return Math.max(1, max);
   }, [displayDate, dataMap, daysInMonth]);
 
-  // Get heatmap color based on intensity
-  const getHeatmapColor = (count: number): string => {
-    if (count === 0) return 'bg-white/[0.03]';
-    const intensity = count / maxValue;
-    if (intensity < 0.25) return 'bg-cyan-500/15';
-    if (intensity < 0.5) return 'bg-cyan-500/30';
-    if (intensity < 0.75) return 'bg-cyan-500/50';
-    return 'bg-cyan-500/70';
+  // Performance ratio 0..1 — relative to recommendedDaily target when available,
+  // otherwise relative to the visible month's max so the calendar still conveys
+  // a sense of relative intensity.
+  const getPerformance = (count: number): number => {
+    if (count <= 0) return 0;
+    const target = recommendedDaily && recommendedDaily > 0 ? recommendedDaily : maxValue;
+    return Math.min(1, count / target);
   };
 
-  // Navigate to previous month
-  const goToPreviousMonth = () => {
-    setDisplayDate(
-      new Date(displayDate.getFullYear(), displayDate.getMonth() - 1, 1)
-    );
+  // Cell background — quantized color ramp from low to high performance.
+  // Uses cyan→emerald to signal "meeting or exceeding target".
+  const getCellBg = (perf: number): string => {
+    if (perf <= 0) return 'bg-white/[0.03]';
+    if (perf < 0.25) return 'bg-cyan-500/15';
+    if (perf < 0.5) return 'bg-cyan-500/30';
+    if (perf < 0.75) return 'bg-cyan-500/50';
+    if (perf < 1) return 'bg-cyan-500/70';
+    return 'bg-emerald-500/70';
   };
 
-  // Navigate to next month
-  const goToNextMonth = () => {
-    setDisplayDate(
-      new Date(displayDate.getFullYear(), displayDate.getMonth() + 1, 1)
-    );
-  };
+  const goToPreviousMonth = () =>
+    setDisplayDate(new Date(displayDate.getFullYear(), displayDate.getMonth() - 1, 1));
+  const goToNextMonth = () =>
+    setDisplayDate(new Date(displayDate.getFullYear(), displayDate.getMonth() + 1, 1));
 
-  // Build calendar grid
   const calendarDays = useMemo(() => {
-    const days = [];
-
-    // Add empty cells for days before the month starts
-    for (let i = 0; i < firstDayOfWeek; i++) {
-      days.push(null);
-    }
-
-    // Add days of the month
-    for (let day = 1; day <= daysInMonth; day++) {
-      days.push(day);
-    }
-
+    const days: Array<number | null> = [];
+    for (let i = 0; i < firstDayOfWeek; i++) days.push(null);
+    for (let day = 1; day <= daysInMonth; day++) days.push(day);
     return days;
   }, [firstDayOfWeek, daysInMonth]);
 
-  // Day labels (Mon-Sun)
   const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-  // Format month/year for display
   const monthName = displayDate.toLocaleString('default', { month: 'long', year: 'numeric' });
-
-  // Check if we can navigate forward (not beyond current month)
   const canGoForward = !(
-    displayDate.getFullYear() === currentYear &&
-    displayDate.getMonth() === currentMonth
+    displayDate.getFullYear() === currentYear && displayDate.getMonth() === currentMonth
   );
+
+  // ── Hover tooltip state ─────────────────────────────────────────────
+  const [hover, setHover] = useState<HoverInfo | null>(null);
+
+  const handleMouseEnter = (
+    e: React.MouseEvent<HTMLButtonElement>,
+    payload: Omit<HoverInfo, 'rect'>,
+  ) => {
+    const el = e.currentTarget;
+    const rect = el.getBoundingClientRect();
+    setHover({
+      ...payload,
+      rect: {
+        left: rect.left + window.scrollX,
+        top: rect.top + window.scrollY,
+        width: rect.width,
+        height: rect.height,
+      },
+    });
+  };
+  const handleMouseLeave = () => setHover(null);
+
+  // Readable date string for tooltip — "Tue, Apr 15"
+  const formatTooltipDate = (y: number, m: number, d: number): string => {
+    const dt = new Date(y, m, d);
+    return dt.toLocaleDateString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
+  };
 
   return (
     <div className={cn('w-full', className)}>
@@ -207,18 +230,14 @@ export function StreakCalendar({
           <ChevronLeft className="w-4 h-4 text-white/60" />
         </button>
 
-        <h3 className="text-sm font-semibold text-white">
-          {monthName}
-        </h3>
+        <h3 className="text-sm font-semibold text-white">{monthName}</h3>
 
         <button
           onClick={goToNextMonth}
           disabled={!canGoForward}
           className={cn(
             'p-1.5 rounded-md transition-colors duration-200',
-            canGoForward
-              ? 'hover:bg-white/5'
-              : 'opacity-30 cursor-not-allowed'
+            canGoForward ? 'hover:bg-white/5' : 'opacity-30 cursor-not-allowed',
           )}
           aria-label="Next month"
         >
@@ -242,37 +261,60 @@ export function StreakCalendar({
       <div className="grid grid-cols-7 gap-1 px-2 mb-4">
         {calendarDays.map((day, index) => {
           if (day === null) {
-            return (
-              <div
-                key={`empty-${index}`}
-                className="aspect-square"
-              />
-            );
+            return <div key={`empty-${index}`} className="aspect-square" />;
           }
 
-          const dateStr = formatDate(displayDate.getFullYear(), displayDate.getMonth(), day);
+          const y = displayDate.getFullYear();
+          const m = displayDate.getMonth();
+          const dateStr = formatDate(y, m, day);
           const count = dataMap[dateStr] || 0;
-          const isTodayCell = isToday(displayDate.getFullYear(), displayDate.getMonth(), day);
-          const isFutureCell = isFuture(displayDate.getFullYear(), displayDate.getMonth(), day);
+          const perf = getPerformance(count);
+          const isTodayCell = isTodayDate(y, m, day);
+          const isFutureCell = isFutureDate(y, m, day);
 
           return (
             <motion.button
               key={dateStr}
               onClick={() => onDayClick?.(dateStr)}
+              onMouseEnter={(e) =>
+                !isFutureCell &&
+                handleMouseEnter(e, {
+                  dateStr,
+                  day,
+                  month: m,
+                  year: y,
+                  count,
+                  perf,
+                  isToday: isTodayCell,
+                  isFuture: isFutureCell,
+                })
+              }
+              onMouseLeave={handleMouseLeave}
               whileHover={!isFutureCell ? { scale: 1.05 } : {}}
               whileTap={!isFutureCell ? { scale: 0.98 } : {}}
               className={cn(
-                'aspect-square rounded-md transition-all duration-200 relative',
+                'aspect-square rounded-md transition-all duration-200 relative overflow-hidden',
                 'flex items-center justify-center text-xs font-medium',
                 'cursor-pointer',
-                getHeatmapColor(count),
+                getCellBg(perf),
                 isTodayCell && 'ring-2 ring-cyan-400/70 ring-inset',
-                isFutureCell && 'border border-dashed border-white/20 cursor-default'
+                isFutureCell && 'border border-dashed border-white/20 cursor-default',
               )}
-              title={`${dateStr}: ${count} pomodoros`}
               disabled={isFutureCell}
+              aria-label={`${dateStr}: ${count} pomodoros`}
             >
-              <span className="text-white/70 text-xs">{day}</span>
+              {/* Fill-level bar at bottom of the cell — shows pace toward target */}
+              {!isFutureCell && perf > 0 && (
+                <span
+                  className={cn(
+                    'absolute bottom-0 left-0 h-[3px] rounded-full',
+                    perf >= 1 ? 'bg-emerald-400' : 'bg-cyan-300',
+                  )}
+                  style={{ width: `${Math.round(perf * 100)}%` }}
+                  aria-hidden
+                />
+              )}
+              <span className="relative text-white/70 text-xs">{day}</span>
             </motion.button>
           );
         })}
@@ -280,13 +322,125 @@ export function StreakCalendar({
 
       {/* Streak Badge */}
       <div className="flex items-center justify-center gap-2 text-sm text-white/80 px-2 py-2 bg-white/[0.02] rounded-lg border border-white/10">
-        <span>🔥</span>
+        <Flame className="w-3.5 h-3.5 text-orange-400" />
         <span className="font-semibold">{currentStreak}</span>
         <span className="text-white/50">day streak</span>
         <span className="text-white/30">·</span>
         <span className="text-white/50">Best:</span>
         <span className="font-semibold text-white">{bestStreak}</span>
       </div>
+
+      {/* ── Rich hover tooltip ─────────────────────────────────────── */}
+      <AnimatePresence>
+        {hover && (
+          <CalendarTooltip
+            hover={hover}
+            focusDurationSec={focusDurationSec}
+            recommendedDaily={recommendedDaily}
+            formatDate={formatTooltipDate}
+          />
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+// ── Tooltip component rendered at the calendar root so it can escape overflow
+// and be positioned via fixed coordinates relative to the hovered cell.
+function CalendarTooltip({
+  hover,
+  focusDurationSec,
+  recommendedDaily,
+  formatDate,
+}: {
+  hover: HoverInfo;
+  focusDurationSec: number;
+  recommendedDaily?: number;
+  formatDate: (y: number, m: number, d: number) => string;
+}) {
+  const hours = +(hover.count * (focusDurationSec / 3600)).toFixed(1);
+  const pct = Math.round(hover.perf * 100);
+  const label = formatDate(hover.year, hover.month, hover.day);
+
+  // Center the tooltip above the cell
+  const left = hover.rect.left + hover.rect.width / 2;
+  const top = hover.rect.top;
+
+  const performanceLabel =
+    hover.count <= 0
+      ? 'No sessions'
+      : hover.perf >= 1
+      ? 'Hit target 🔥'
+      : hover.perf >= 0.75
+      ? 'Strong day'
+      : hover.perf >= 0.5
+      ? 'Steady'
+      : hover.perf >= 0.25
+      ? 'Light day'
+      : 'Warm-up';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 4, scale: 0.96 }}
+      transition={{ duration: 0.12 }}
+      // pointer-events-none so hover doesn't bounce between cell and tooltip
+      className="pointer-events-none fixed z-[60] -translate-x-1/2 -translate-y-[calc(100%+10px)]"
+      style={{ left, top }}
+      role="tooltip"
+    >
+      <div className="min-w-[180px] rounded-lg border border-white/10 bg-[#0B0F14]/95 backdrop-blur-md shadow-xl p-3 text-left">
+        <div className="text-[11px] text-white/40 uppercase tracking-wider mb-1">
+          {label}
+          {hover.isToday && <span className="ml-1.5 text-cyan-400/80 normal-case">· Today</span>}
+        </div>
+        <div className="text-sm font-semibold text-white mb-2">{performanceLabel}</div>
+
+        <div className="space-y-1.5 text-xs">
+          <div className="flex items-center justify-between text-white/70">
+            <span className="inline-flex items-center gap-1.5">
+              <Target className="w-3 h-3 text-cyan-400/80" />
+              Sessions
+            </span>
+            <span className="font-medium text-white">
+              {hover.count}
+              {recommendedDaily ? (
+                <span className="text-white/40 font-normal"> / {recommendedDaily}</span>
+              ) : null}
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-white/70">
+            <span className="inline-flex items-center gap-1.5">
+              <Clock className="w-3 h-3 text-cyan-400/80" />
+              Focus
+            </span>
+            <span className="font-medium text-white">{hours}h</span>
+          </div>
+          {hover.count > 0 && (
+            <div className="flex items-center justify-between text-white/70">
+              <span className="inline-flex items-center gap-1.5">
+                <Flame className="w-3 h-3 text-orange-400/80" />
+                Pace
+              </span>
+              <span
+                className={cn(
+                  'font-medium',
+                  hover.perf >= 1
+                    ? 'text-emerald-300'
+                    : hover.perf >= 0.5
+                    ? 'text-cyan-300'
+                    : 'text-white/70',
+                )}
+              >
+                {pct}%
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+      {/* caret */}
+      <div className="absolute left-1/2 -translate-x-1/2 -bottom-1 w-2 h-2 rotate-45 bg-[#0B0F14]/95 border-r border-b border-white/10" />
+    </motion.div>
   );
 }

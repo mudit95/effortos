@@ -33,14 +33,20 @@ export function AppShell() {
     const theme = getStoredTheme();
     applyTheme(theme);
 
-    // Listen for Supabase auth state changes (sign-in, token refresh)
+    // Listen for Supabase auth state changes (initial hydration, sign-in, token refresh).
+    // INITIAL_SESSION fires on page refresh once the session cookie is rehydrated — we
+    // re-run initializeApp so the cloud path has a chance to populate state. Without
+    // this, a transient cookie hydration race can leave us stuck on the spinner or
+    // fall through to the localStorage path and incorrectly open onboarding.
     let subscription: { unsubscribe: () => void } | null = null;
     try {
       const supabase = createClient();
       const { data } = supabase.auth.onAuthStateChange(
-        (event: string) => {
-          if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-            initializeApp();
+        (event: string, session: { user?: unknown } | null) => {
+          if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+            if (session?.user) {
+              initializeApp();
+            }
           }
           // SIGNED_OUT is handled by the logout() action — no need to re-initialize
         }

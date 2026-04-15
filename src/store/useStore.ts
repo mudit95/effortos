@@ -405,14 +405,25 @@ export const useStore = create<AppState>((set, get) => ({
     // Reset data layer provider cache
     resetDataLayerProvider();
 
-    // If Supabase IS configured but we fell through here, it means the session
-    // wasn't established yet (e.g. cookie hydration race on refresh). Don't
-    // silently drop the user into onboarding — keep the spinner up and let the
-    // auth state listener (SIGNED_IN / TOKEN_REFRESHED) re-run initializeApp
-    // once the session is ready.
-    if (isSupabaseConfigured() && !isCloud) {
-      // Bail out quietly — don't touch currentView, don't clear user.
-      // AppShell will keep showing the loading spinner until auth hydrates.
+    // If Supabase IS configured, NEVER fall through to the localStorage path
+    // below. We only reach this branch if cloud hydration didn't fully succeed
+    // (no session yet, profile fetch failed, etc.). The localStorage path can
+    // incorrectly open onboarding when the cache is empty or stale. Instead,
+    // stop here and let the auth state listener (INITIAL_SESSION / SIGNED_IN /
+    // TOKEN_REFRESHED) re-run initializeApp once the session is ready.
+    //
+    // If we already have a hydrated user in memory, keep them on the dashboard
+    // rather than showing the loading spinner forever — a previous successful
+    // init likely populated state, and a transient refresh re-init shouldn't
+    // knock them off the dashboard.
+    if (isSupabaseConfigured()) {
+      const existing = get();
+      if (existing.isAuthenticated && existing.user) {
+        // Already hydrated — nothing more to do.
+        set({ isLoading: false });
+        return;
+      }
+      // Not yet hydrated — keep spinner up. Auth listener will re-trigger.
       return;
     }
 

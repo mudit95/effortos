@@ -20,6 +20,7 @@ import { WelcomeCard } from './WelcomeCard';
 import { DailyGrind } from './DailyGrind';
 import { Reports } from './Reports';
 import { StreakCalendar } from './StreakCalendar';
+import { TimezoneClock } from './TimezoneClock';
 import { AIInsightCard, AIMotivationCard } from './AICards';
 import { PaywallModal } from '@/components/subscription/PaywallModal';
 import { TrialBanner } from '@/components/subscription/TrialBanner';
@@ -296,7 +297,11 @@ function LongTermView({
           {/* Streak Calendar */}
           <PremiumGate label="Streak Calendar" minHeight="200px">
             <div className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
-              <StreakCalendar dailySessions={dashboardStats?.daily_sessions || []} />
+              <StreakCalendar
+                dailySessions={dashboardStats?.daily_sessions || []}
+                recommendedDaily={activeGoal.recommended_sessions_per_day}
+                focusDurationSec={useStore.getState().user?.settings?.focus_duration ?? 25 * 60}
+              />
             </div>
           </PremiumGate>
         </div>
@@ -371,6 +376,8 @@ function DashboardHeader({ user, onLogout, onSettings, onHistory }: {
           <span className="text-sm font-semibold text-white tracking-tight hidden sm:inline">EffortOS</span>
         </div>
         <div className="flex items-center gap-1">
+          <TimezoneClock />
+          <div className="w-px h-4 bg-white/[0.06] mx-1 hidden sm:block" />
           <Button
             variant="ghost"
             size="sm"
