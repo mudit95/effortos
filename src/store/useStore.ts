@@ -316,14 +316,13 @@ export const useStore = create<AppState>((set, get) => ({
           storage.setUser(supaUser);
 
           // ── Cloud path: load data from Supabase ──
-          // Clear localStorage goals cache — cloud is the source of truth.
-          // This prevents stale cached goals from being mistaken for demo-mode
-          // data that needs migration on every reload.
-
-          // Preserve localStorage goals as fallback
+          // Keep localStorage goals cached as an offline fallback — we only
+          // overwrite it after a successful cloud fetch, never clear it
+          // eagerly. Clearing eagerly caused a race on page refresh where a
+          // transient auth hiccup would fall through to the localStorage path
+          // with zero goals and incorrectly open the onboarding flow.
           let cachedGoals: Goal[] = [];
           try { cachedGoals = storage.getGoals(); } catch { /* ok */ }
-          try { localStorage.removeItem('effortos_goals'); } catch { /* ok */ }
 
           let cloudGoals: Goal[];
           try {
@@ -379,7 +378,16 @@ export const useStore = create<AppState>((set, get) => ({
             dailyTasks,
             repeatingTemplates,
             dailyViewDate: todayKey,
-            currentView: cloudActiveGoal ? 'dashboard' : (supaUser.onboarding_completed ? 'dashboard' : 'onboarding'),
+            // Priority: active goal → dashboard.
+            // Otherwise, if user has ever completed onboarding OR has ANY goal
+            // in their history (paused/completed), keep them on dashboard.
+            // Only a brand-new user with no goals and no onboarding goes to onboarding.
+            currentView:
+              cloudActiveGoal
+                ? 'dashboard'
+                : (supaUser.onboarding_completed || cloudGoals.length > 0)
+                  ? 'dashboard'
+                  : 'onboarding',
           });
 
           if (cloudActiveGoal) get().refreshDashboard();
@@ -396,6 +404,17 @@ export const useStore = create<AppState>((set, get) => ({
     // ── Local path: load data from localStorage ──
     // Reset data layer provider cache
     resetDataLayerProvider();
+
+    // If Supabase IS configured but we fell through here, it means the session
+    // wasn't established yet (e.g. cookie hydration race on refresh). Don't
+    // silently drop the user into onboarding — keep the spinner up and let the
+    // auth state listener (SIGNED_IN / TOKEN_REFRESHED) re-run initializeApp
+    // once the session is ready.
+    if (isSupabaseConfigured() && !isCloud) {
+      // Bail out quietly — don't touch currentView, don't clear user.
+      // AppShell will keep showing the loading spinner until auth hydrates.
+      return;
+    }
 
     const user = storage.getUser();
     if (user) {
