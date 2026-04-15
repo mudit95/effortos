@@ -11,10 +11,17 @@ export function TrialBanner() {
   const setShowPaywall = useStore(s => s.setShowPaywall);
 
   const trialInfo = useMemo(() => {
+    // Premium takes precedence — if user has a future period end, hide banner entirely
+    if (subscription.current_period_end && new Date(subscription.current_period_end) > new Date()) {
+      return null;
+    }
+    // Only show banner for actively trialing users with a future trial end
     if (subscription.status !== 'trialing' || !subscription.trial_ends_at) return null;
 
     const endsAt = new Date(subscription.trial_ends_at);
     const now = new Date();
+    if (endsAt <= now) return null; // trial already expired — different UI handles this
+
     const hoursLeft = Math.max(0, Math.ceil((endsAt.getTime() - now.getTime()) / (1000 * 60 * 60)));
     const daysLeft = Math.ceil(hoursLeft / 24);
     const isUrgent = hoursLeft <= 24;

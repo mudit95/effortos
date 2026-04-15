@@ -21,7 +21,7 @@ export async function GET() {
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
     if (!sub) {
       // No subscription record — check if user is within the implicit
@@ -44,28 +44,41 @@ export async function GET() {
       });
     }
 
-    // Check if trial has expired but status wasn't updated by webhook
-    if (sub.status === 'trialing' && sub.trial_ends_at) {
-      const trialEnd = new Date(sub.trial_ends_at);
-      if (new Date() > trialEnd) {
-        // Trial ended — check if Razorpay has charged (webhook should handle this,
-        // but this is a fallback). If no payment was made, mark as expired.
-        if (!sub.razorpay_payment_id) {
-          await supabase
-            .from('subscriptions')
-            .update({ status: 'expired' })
-            .eq('id', sub.id);
-          return NextResponse.json({ ...sub, status: 'expired' });
-        }
-        // Payment exists — trial converted to active
+    const now = new Date();
+
+    // PRIORITY 1: Premium (active with period end in the future) takes precedence
+    // over everything else. If admin granted premium OR Razorpay charged the card,
+    // the user is premium — even if they also have a future trial_ends_at.
+    if (sub.current_period_end && new Date(sub.current_period_end) > now) {
+      // Normalise status to 'active' on read if the DB hasn't caught up
+      // (e.g. admin extended trial after granting premium and left status='trialing')
+      if (sub.status !== 'active' && sub.status !== 'past_due' && sub.status !== 'cancelled') {
         await supabase
           .from('subscriptions')
           .update({ status: 'active' })
           .eq('id', sub.id);
         return NextResponse.json({ ...sub, status: 'active' });
       }
+      return NextResponse.json(sub);
     }
 
+    // PRIORITY 2: Trialing with a future trial_ends_at → still in trial
+    if (sub.status === 'trialing' && sub.trial_ends_at && new Date(sub.trial_ends_at) > now) {
+      return NextResponse.json(sub);
+    }
+
+    // PRIORITY 3: Trial has expired — resolve the final state
+    if (sub.status === 'trialing' && sub.trial_ends_at && new Date(sub.trial_ends_at) <= now) {
+      // No future period end reached the first check, so no payment.
+      // Mark as expired.
+      await supabase
+        .from('subscriptions')
+        .update({ status: 'expired' })
+        .eq('id', sub.id);
+      return NextResponse.json({ ...sub, status: 'expired' });
+    }
+
+    // Everything else (cancelled, expired, past_due without future period) → return as-is
     return NextResponse.json(sub);
   } catch (err) {
     console.error('Subscription status error:', err);

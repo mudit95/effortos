@@ -26,10 +26,18 @@ export async function POST(req: Request) {
   const newTrialEnd = new Date(baseMs + addMs).toISOString();
 
   if (existing) {
-    // Update by id so we target the exact row even when duplicates exist
+    // Don't downgrade premium/paid users to 'trialing' — if they have a future
+    // period end, they're premium. Just bump trial_ends_at in case it's ever needed.
+    const hasFuturePeriodEnd =
+      existing.current_period_end && new Date(existing.current_period_end).getTime() > now;
+    const nextStatus =
+      hasFuturePeriodEnd && (existing.status === 'active' || existing.status === 'past_due')
+        ? existing.status
+        : 'trialing';
+
     const { error } = await supabase
       .from('subscriptions')
-      .update({ status: 'trialing', trial_ends_at: newTrialEnd })
+      .update({ status: nextStatus, trial_ends_at: newTrialEnd })
       .eq('id', existing.id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   } else {

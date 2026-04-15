@@ -36,13 +36,20 @@ export async function requireActiveSub(): Promise<
     return { ok: false, reason: 'subscription_required', status: 402 };
   }
 
-  // Trialing with a future end date → OK
-  if (sub.status === 'trialing' && sub.trial_ends_at && new Date(sub.trial_ends_at) > new Date()) {
+  const now = new Date();
+
+  // Premium (future period end) takes precedence regardless of status string
+  if (sub.current_period_end && new Date(sub.current_period_end) > now) {
     return { ok: true, userId: user.id };
   }
 
-  // Active with a future period end → OK
-  if (sub.status === 'active' && (!sub.current_period_end || new Date(sub.current_period_end) > new Date())) {
+  // Trialing with a future end date → OK
+  if (sub.status === 'trialing' && sub.trial_ends_at && new Date(sub.trial_ends_at) > now) {
+    return { ok: true, userId: user.id };
+  }
+
+  // Active without period end (edge case, e.g. first activation) → OK
+  if (sub.status === 'active') {
     return { ok: true, userId: user.id };
   }
 

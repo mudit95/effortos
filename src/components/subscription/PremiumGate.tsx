@@ -28,7 +28,19 @@ export function PremiumGate({
   const subscriptionLoading = useStore(s => s.subscriptionLoading);
   const setShowPaywall = useStore(s => s.setShowPaywall);
 
-  const isActive = subscription.status === 'trialing' || subscription.status === 'active';
+  // User has premium access if:
+  //   (a) status is active/past_due (grace) with a future period end, OR
+  //   (b) status is trialing with a future trial end, OR
+  //   (c) status is active (fallback when period end not yet set)
+  const now = new Date();
+  const hasFuturePeriodEnd =
+    !!subscription.current_period_end && new Date(subscription.current_period_end) > now;
+  const hasFutureTrial =
+    !!subscription.trial_ends_at && new Date(subscription.trial_ends_at) > now;
+  const isActive =
+    hasFuturePeriodEnd ||
+    (subscription.status === 'trialing' && hasFutureTrial) ||
+    subscription.status === 'active';
 
   // While we're still figuring out subscription state, don't show a gate
   // (prevents flash of "Subscribe" for paying users).
