@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import crypto from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { extractIncomingMessage, sendTextMessage } from '@/lib/whatsapp';
 import { parseWhatsAppMessage, type WAIntent } from '@/lib/whatsapp-ai';
@@ -11,20 +11,25 @@ function verifyWebhookSignature(rawBody: string, signature: string | null): bool
   const appSecret = process.env.META_APP_SECRET;
   if (!appSecret) {
     // If secret isn't configured, skip verification (dev mode)
-    console.warn('[WhatsApp] META_APP_SECRET not set — skipping signature verification');
     return true;
   }
   if (!signature) return false;
 
-  const expectedSig = 'sha256=' + crypto
-    .createHmac('sha256', appSecret)
-    .update(rawBody)
-    .digest('hex');
+  try {
+    const expectedSig = 'sha256=' + createHmac('sha256', appSecret)
+      .update(rawBody)
+      .digest('hex');
 
-  return crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expectedSig),
-  );
+    // timingSafeEqual throws if lengths differ
+    const sigBuf = Buffer.from(signature);
+    const expectedBuf = Buffer.from(expectedSig);
+    if (sigBuf.length !== expectedBuf.length) return false;
+
+    return timingSafeEqual(sigBuf, expectedBuf);
+  } catch (err) {
+    console.error('[WhatsApp] Signature verification error:', err);
+    return false;
+  }
 }
 
 // ── Simple in-memory rate limiter ──
@@ -82,7 +87,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
     }
 
-    const body = JSON.parse(rawBody);
+    let body;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      console.error('[WhatsApp] Failed to parse webhook body');
+      return NextResponse.json({ status: 'ok' });
+    }
     const msg = extractIncomingMessage(body);
 
     // Not a user message (e.g. status callback) — acknowledge silently
