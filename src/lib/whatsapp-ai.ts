@@ -81,8 +81,25 @@ export async function parseWhatsAppMessage(message: string): Promise<WAIntent> {
       .map((b) => b.text)
       .join('');
 
-    console.log('[WhatsApp AI] Raw response:', text.slice(0, 200));
-    const parsed = JSON.parse(text);
+    console.log('[WhatsApp AI] Raw response:', text.slice(0, 300));
+
+    // Extract JSON from response — Claude sometimes wraps it in markdown backticks
+    let jsonStr = text.trim();
+
+    // Strip markdown code fences if present
+    const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fenceMatch) {
+      jsonStr = fenceMatch[1].trim();
+    }
+
+    // Try to find JSON object in the response
+    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.error('[WhatsApp AI] No JSON found in response:', text.slice(0, 200));
+      return { type: 'unknown', raw: message };
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
     console.log('[WhatsApp AI] Parsed intent:', parsed.type);
     return parsed as WAIntent;
   } catch (err) {
