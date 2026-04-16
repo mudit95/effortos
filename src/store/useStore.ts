@@ -423,7 +423,15 @@ export const useStore = create<AppState>((set, get) => ({
         set({ isLoading: false });
         return;
       }
-      // Not yet hydrated — keep spinner up. Auth listener will re-trigger.
+      // Not yet hydrated — wait briefly for auth listener to re-trigger.
+      // Safety net: if still loading after 3 seconds, show landing page
+      // so the user isn't stuck on a forever-spinner.
+      setTimeout(() => {
+        const s = get();
+        if (s.isLoading && !s.isAuthenticated) {
+          set({ isLoading: false, currentView: 'landing' });
+        }
+      }, 3000);
       return;
     }
 
