@@ -16,33 +16,40 @@ function getBaseUrl(phoneId: string) {
 /**
  * Send a plain text message to a WhatsApp user.
  */
-export async function sendTextMessage(to: string, body: string): Promise<void> {
+export async function sendTextMessage(to: string, body: string): Promise<boolean> {
   const token = process.env.WHATSAPP_TOKEN;
   const phoneId = process.env.WHATSAPP_PHONE_ID;
 
   if (!token || !phoneId) {
-    console.error('WhatsApp not configured — missing WHATSAPP_TOKEN or WHATSAPP_PHONE_ID');
-    return;
+    console.error('[WhatsApp] Not configured — missing WHATSAPP_TOKEN or WHATSAPP_PHONE_ID');
+    return false;
   }
 
-  const res = await fetch(getBaseUrl(phoneId), {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      messaging_product: 'whatsapp',
-      recipient_type: 'individual',
-      to,
-      type: 'text',
-      text: { preview_url: false, body },
-    }),
-  });
+  try {
+    const res = await fetch(getBaseUrl(phoneId), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to,
+        type: 'text',
+        text: { preview_url: false, body },
+      }),
+    });
 
-  if (!res.ok) {
-    const err = await res.text();
-    console.error('WhatsApp send failed:', res.status, err);
+    if (!res.ok) {
+      const err = await res.text();
+      console.error('[WhatsApp] Send failed:', res.status, err);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error('[WhatsApp] Send error:', err);
+    return false;
   }
 }
 

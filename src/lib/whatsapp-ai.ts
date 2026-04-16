@@ -28,7 +28,7 @@ INTENTS:
 1. add_tasks — user wants to add one or more daily tasks.
    Return: { "type": "add_tasks", "tasks": [{ "title": "...", "pomodoros": N, "tag": "work"|"learn"|"health"|"personal"|"creative"|"admin" }] }
    - Default pomodoros to 1 if not specified.
-   - Infer the best tag from context. Use "work" for office/job tasks, "learn" for study/reading, "health" for exercise/wellness, "personal" for errands, "creative" for art/writing, "admin" for chores/admin.
+   - Infer the best tag from context. Valid tags are ONLY: "startup", "job", "learning", "personal", "health", "creative". Use "job" for office/work tasks, "learning" for study/reading, "health" for exercise/wellness, "personal" for errands, "creative" for art/writing, "startup" for business/side-project tasks.
    - If user says "2 sessions of X" or "X for 2 pomodoros" or "X 2h" (assume 1h = 2 pomodoros), set pomodoros accordingly.
    - Task titles must be max 60 characters. Truncate if longer.
    - Max 10 tasks per message. Ignore extras.

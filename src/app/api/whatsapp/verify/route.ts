@@ -165,8 +165,7 @@ async function handleConfirmOTP(userId: string, phone: string, code: string) {
   }
 
   // OTP verified — link phone to profile
-  otpStore.delete(phone);
-
+  // NOTE: Delete OTP AFTER successful DB write (not before) to avoid race condition
   const serviceClient = createServiceClient();
   const { error: dbError } = await serviceClient
     .from('profiles')
@@ -177,6 +176,9 @@ async function handleConfirmOTP(userId: string, phone: string, code: string) {
     console.error('Failed to link phone:', dbError);
     return NextResponse.json({ error: 'Failed to save. Try again.' }, { status: 500 });
   }
+
+  // DB update succeeded — now safe to clear OTP
+  otpStore.delete(phone);
 
   // Send confirmation via WhatsApp
   const waNumber = phone.replace('+', '');

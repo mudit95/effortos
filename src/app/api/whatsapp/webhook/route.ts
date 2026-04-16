@@ -1,7 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
+import crypto from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { extractIncomingMessage, sendTextMessage } from '@/lib/whatsapp';
 import { parseWhatsAppMessage, type WAIntent } from '@/lib/whatsapp-ai';
+
+// ── Webhook signature verification ──
+// Meta signs every webhook POST with X-Hub-Signature-256 using your app secret.
+// Verifying this prevents spoofed requests from third parties.
+function verifyWebhookSignature(rawBody: string, signature: string | null): boolean {
+  const appSecret = process.env.META_APP_SECRET;
+  if (!appSecret) {
+    // If secret isn't configured, skip verification (dev mode)
+    console.warn('[WhatsApp] META_APP_SECRET not set — skipping signature verification');
+    return true;
+  }
+  if (!signature) return false;
+
+  const expectedSig = 'sha256=' + crypto
+    .createHmac('sha256', appSecret)
+    .update(rawBody)
+    .digest('hex');
+
+  return crypto.timingSafeEqual(
+    Buffer.from(signature),
+    Buffer.from(expectedSig),
+  );
+}
 
 // ── Simple in-memory rate limiter ──
 // Max 20 AI-parsed messages per user per hour.
@@ -49,7 +73,16 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   // WhatsApp expects a 200 quickly — process in-band but keep it fast.
   try {
-    const body = await req.json();
+    const rawBody = await req.text();
+
+    // Verify Meta webhook signature if app secret is configured
+    const signature = req.headers.get('x-hub-signature-256');
+    if (!verifyWebhookSignature(rawBody, signature)) {
+      console.error('[WhatsApp] Invalid webhook signature — rejecting request');
+      return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
+    }
+
+    const body = JSON.parse(rawBody);
     const msg = extractIncomingMessage(body);
 
     // Not a user message (e.g. status callback) — acknowledge silently
@@ -210,7 +243,7 @@ async function handleAddTasks(
     pomodoros_done: 0,
     completed: false,
     date: todayKey,
-    tag: t.tag || 'work',
+    tag: ['startup', 'job', 'learning', 'personal', 'health', 'creative'].includes(t.tag || '') ? t.tag! : 'job',
     sort_order: baseSortOrder + i,
   }));
 
