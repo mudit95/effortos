@@ -729,91 +729,121 @@ function EmailPreferences() {
   );
 }
 
-// ── WhatsApp Linking Sub-component ──────────────────────────────
+// ── WhatsApp Linking Sub-component (OTP verified) ───────────────
 
 function WhatsAppLinking() {
   const user = useStore(s => s.user);
-  const [phone, setPhone] = React.useState(user?.phone_number || '');
-  const [saving, setSaving] = React.useState(false);
-  const [saved, setSaved] = React.useState(false);
+  const [phone, setPhone] = React.useState('');
+  const [otp, setOtp] = React.useState('');
+  const [step, setStep] = React.useState<'input' | 'verify'>('input');
+  const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState('');
+  const [countdown, setCountdown] = React.useState(0);
   const isLinked = !!user?.phone_number && !!user?.whatsapp_linked;
 
-  // E.164 validation: +<country code><number>, 7-15 digits total
-  function isValidE164(val: string): boolean {
-    return /^\+[1-9]\d{6,14}$/.test(val.replace(/\s/g, ''));
-  }
+  // Countdown timer for resend
+  React.useEffect(() => {
+    if (countdown <= 0) return;
+    const t = setTimeout(() => setCountdown(c => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [countdown]);
 
-  async function handleSave() {
-    setError('');
+  async function handleSendOTP() {
     const cleaned = phone.replace(/\s/g, '');
-    if (!cleaned) {
-      // Unlinking
-      await savePhone(null);
-      return;
-    }
-    if (!isValidE164(cleaned)) {
+    if (!/^\+[1-9]\d{6,14}$/.test(cleaned)) {
       setError('Enter a valid number with country code (e.g. +919876543210)');
       return;
     }
-    await savePhone(cleaned);
-  }
 
-  async function savePhone(value: string | null) {
-    setSaving(true);
-    setSaved(false);
+    setLoading(true);
+    setError('');
     try {
-      const supabase = createClient();
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-      if (!authUser) {
-        setError('Not authenticated');
-        setSaving(false);
+      const res = await fetch('/api/whatsapp/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'send', phone: cleaned }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || 'Failed to send code');
+        setLoading(false);
         return;
       }
 
-      const { error: dbError } = await supabase
-        .from('profiles')
-        .update({
-          phone_number: value,
-          whatsapp_linked: !!value,
-        })
-        .eq('id', authUser.id);
-
-      if (dbError) {
-        if (dbError.code === '23505') {
-          setError('This number is already linked to another account');
-        } else {
-          setError('Failed to save. Try again.');
-        }
-        setSaving(false);
-        return;
-      }
-
-      // Update local store
-      const currentUser = useStore.getState().user;
-      if (currentUser) {
-        useStore.setState({
-          user: {
-            ...currentUser,
-            phone_number: value || '',
-            whatsapp_linked: !!value,
-          },
-        });
-      }
-
-      setPhone(value || '');
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
+      setStep('verify');
+      setCountdown(60);
     } catch {
       setError('Something went wrong');
     } finally {
-      setSaving(false);
+      setLoading(false);
+    }
+  }
+
+  async function handleVerifyOTP() {
+    if (otp.length !== 6) {
+      setError('Enter the 6-digit code');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    try {
+      const cleaned = phone.replace(/\s/g, '');
+      const res = await fetch('/api/whatsapp/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'confirm', phone: cleaned, code: otp }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || 'Verification failed');
+        setLoading(false);
+        return;
+      }
+
+      // Success — update local store
+      const currentUser = useStore.getState().user;
+      if (currentUser) {
+        useStore.setState({
+          user: { ...currentUser, phone_number: cleaned, whatsapp_linked: true },
+        });
+      }
+      setStep('input');
+      setOtp('');
+    } catch {
+      setError('Something went wrong');
+    } finally {
+      setLoading(false);
     }
   }
 
   async function handleUnlink() {
-    setPhone('');
-    await savePhone(null);
+    setLoading(true);
+    setError('');
+    try {
+      const supabase = createClient();
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) return;
+
+      await supabase
+        .from('profiles')
+        .update({ phone_number: null, whatsapp_linked: false })
+        .eq('id', authUser.id);
+
+      const currentUser = useStore.getState().user;
+      if (currentUser) {
+        useStore.setState({
+          user: { ...currentUser, phone_number: '', whatsapp_linked: false },
+        });
+      }
+      setPhone('');
+    } catch {
+      setError('Failed to unlink');
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -821,8 +851,6 @@ function WhatsAppLinking() {
       <div className="flex items-center gap-2 mb-3">
         <MessageCircle className="w-4 h-4 text-green-400" />
         <h4 className="text-sm font-medium text-white/70">WhatsApp Bot</h4>
-        {saving && <span className="text-[10px] text-cyan-400/60">saving...</span>}
-        {saved && <span className="text-[10px] text-green-400/60">linked!</span>}
       </div>
 
       {isLinked ? (
@@ -830,23 +858,23 @@ function WhatsAppLinking() {
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-500/5 border border-green-500/10">
             <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
             <span className="text-xs text-green-400/80">{user?.phone_number}</span>
-            <span className="text-[10px] text-green-400/50 ml-auto">Connected</span>
+            <span className="text-[10px] text-green-400/50 ml-auto">Verified</span>
           </div>
           <p className="text-[10px] text-white/30">
             Send a message to the EffortOS WhatsApp bot to add tasks, check progress, and more.
           </p>
           <button
             onClick={handleUnlink}
-            disabled={saving}
+            disabled={loading}
             className="text-[11px] text-red-400/50 hover:text-red-400 transition-colors"
           >
             Unlink WhatsApp
           </button>
         </div>
-      ) : (
+      ) : step === 'input' ? (
         <div className="space-y-2">
           <p className="text-[10px] text-white/40 mb-2">
-            Link your WhatsApp number to manage tasks via chat. Add tasks, check progress, and mark tasks complete — all from WhatsApp.
+            Link your WhatsApp to manage tasks via chat. We&apos;ll send a verification code to confirm it&apos;s your number.
           </p>
           <div className="flex gap-2">
             <input
@@ -857,17 +885,61 @@ function WhatsAppLinking() {
               className="flex-1 h-9 rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-green-500/30"
             />
             <button
-              onClick={handleSave}
-              disabled={saving || !phone.trim()}
+              onClick={handleSendOTP}
+              disabled={loading || !phone.trim()}
               className="px-4 h-9 rounded-lg text-xs font-medium bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-all disabled:opacity-40"
             >
-              {saving ? '...' : 'Link'}
+              {loading ? '...' : 'Send Code'}
             </button>
           </div>
           {error && <p className="text-[10px] text-red-400">{error}</p>}
           <p className="text-[10px] text-white/20">
             Include country code (e.g. +91 for India, +1 for US)
           </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-[10px] text-white/40 mb-2">
+            Enter the 6-digit code sent to <span className="text-white/70">{phone}</span> on WhatsApp.
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={6}
+              value={otp}
+              onChange={(e) => { setOtp(e.target.value.replace(/\D/g, '')); setError(''); }}
+              placeholder="000000"
+              className="flex-1 h-9 rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white text-center tracking-[0.3em] font-mono placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-green-500/30"
+            />
+            <button
+              onClick={handleVerifyOTP}
+              disabled={loading || otp.length !== 6}
+              className="px-4 h-9 rounded-lg text-xs font-medium bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-all disabled:opacity-40"
+            >
+              {loading ? '...' : 'Verify'}
+            </button>
+          </div>
+          {error && <p className="text-[10px] text-red-400">{error}</p>}
+          <div className="flex items-center justify-between">
+            <button
+              onClick={() => { setStep('input'); setOtp(''); setError(''); }}
+              className="text-[11px] text-white/30 hover:text-white/50 transition-colors"
+            >
+              Change number
+            </button>
+            {countdown > 0 ? (
+              <span className="text-[10px] text-white/20">Resend in {countdown}s</span>
+            ) : (
+              <button
+                onClick={handleSendOTP}
+                disabled={loading}
+                className="text-[11px] text-cyan-400/60 hover:text-cyan-400 transition-colors"
+              >
+                Resend code
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
