@@ -199,7 +199,11 @@ async function handleAddTasks(
 ) {
   const todayKey = new Date().toISOString().split('T')[0];
 
-  const rows = tasks.map((t) => ({
+  // sort_order is INT — use seconds-of-day + index to avoid INT overflow
+  const now = new Date();
+  const baseSortOrder = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+
+  const rows = tasks.map((t, i) => ({
     user_id: userId,
     title: t.title,
     pomodoros_target: t.pomodoros,
@@ -207,16 +211,18 @@ async function handleAddTasks(
     completed: false,
     date: todayKey,
     tag: t.tag || 'work',
-    sort_order: Date.now(),
+    sort_order: baseSortOrder + i,
   }));
 
-  const { error } = await supabase.from('daily_tasks').insert(rows);
+  console.log('[WhatsApp] Inserting tasks:', JSON.stringify(rows, null, 2));
+  const { error, data } = await supabase.from('daily_tasks').insert(rows).select();
 
   if (error) {
-    console.error('Failed to insert tasks:', error);
+    console.error('[WhatsApp] Failed to insert tasks:', JSON.stringify(error));
     await sendTextMessage(phone, '❌ Something went wrong adding your tasks. Try again?');
     return;
   }
+  console.log('[WhatsApp] Insert success:', data?.length, 'tasks');
 
   const summary = tasks
     .map((t) => `  ✅ ${t.title} — ${t.pomodoros} pom${t.pomodoros > 1 ? 's' : ''}`)
