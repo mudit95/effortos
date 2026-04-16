@@ -62,10 +62,12 @@ ADDITIONAL RULES:
 export async function parseWhatsAppMessage(message: string): Promise<WAIntent> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
+    console.error('ANTHROPIC_API_KEY is not set — AI parsing disabled');
     return { type: 'unknown', raw: message };
   }
 
   try {
+    console.log('[WhatsApp AI] Parsing message:', message.slice(0, 100));
     const anthropic = new Anthropic({ apiKey });
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
@@ -79,7 +81,9 @@ export async function parseWhatsAppMessage(message: string): Promise<WAIntent> {
       .map((b) => b.text)
       .join('');
 
+    console.log('[WhatsApp AI] Raw response:', text.slice(0, 200));
     const parsed = JSON.parse(text);
+    console.log('[WhatsApp AI] Parsed intent:', parsed.type);
     return parsed as WAIntent;
   } catch (err) {
     console.error('WhatsApp AI parse error:', err);

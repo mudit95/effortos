@@ -93,14 +93,39 @@ export async function POST(req: NextRequest) {
     // ── 4. Quick-match common phrases without AI (saves tokens) ──
     const lowerText = text.trim().toLowerCase();
     let intent: WAIntent;
-    if (['help', '/help', 'hi', 'hello', 'hey', '/start'].includes(lowerText)) {
+
+    // Help / greeting
+    if (/^(help|\/help|hi|hello|hey|\/start|menu|commands)$/i.test(lowerText)) {
       intent = { type: 'help' };
-    } else if (['tasks', 'my tasks', 'list', 'plan', "what's on my plate", "what's my plan", 'show tasks'].includes(lowerText)) {
+    }
+    // List tasks — exact or contains keywords
+    else if (
+      /^(tasks|my tasks|list|plan|show tasks|today)$/i.test(lowerText) ||
+      /what.?s (on my plate|my plan|my tasks|today)/i.test(lowerText) ||
+      /show.*(tasks|plan)/i.test(lowerText)
+    ) {
       intent = { type: 'list_tasks' };
-    } else if (['progress', 'stats', 'streak', 'status', 'how am i doing'].includes(lowerText)) {
+    }
+    // Progress / stats
+    else if (
+      /^(progress|stats|streak|status)$/i.test(lowerText) ||
+      /how am i doing/i.test(lowerText) ||
+      /my (progress|stats|streak)/i.test(lowerText)
+    ) {
       intent = { type: 'check_progress' };
-    } else {
+    }
+    // Complete task — "done with X", "finished X", "completed X"
+    else if (/^(done|finished|completed|complete)\s*(with\s+)?(.+)/i.test(lowerText)) {
+      const match = lowerText.match(/^(?:done|finished|completed|complete)\s*(?:with\s+)?(.+)/i);
+      if (match) {
+        intent = { type: 'complete_task', query: match[1].trim() };
+      } else {
+        intent = await parseWhatsAppMessage(text);
+      }
+    }
+    else {
       // Fall through to AI parsing
+      console.log('[WhatsApp] No quick-match, falling through to AI for:', lowerText.slice(0, 80));
       intent = await parseWhatsAppMessage(text);
     }
 
