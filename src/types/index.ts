@@ -8,6 +8,8 @@ export interface User {
   created_at: string;
   onboarding_completed: boolean;
   avatar_url?: string;
+  phone_number?: string;
+  whatsapp_linked?: boolean;
   settings: UserSettings;
 }
 

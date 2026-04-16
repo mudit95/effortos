@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
-import { X, Bell, Volume2, Clock, Palette, Check, CreditCard, AlertTriangle, Mail, Globe } from 'lucide-react';
+import { X, Bell, Volume2, Clock, Palette, Check, CreditCard, AlertTriangle, Mail, Globe, MessageCircle } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import * as storage from '@/lib/storage';
 import { DISPLAY_PRICE_PER_MONTH } from '@/lib/pricing';
@@ -419,10 +419,13 @@ export function SettingsModal() {
                 )}
               </div>
 
-              {/* Danger Zone */}
               {/* Email preferences */}
               <EmailPreferences />
 
+              {/* WhatsApp linking */}
+              <WhatsAppLinking />
+
+              {/* Danger Zone */}
               <div className="pt-4 border-t border-red-500/10">
                 <div className="flex items-center gap-2 mb-3">
                   <AlertTriangle className="w-4 h-4 text-red-400" />
@@ -722,6 +725,151 @@ function EmailPreferences() {
           </button>
         </label>
       </div>
+    </div>
+  );
+}
+
+// ── WhatsApp Linking Sub-component ──────────────────────────────
+
+function WhatsAppLinking() {
+  const user = useStore(s => s.user);
+  const [phone, setPhone] = React.useState(user?.phone_number || '');
+  const [saving, setSaving] = React.useState(false);
+  const [saved, setSaved] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const isLinked = !!user?.phone_number && !!user?.whatsapp_linked;
+
+  // E.164 validation: +<country code><number>, 7-15 digits total
+  function isValidE164(val: string): boolean {
+    return /^\+[1-9]\d{6,14}$/.test(val.replace(/\s/g, ''));
+  }
+
+  async function handleSave() {
+    setError('');
+    const cleaned = phone.replace(/\s/g, '');
+    if (!cleaned) {
+      // Unlinking
+      await savePhone(null);
+      return;
+    }
+    if (!isValidE164(cleaned)) {
+      setError('Enter a valid number with country code (e.g. +919876543210)');
+      return;
+    }
+    await savePhone(cleaned);
+  }
+
+  async function savePhone(value: string | null) {
+    setSaving(true);
+    setSaved(false);
+    try {
+      const supabase = createClient();
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) {
+        setError('Not authenticated');
+        setSaving(false);
+        return;
+      }
+
+      const { error: dbError } = await supabase
+        .from('profiles')
+        .update({
+          phone_number: value,
+          whatsapp_linked: !!value,
+        })
+        .eq('id', authUser.id);
+
+      if (dbError) {
+        if (dbError.code === '23505') {
+          setError('This number is already linked to another account');
+        } else {
+          setError('Failed to save. Try again.');
+        }
+        setSaving(false);
+        return;
+      }
+
+      // Update local store
+      const currentUser = useStore.getState().user;
+      if (currentUser) {
+        useStore.setState({
+          user: {
+            ...currentUser,
+            phone_number: value || '',
+            whatsapp_linked: !!value,
+          },
+        });
+      }
+
+      setPhone(value || '');
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch {
+      setError('Something went wrong');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleUnlink() {
+    setPhone('');
+    await savePhone(null);
+  }
+
+  return (
+    <div className="pt-4 border-t border-white/[0.06]">
+      <div className="flex items-center gap-2 mb-3">
+        <MessageCircle className="w-4 h-4 text-green-400" />
+        <h4 className="text-sm font-medium text-white/70">WhatsApp Bot</h4>
+        {saving && <span className="text-[10px] text-cyan-400/60">saving...</span>}
+        {saved && <span className="text-[10px] text-green-400/60">linked!</span>}
+      </div>
+
+      {isLinked ? (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-500/5 border border-green-500/10">
+            <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+            <span className="text-xs text-green-400/80">{user?.phone_number}</span>
+            <span className="text-[10px] text-green-400/50 ml-auto">Connected</span>
+          </div>
+          <p className="text-[10px] text-white/30">
+            Send a message to the EffortOS WhatsApp bot to add tasks, check progress, and more.
+          </p>
+          <button
+            onClick={handleUnlink}
+            disabled={saving}
+            className="text-[11px] text-red-400/50 hover:text-red-400 transition-colors"
+          >
+            Unlink WhatsApp
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-[10px] text-white/40 mb-2">
+            Link your WhatsApp number to manage tasks via chat. Add tasks, check progress, and mark tasks complete — all from WhatsApp.
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="tel"
+              value={phone}
+              onChange={(e) => { setPhone(e.target.value); setError(''); }}
+              placeholder="+919876543210"
+              className="flex-1 h-9 rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-green-500/30"
+            />
+            <button
+              onClick={handleSave}
+              disabled={saving || !phone.trim()}
+              className="px-4 h-9 rounded-lg text-xs font-medium bg-green-500/20 text-green-400 hover:bg-green-500/30 transition-all disabled:opacity-40"
+            >
+              {saving ? '...' : 'Link'}
+            </button>
+          </div>
+          {error && <p className="text-[10px] text-red-400">{error}</p>}
+          <p className="text-[10px] text-white/20">
+            Include country code (e.g. +91 for India, +1 for US)
+          </p>
+        </div>
+      )}
     </div>
   );
 }

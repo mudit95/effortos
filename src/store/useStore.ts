@@ -303,6 +303,8 @@ export const useStore = create<AppState>((set, get) => ({
             created_at: profile.created_at,
             onboarding_completed: profile.onboarding_completed,
             avatar_url: profile.avatar_url,
+            phone_number: profile.phone_number || '',
+            whatsapp_linked: profile.whatsapp_linked || false,
             settings: {
               focus_duration: profile.focus_duration,
               break_duration: profile.break_duration,
