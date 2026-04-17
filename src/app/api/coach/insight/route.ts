@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { requireActiveSub } from '@/lib/subscription-guard';
+import { rateLimitOrNull } from '@/lib/ratelimit';
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || '',
@@ -10,6 +11,11 @@ export async function POST(request: Request) {
   try {
     const gate = await requireActiveSub();
     if (!gate.ok) return NextResponse.json({ error: gate.reason }, { status: gate.status });
+
+    // Per-user rate limit: 20 insights/hour. Cheap call, called often on the dashboard.
+    const blocked = await rateLimitOrNull(gate.userId, 'light');
+    if (blocked) return blocked;
+
     if (!process.env.ANTHROPIC_API_KEY) {
       return NextResponse.json({ error: 'AI Coach not configured' }, { status: 503 });
     }

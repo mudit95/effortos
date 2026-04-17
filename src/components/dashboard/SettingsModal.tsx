@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
-import { X, Bell, Volume2, Clock, Palette, Check, CreditCard, AlertTriangle, Mail, Globe, MessageCircle } from 'lucide-react';
+import { X, Bell, Volume2, Clock, Palette, Check, CreditCard, AlertTriangle, Mail, Globe, MessageCircle, Download, Trash2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import * as storage from '@/lib/storage';
 import { DISPLAY_PRICE_PER_MONTH } from '@/lib/pricing';
@@ -132,6 +132,17 @@ export function SettingsModal() {
   const [resetLoading, setResetLoading] = useState(false);
   const [resetError, setResetError] = useState('');
 
+  // Data export
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+
+  // Account deletion (distinct from "Reset to Day 1" — this fully removes the account)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+
   // Close on Escape
   React.useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
@@ -224,6 +235,71 @@ export function SettingsModal() {
       setResetError('Something went wrong. Please try again.');
     } finally {
       setResetLoading(false);
+    }
+  };
+
+  const handleExportData = async () => {
+    setExporting(true);
+    setExportError('');
+    try {
+      const res = await fetch('/api/account/export');
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: 'Export failed' }));
+        throw new Error(body.error || 'Export failed');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `effortos-export-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Export failed');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!deletePassword) return;
+    if (deleteConfirmText.trim().toLowerCase() !== 'delete my account') {
+      setDeleteError("Type 'delete my account' exactly to confirm");
+      return;
+    }
+    setDeleteLoading(true);
+    setDeleteError('');
+    try {
+      const res = await fetch('/api/account/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          password: deletePassword,
+          confirmation: deleteConfirmText,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setDeleteError(data.error || 'Deletion failed');
+        setDeleteLoading(false);
+        return;
+      }
+      // Clear any client cached state and redirect to a goodbye screen.
+      // signOut is a no-op here (the server already invalidated the user)
+      // but keeps Supabase's local cache clean.
+      try {
+        await createClient().auth.signOut();
+      } catch {
+        // ignore — the user is gone, signOut may legitimately error
+      }
+      if (typeof window !== 'undefined') {
+        window.location.href = '/?deleted=1';
+      }
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Something went wrong');
+      setDeleteLoading(false);
     }
   };
 
@@ -425,6 +501,29 @@ export function SettingsModal() {
               {/* WhatsApp linking */}
               <WhatsAppLinking />
 
+              {/* Your Data — export is safe and belongs above the destructive actions */}
+              <div className="pt-4 border-t border-white/[0.06]">
+                <div className="flex items-center gap-2 mb-3">
+                  <Download className="w-4 h-4 text-cyan-400" />
+                  <h4 className="text-sm font-medium text-white/70">Your Data</h4>
+                </div>
+                <button
+                  onClick={handleExportData}
+                  disabled={exporting}
+                  className="text-xs text-white/60 hover:text-white transition-colors px-3 py-2 rounded-lg border border-white/10 hover:border-white/20 hover:bg-white/5 disabled:opacity-50 inline-flex items-center gap-2"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  {exporting ? 'Preparing export…' : 'Export my data (JSON)'}
+                </button>
+                {exportError && (
+                  <p className="text-[10px] text-red-400 mt-1.5">{exportError}</p>
+                )}
+                <p className="text-[10px] text-white/30 mt-2">
+                  Downloads everything EffortOS has about you — goals, sessions, tasks,
+                  preferences, email log. Machine-readable JSON.
+                </p>
+              </div>
+
               {/* Danger Zone */}
               <div className="pt-4 border-t border-red-500/10">
                 <div className="flex items-center gap-2 mb-3">
@@ -484,6 +583,88 @@ export function SettingsModal() {
                         className="flex-1 px-3 py-2 rounded-lg text-xs text-white font-medium bg-red-500/80 hover:bg-red-500 transition-all disabled:opacity-40"
                       >
                         {resetLoading ? 'Resetting...' : 'Reset Everything'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Delete account — hard-delete, distinct from Reset to Day 1 */}
+                {!showDeleteConfirm ? (
+                  <button
+                    onClick={() => setShowDeleteConfirm(true)}
+                    className="mt-2 text-xs text-red-400/50 hover:text-red-400 transition-colors px-3 py-2 rounded-lg border border-red-500/10 hover:border-red-500/20 hover:bg-red-500/5 inline-flex items-center gap-2"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Delete my account
+                  </button>
+                ) : (
+                  <div className="mt-2 space-y-3 p-3 rounded-xl bg-red-500/5 border border-red-500/20">
+                    <div className="flex items-start gap-2">
+                      <Trash2 className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs text-red-400 font-medium">This permanently deletes your account.</p>
+                        <ul className="text-[11px] text-red-400/60 mt-1 space-y-0.5">
+                          <li>• Your login, profile, and settings</li>
+                          <li>• All goals, sessions, tasks, and streaks</li>
+                          <li>• Any active Razorpay subscription is cancelled immediately</li>
+                          <li>• Email log and preferences</li>
+                        </ul>
+                        <p className="text-[11px] text-red-400/60 mt-2">
+                          This cannot be undone. Export your data first if you want a copy.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] text-white/30 block mb-1">Enter your password</label>
+                      <input
+                        type="password"
+                        value={deletePassword}
+                        onChange={(e) => { setDeletePassword(e.target.value); setDeleteError(''); }}
+                        placeholder="Your password"
+                        className="w-full h-9 rounded-lg border border-red-500/20 bg-white/5 px-3 text-sm text-white placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-red-500/30"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] text-white/30 block mb-1">
+                        Type <span className="font-mono text-red-400/80">delete my account</span> to confirm
+                      </label>
+                      <input
+                        type="text"
+                        value={deleteConfirmText}
+                        onChange={(e) => { setDeleteConfirmText(e.target.value); setDeleteError(''); }}
+                        placeholder="delete my account"
+                        autoComplete="off"
+                        className="w-full h-9 rounded-lg border border-red-500/20 bg-white/5 px-3 text-sm text-white placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-red-500/30"
+                      />
+                      {deleteError && (
+                        <p className="text-[10px] text-red-400 mt-1">{deleteError}</p>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setShowDeleteConfirm(false);
+                          setDeletePassword('');
+                          setDeleteConfirmText('');
+                          setDeleteError('');
+                        }}
+                        className="flex-1 px-3 py-2 rounded-lg text-xs text-white/40 hover:text-white/60 hover:bg-white/5 transition-all"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleDeleteAccount}
+                        disabled={
+                          !deletePassword ||
+                          deleteConfirmText.trim().toLowerCase() !== 'delete my account' ||
+                          deleteLoading
+                        }
+                        className="flex-1 px-3 py-2 rounded-lg text-xs text-white font-medium bg-red-600/80 hover:bg-red-600 transition-all disabled:opacity-40"
+                      >
+                        {deleteLoading ? 'Deleting…' : 'Delete account'}
                       </button>
                     </div>
                   </div>

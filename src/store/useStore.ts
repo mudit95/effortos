@@ -317,6 +317,13 @@ export const useStore = create<AppState>((set, get) => ({
           // Also save to localStorage for offline/fast access
           storage.setUser(supaUser);
 
+          // Fire-and-forget: send the welcome email on first cloud bootstrap.
+          // The endpoint is idempotent (checks email_log + account age), so it's
+          // safe to call on every boot; after the first success it's a no-op.
+          if (typeof window !== 'undefined') {
+            fetch('/api/account/welcome-email', { method: 'POST' }).catch(() => {});
+          }
+
           // ── Cloud path: load data from Supabase ──
           // Keep localStorage goals cached as an offline fallback — we only
           // overwrite it after a successful cloud fetch, never clear it

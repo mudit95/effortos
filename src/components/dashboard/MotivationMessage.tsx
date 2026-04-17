@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sparkles } from 'lucide-react';
 
@@ -36,20 +36,17 @@ export function MotivationMessage({
   const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
+  // Store current props in a ref so fetchMotivation never changes identity
+  const propsRef = useRef({ taskTitle, goalTitle, sessionsCompleted, sessionsTotal, streakDays, userName });
+  propsRef.current = { taskTitle, goalTitle, sessionsCompleted, sessionsTotal, streakDays, userName };
+
   const fetchMotivation = useCallback(async () => {
     setIsLoading(true);
     try {
       const res = await fetch('/api/coach/motivation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          taskTitle,
-          goalTitle,
-          sessionsCompleted,
-          sessionsTotal,
-          streakDays,
-          userName,
-        }),
+        body: JSON.stringify(propsRef.current),
       });
 
       if (!res.ok) throw new Error('Failed');
@@ -61,7 +58,7 @@ export function MotivationMessage({
     } finally {
       setIsLoading(false);
     }
-  }, [taskTitle, goalTitle, sessionsCompleted, sessionsTotal, streakDays, userName]);
+  }, []); // stable — reads from ref, no prop dependencies
 
   useEffect(() => {
     fetchMotivation();

@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { extractIncomingMessage, sendTextMessage } from '@/lib/whatsapp';
 import { parseWhatsAppMessage, type WAIntent } from '@/lib/whatsapp-ai';
+import { getUserTimezone, todayKeyInTz, dateKeyInTz } from '@/lib/user-date';
 
 // ── Webhook signature verification ──
 // Meta signs every webhook POST with X-Hub-Signature-256 using your app secret.
@@ -241,7 +242,10 @@ async function handleAddTasks(
   phone: string,
   tasks: Array<{ title: string; pomodoros: number; tag?: string }>,
 ) {
-  const todayKey = new Date().toISOString().split('T')[0];
+  // IMPORTANT: bucket tasks under the user's LOCAL date, not UTC. A task
+  // added at 12:30 AM IST would otherwise land on yesterday's UTC date.
+  const tz = await getUserTimezone(supabase, userId);
+  const todayKey = todayKeyInTz(tz);
 
   // sort_order is INT — use seconds-of-day + index to avoid INT overflow
   const now = new Date();
@@ -286,7 +290,8 @@ async function handleListTasks(
   phone: string,
   name: string,
 ) {
-  const todayKey = new Date().toISOString().split('T')[0];
+  const tz = await getUserTimezone(supabase, userId);
+  const todayKey = todayKeyInTz(tz);
 
   const { data: tasks } = await supabase
     .from('daily_tasks')
@@ -325,7 +330,8 @@ async function handleCompleteTask(
   phone: string,
   query: string,
 ) {
-  const todayKey = new Date().toISOString().split('T')[0];
+  const tz = await getUserTimezone(supabase, userId);
+  const todayKey = todayKeyInTz(tz);
 
   // Get today's incomplete tasks
   const { data: tasks } = await supabase
@@ -378,7 +384,8 @@ async function handleCheckProgress(
   phone: string,
   name: string,
 ) {
-  const todayKey = new Date().toISOString().split('T')[0];
+  const tz = await getUserTimezone(supabase, userId);
+  const todayKey = todayKeyInTz(tz);
 
   // Today's tasks
   const { data: tasks } = await supabase
@@ -401,22 +408,42 @@ async function handleCheckProgress(
     .limit(1)
     .maybeSingle();
 
-  // Streak (count consecutive days with at least 1 session)
+  // Streak: fetch distinct session dates (last 90 days) in one query,
+  // then count consecutive days backwards from today.
   let streak = 0;
-  const checkDate = new Date();
-  for (let i = 0; i < 365; i++) {
-    const dateStr = checkDate.toISOString().split('T')[0];
-    const { count } = await supabase
-      .from('daily_sessions')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .eq('date', dateStr);
-    if ((count || 0) > 0) {
-      streak++;
-    } else if (i > 0) {
-      break; // Allow today to have 0 (streak counts from yesterday)
+  const ninetyDaysAgo = new Date();
+  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+
+  const { data: recentSessions } = await supabase
+    .from('sessions')
+    .select('start_time')
+    .eq('user_id', userId)
+    .gte('start_time', ninetyDaysAgo.toISOString())
+    .eq('status', 'completed');
+
+  if (recentSessions && recentSessions.length > 0) {
+    // Build a set of unique dates (YYYY-MM-DD) that have sessions, keyed in
+    // the USER'S local timezone so a late-night 11:30 PM IST session on
+    // April 16 doesn't count as April 16 UTC (= still April 16) but also a
+    // 12:30 AM IST session on April 17 correctly falls on April 17, not 16.
+    const sessionDates = new Set(
+      recentSessions.map((s: { start_time: string }) =>
+        dateKeyInTz(tz, new Date(s.start_time))
+      )
+    );
+
+    // Walk backwards from today counting consecutive days, using the user's
+    // local date boundaries rather than UTC midnight.
+    const checkDate = new Date();
+    for (let i = 0; i < 90; i++) {
+      const dateStr = dateKeyInTz(tz, checkDate);
+      if (sessionDates.has(dateStr)) {
+        streak++;
+      } else if (i > 0) {
+        break; // Allow today to have 0 (streak counts from yesterday)
+      }
+      checkDate.setDate(checkDate.getDate() - 1);
     }
-    checkDate.setDate(checkDate.getDate() - 1);
   }
 
   let msg = `📊 *Progress Update for ${name}*\n\n`;

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { buildWeeklyInsightPrompt, type WeeklyInsightRequest } from '@/lib/coach';
 import { requireActiveSub } from '@/lib/subscription-guard';
+import { rateLimitOrNull } from '@/lib/ratelimit';
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || '',
@@ -11,6 +12,11 @@ export async function POST(request: Request) {
   try {
     const gate = await requireActiveSub();
     if (!gate.ok) return NextResponse.json({ error: gate.reason }, { status: gate.status });
+
+    // Weekly reports use a lot of context; 5/day is far more than real usage needs.
+    const blocked = await rateLimitOrNull(gate.userId, 'heavy');
+    if (blocked) return blocked;
+
     if (!process.env.ANTHROPIC_API_KEY) {
       return NextResponse.json({ error: 'AI Coach not configured' }, { status: 503 });
     }

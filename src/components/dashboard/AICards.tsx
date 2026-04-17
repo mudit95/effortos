@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RefreshCw } from 'lucide-react';
 
@@ -55,19 +55,17 @@ export function AIInsightCard({
   const [insight, setInsight] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
+  // Store current props in a ref so fetchInsight never changes identity
+  const propsRef = useRef({ goalTitle, sessionsCompleted, sessionsTotal, streakDays, context });
+  propsRef.current = { goalTitle, sessionsCompleted, sessionsTotal, streakDays, context };
+
   const fetchInsight = useCallback(async () => {
     setIsLoading(true);
     try {
       const res = await fetch('/api/coach/insight', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          goalTitle,
-          sessionsCompleted,
-          sessionsTotal,
-          streakDays,
-          context,
-        }),
+        body: JSON.stringify(propsRef.current),
       });
 
       if (!res.ok) throw new Error('Failed');
@@ -81,19 +79,11 @@ export function AIInsightCard({
     } finally {
       setIsLoading(false);
     }
-  }, [goalTitle, sessionsCompleted, sessionsTotal, streakDays, context]);
+  }, []); // stable — reads from ref, no prop dependencies
 
-  // Auto-rotate every 20 minutes if visible
+  // Fetch once on mount, then auto-rotate every 20 minutes
   useEffect(() => {
     fetchInsight();
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        // Optionally refresh when tab becomes visible
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     const autoRotateMs = 20 * 60 * 1000; // 20 minutes
     const intervalId = setInterval(() => {
@@ -103,7 +93,6 @@ export function AIInsightCard({
     }, autoRotateMs);
 
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
       clearInterval(intervalId);
     };
   }, [fetchInsight]);
@@ -179,19 +168,17 @@ export function AIMotivationCard({
   const [motivation, setMotivation] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
+  // Store current props in a ref so fetchMotivation never changes identity
+  const propsRef = useRef({ goalTitle, sessionsCompleted, sessionsTotal, streakDays, userName });
+  propsRef.current = { goalTitle, sessionsCompleted, sessionsTotal, streakDays, userName };
+
   const fetchMotivation = useCallback(async () => {
     setIsLoading(true);
     try {
       const res = await fetch('/api/coach/motivation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          goalTitle,
-          sessionsCompleted,
-          sessionsTotal,
-          streakDays,
-          userName,
-        }),
+        body: JSON.stringify(propsRef.current),
       });
 
       if (!res.ok) throw new Error('Failed');
@@ -205,19 +192,11 @@ export function AIMotivationCard({
     } finally {
       setIsLoading(false);
     }
-  }, [goalTitle, sessionsCompleted, sessionsTotal, streakDays, userName]);
+  }, []); // stable — reads from ref, no prop dependencies
 
-  // Auto-rotate every 15 minutes if visible
+  // Fetch once on mount, then auto-rotate every 15 minutes
   useEffect(() => {
     fetchMotivation();
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        // Optionally refresh when tab becomes visible
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     const autoRotateMs = 15 * 60 * 1000; // 15 minutes
     const intervalId = setInterval(() => {
@@ -227,7 +206,6 @@ export function AIMotivationCard({
     }, autoRotateMs);
 
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
       clearInterval(intervalId);
     };
   }, [fetchMotivation]);

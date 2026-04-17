@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { createClient as createAdminClient, type SupabaseClient } from '@supabase/supabase-js';
+import { paymentFailedEmail } from '@/lib/email-templates';
+import { sendEmail } from '@/lib/email';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -196,6 +198,13 @@ async function handleEvent({
         .from('subscriptions')
         .update({ status: 'past_due' })
         .eq('razorpay_subscription_id', subscriptionId);
+      // Best-effort payment-failed notice (idempotent per subscription + event).
+      await notifyPaymentFailed({
+        supabase,
+        subscriptionId,
+        shortUrl: subEntity?.short_url,
+        isHalted: false,
+      }).catch(err => console.error('[razorpay-webhook] notifyPaymentFailed (pending) failed:', err));
       return;
     }
 
@@ -207,6 +216,12 @@ async function handleEvent({
         .from('subscriptions')
         .update({ status: 'past_due' })
         .eq('razorpay_subscription_id', subscriptionId);
+      await notifyPaymentFailed({
+        supabase,
+        subscriptionId,
+        shortUrl: subEntity?.short_url,
+        isHalted: true,
+      }).catch(err => console.error('[razorpay-webhook] notifyPaymentFailed (halted) failed:', err));
       return;
     }
 
@@ -234,6 +249,104 @@ async function handleEvent({
       // Unhandled event — we logged it in webhook_events; no state change.
       return;
   }
+}
+
+// ── Payment-failed notification ───────────────────────────────────
+
+/**
+ * Sends a payment-failed email, with per-(subscription, halted/pending) idempotency
+ * enforced via email_log. Called fire-and-forget from the webhook handlers so a
+ * transient Resend blip never fails the whole webhook — Razorpay's retry would
+ * then double-update subscription state.
+ */
+async function notifyPaymentFailed({
+  supabase,
+  subscriptionId,
+  shortUrl,
+  isHalted,
+}: {
+  supabase: SupabaseClient;
+  subscriptionId: string;
+  shortUrl?: string;
+  isHalted: boolean;
+}) {
+  // Resolve the local subscription row \u2192 user.
+  const { data: sub } = await supabase
+    .from('subscriptions')
+    .select('id, user_id')
+    .eq('razorpay_subscription_id', subscriptionId)
+    .maybeSingle();
+  if (!sub) return;
+
+  // Respect unsubscribed_all.
+  const { data: prefs } = await supabase
+    .from('email_preferences')
+    .select('unsubscribed_all')
+    .eq('user_id', sub.user_id)
+    .maybeSingle();
+  if (prefs?.unsubscribed_all) return;
+
+  const logType = isHalted ? 'payment_failed_halted' : 'payment_failed_pending';
+
+  // Don't spam: only one email per (sub, halted flag).
+  const { data: prior } = await supabase
+    .from('email_log')
+    .select('id')
+    .eq('user_id', sub.user_id)
+    .eq('email_type', logType)
+    .contains('metadata', { subscription_id: sub.id })
+    .limit(1)
+    .maybeSingle();
+  if (prior) return;
+
+  // Look up email + name for rendering.
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('name')
+    .eq('id', sub.user_id)
+    .maybeSingle();
+
+  const { data: authUser } = await supabase.auth.admin.getUserById(sub.user_id);
+  const email = authUser?.user?.email;
+  if (!email) return;
+
+  const { subject, html } = paymentFailedEmail({
+    userName: (profile?.name as string | undefined) || 'there',
+    subscriptionShortUrl: shortUrl || null,
+    isHalted,
+  });
+
+  const { data: sendResult, error: sendErr } = await (async () => {
+    try {
+      const r = await sendEmail({
+        to: email,
+        subject,
+        html,
+        tags: [
+          { name: 'type', value: logType },
+          { name: 'subscription_id', value: sub.id },
+        ],
+      });
+      return { data: r, error: null as unknown };
+    } catch (err) {
+      return { data: null, error: err };
+    }
+  })();
+
+  if (sendErr) {
+    console.error('[razorpay-webhook] payment-failed email send failed:', sendErr);
+    return;
+  }
+
+  await supabase.from('email_log').insert({
+    user_id: sub.user_id,
+    email_to: email,
+    email_type: logType,
+    subject,
+    resend_id: sendResult?.id ?? null,
+    status: 'sent',
+    metadata: { subscription_id: sub.id, halted: isHalted },
+  });
 }
 
 // ── Types ─────────────────────────────────────────────────────────
