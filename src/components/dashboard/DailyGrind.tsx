@@ -607,14 +607,14 @@ export function DailyGrind() {
 
           {/* Plan buttons row */}
           <div className="mt-2 flex items-center gap-4">
-            {/* AI Plan My Day button */}
+            {/* Plan My Day with AI button */}
             <button
               onClick={() => setShowAIPlanWizard(true)}
               disabled={coachPlanLoading}
               className="relative flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-500/20 hover:border-cyan-500/40 text-cyan-400 text-sm font-medium transition-all hover:shadow-[0_0_20px_rgba(34,211,238,0.15)] disabled:opacity-40"
             >
               <Sparkles className="w-4 h-4" />
-              {coachPlanLoading ? 'Planning...' : 'AI Plan My Day'}
+              {coachPlanLoading ? 'Planning...' : 'Plan My Day with AI'}
             </button>
 
             {/* Plan Tomorrow button */}
@@ -670,28 +670,40 @@ export function DailyGrind() {
 
         {/* Hint for first-time Daily Grind users */}
         <HintBanner id="daily-grind-intro">
-          Add tasks and assign pomodoros for your day. Use <strong className="text-cyan-400/70">AI Plan My Day</strong> to let AI build your schedule automatically.
+          Add tasks and assign pomodoros for your day. Use <strong className="text-cyan-400/70">Plan My Day with AI</strong> to let AI build your schedule automatically.
         </HintBanner>
 
-        {/* Task list */}
-        <div className="space-y-1">
-          <AnimatePresence>
-            {pendingTasks.map((task) => (
-              <TaskRow
-                key={task.id}
-                task={task}
-                isActive={task.id === activeDailyTaskId && isTimerActive}
-                isToday={isToday}
-                onToggle={() => toggleTaskComplete(task.id)}
-                onDelete={() => deleteDailyTask(task.id)}
-                onStart={() => handleStartPomodoro(task.id)}
-                onExtend={() => updateDailyTaskDetails(task.id, { pomodoros_target: task.pomodoros_target + 1 })}
-                timerBusy={isTimerActive}
-                goals={goals}
-              />
-            ))}
-          </AnimatePresence>
-        </div>
+        {/* Task list — framed panel so the day's plan reads as a distinct block */}
+        {pendingTasks.length > 0 && (
+          <div className="rounded-2xl border border-white/[0.08] bg-white/[0.015] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+            <div className="flex items-center justify-between px-2 pt-1 pb-2">
+              <p className="text-[10px] text-white/30 uppercase tracking-widest">
+                {isToday ? "Today's tasks" : 'Tasks'} ({pendingTasks.length})
+              </p>
+              <p className="text-[10px] text-white/20">
+                {donePomodoros}/{totalPomodoros} pom
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <AnimatePresence>
+                {pendingTasks.map((task) => (
+                  <TaskRow
+                    key={task.id}
+                    task={task}
+                    isActive={task.id === activeDailyTaskId && isTimerActive}
+                    isToday={isToday}
+                    onToggle={() => toggleTaskComplete(task.id)}
+                    onDelete={() => deleteDailyTask(task.id)}
+                    onStart={() => handleStartPomodoro(task.id)}
+                    onExtend={() => updateDailyTaskDetails(task.id, { pomodoros_target: task.pomodoros_target + 1 })}
+                    timerBusy={isTimerActive}
+                    goals={goals}
+                  />
+                ))}
+              </AnimatePresence>
+            </div>
+          </div>
+        )}
 
         {/* Quick start unassigned pomodoro */}
         {isToday && !isTimerActive && (
@@ -819,11 +831,11 @@ export function DailyGrind() {
 
         {/* Completed */}
         {completedTasks.length > 0 && (
-          <div className="mt-4">
-            <p className="text-[10px] text-white/20 uppercase tracking-widest mb-2 px-1">
+          <div className="mt-4 rounded-2xl border border-white/[0.05] bg-white/[0.01] p-2">
+            <p className="text-[10px] text-white/25 uppercase tracking-widest mb-2 px-2 pt-1">
               Done ({completedTasks.length})
             </p>
-            <div className="space-y-0.5">
+            <div className="space-y-1">
               {completedTasks.map((task) => (
                 <TaskRow
                   key={task.id}
@@ -1031,11 +1043,11 @@ function TaskRow({
       exit={{ opacity: 0, x: -20, transition: { duration: 0.2 } }}
       className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
         isActive && !completed
-          ? 'bg-[var(--accent,#22d3ee)]/[0.06] border border-[var(--accent,#22d3ee)]/20'
+          ? 'bg-[var(--accent,#22d3ee)]/[0.06] border border-[var(--accent,#22d3ee)]/30 shadow-[0_0_0_1px_rgba(34,211,238,0.08)]'
           : completed
-            ? 'border border-transparent opacity-40'
-            : 'hover:bg-white/[0.02] border border-transparent'
-      } ${task.goal_id ? 'border-l-2 border-l-violet-500/50' : ''}`}
+            ? 'bg-white/[0.015] border border-white/[0.04] opacity-50'
+            : 'bg-white/[0.02] hover:bg-white/[0.04] border border-white/[0.08] hover:border-white/[0.14]'
+      } ${task.goal_id ? 'border-l-2 border-l-violet-500/60' : ''}`}
     >
       {/* Play / Checkbox area */}
       {!completed && isToday ? (
