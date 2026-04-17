@@ -43,19 +43,27 @@ export async function POST(request: Request) {
     }
 
     // 2. Increment goal sessions_completed (if goal-based session)
+    //
+    // Every goals/milestones/daily_tasks query below also carries an
+    // explicit `user_id = user.id` filter. RLS already guarantees rows
+    // are scoped to the caller, but we layer the filter in code too as
+    // defence-in-depth: if RLS were ever disabled by mistake, these
+    // endpoints still refuse to mutate another user's data.
     if (goalId && goalId !== '__daily__') {
       const { data: goal } = await supabase
         .from('goals')
         .select('sessions_completed, estimated_sessions_current, milestones(*)')
         .eq('id', goalId)
-        .single();
+        .eq('user_id', user.id)
+        .maybeSingle();
 
       if (goal) {
         const newCount = (goal.sessions_completed as number) + 1;
         await supabase
           .from('goals')
           .update({ sessions_completed: newCount })
-          .eq('id', goalId);
+          .eq('id', goalId)
+          .eq('user_id', user.id);
 
         // 3. Check milestones
         const milestones = goal.milestones as Array<{
@@ -64,6 +72,10 @@ export async function POST(request: Request) {
 
         for (const milestone of milestones) {
           if (!milestone.completed && newCount >= milestone.session_target) {
+            // milestones has no user_id column — it scopes via goal_id.
+            // These milestone IDs came from the user-scoped goal query
+            // above, so they are safe to update by id alone (and RLS
+            // enforces goal ownership as well).
             await supabase
               .from('milestones')
               .update({ completed: true, completed_at: new Date().toISOString() })
@@ -76,7 +88,8 @@ export async function POST(request: Request) {
           await supabase
             .from('goals')
             .update({ status: 'completed', completed_at: new Date().toISOString() })
-            .eq('id', goalId);
+            .eq('id', goalId)
+            .eq('user_id', user.id);
         }
       }
     }
@@ -87,7 +100,8 @@ export async function POST(request: Request) {
         .from('daily_tasks')
         .select('pomodoros_done, pomodoros_target, completed')
         .eq('id', dailyTaskId)
-        .single();
+        .eq('user_id', user.id)
+        .maybeSingle();
 
       if (task) {
         const newDone = (task.pomodoros_done as number) + 1;
@@ -100,7 +114,8 @@ export async function POST(request: Request) {
             completed: autoComplete ? true : task.completed,
             completed_at: autoComplete && !(task.completed as boolean) ? new Date().toISOString() : null,
           })
-          .eq('id', dailyTaskId);
+          .eq('id', dailyTaskId)
+          .eq('user_id', user.id);
       }
     }
 

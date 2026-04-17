@@ -25,13 +25,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing payment details' }, { status: 400 });
     }
 
-    // Verify signature
+    // Verify signature.
+    //
+    // We compare with crypto.timingSafeEqual to avoid leaking secrets via
+    // string-comparison side channels. Both buffers must be the same
+    // length or Node throws, so we validate length before comparing.
     const generatedSignature = crypto
       .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || '')
       .update(`${razorpay_payment_id}|${razorpay_subscription_id}`)
       .digest('hex');
 
-    if (generatedSignature !== razorpay_signature) {
+    let signatureValid = false;
+    try {
+      const a = Buffer.from(generatedSignature, 'hex');
+      const b = Buffer.from(String(razorpay_signature), 'hex');
+      signatureValid = a.length === b.length && crypto.timingSafeEqual(a, b);
+    } catch {
+      signatureValid = false;
+    }
+
+    if (!signatureValid) {
       return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
     }
 

@@ -62,11 +62,18 @@ export async function POST(req: Request) {
   }
 
   // For trial_extension and free_months, we apply immediately.
+  //
+  // `maybeSingle()` with an order+limit guards against a 500 when a
+  // user ends up with zero OR multiple subscription rows (which does
+  // happen in edge cases — see migrations/006_subscriptions_dedup.sql).
+  // We pick the most recent row and treat older rows as stale.
   const { data: existing } = await supabase
     .from('subscriptions')
     .select('*')
     .eq('user_id', user.id)
-    .single();
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   if (coupon.kind === 'trial_extension') {
     const days = Number(coupon.discount_value);

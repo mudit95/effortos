@@ -14,12 +14,16 @@ export async function POST() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    // `maybeSingle` with order+limit — `.single()` would 500 if the
+    // user ends up with zero or multiple active rows. Take the newest.
     const { data: sub } = await supabase
       .from('subscriptions')
       .select('*')
       .eq('user_id', user.id)
       .in('status', ['trialing', 'active'])
-      .single();
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
     if (!sub?.razorpay_subscription_id) {
       return NextResponse.json({ error: 'No active subscription found' }, { status: 404 });
@@ -34,7 +38,8 @@ export async function POST() {
         status: 'cancelled',
         cancelled_at: new Date().toISOString(),
       })
-      .eq('id', sub.id);
+      .eq('id', sub.id)
+      .eq('user_id', user.id);
 
     return NextResponse.json({
       success: true,
