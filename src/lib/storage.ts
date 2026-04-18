@@ -272,7 +272,13 @@ export function getTodayTasks(): DailyTask[] {
   return getDailyTasksForDate(getTodayKey());
 }
 
-export function createDailyTask(title: string, pomodorosTarget: number = 1, repeating: boolean = false, tag?: TaskTagId): DailyTask {
+export function createDailyTask(
+  title: string,
+  pomodorosTarget: number = 1,
+  repeating: boolean = false,
+  tag?: TaskTagId,
+  goalId?: string,
+): DailyTask {
   const tasks = getAllDailyTasks();
   const todayTasks = tasks.filter(t => t.date === getTodayKey());
   const task: DailyTask = {
@@ -284,6 +290,7 @@ export function createDailyTask(title: string, pomodorosTarget: number = 1, repe
     pomodoros_done: 0,
     date: getTodayKey(),
     tag,
+    goal_id: goalId || undefined,
     created_at: new Date().toISOString(),
     order: todayTasks.length,
   };
@@ -297,7 +304,14 @@ export function createDailyTask(title: string, pomodorosTarget: number = 1, repe
   return task;
 }
 
-export function createDailyTaskForDate(title: string, date: string, pomodorosTarget: number = 1, repeating: boolean = false, tag?: TaskTagId): DailyTask {
+export function createDailyTaskForDate(
+  title: string,
+  date: string,
+  pomodorosTarget: number = 1,
+  repeating: boolean = false,
+  tag?: TaskTagId,
+  goalId?: string,
+): DailyTask {
   const tasks = getAllDailyTasks();
   const dateTasks = tasks.filter(t => t.date === date);
   const task: DailyTask = {
@@ -309,6 +323,7 @@ export function createDailyTaskForDate(title: string, date: string, pomodorosTar
     pomodoros_done: 0,
     date,
     tag,
+    goal_id: goalId || undefined,
     created_at: new Date().toISOString(),
     order: dateTasks.length,
   };

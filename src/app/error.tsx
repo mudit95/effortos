@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect } from 'react';
+import * as Sentry from '@sentry/nextjs';
 
 export default function Error({
   error,
@@ -10,6 +11,12 @@ export default function Error({
   reset: () => void;
 }) {
   useEffect(() => {
+    // Forward to Sentry with the digest so it shows up alongside the
+    // server-side event Next.js already captured (correlation by digest
+    // is how the Sentry dashboard links RSC crashes to client recoveries).
+    Sentry.captureException(error, {
+      tags: { digest: error.digest ?? 'none', source: 'app/error.tsx' },
+    });
     console.error('Page error:', error);
   }, [error]);
 

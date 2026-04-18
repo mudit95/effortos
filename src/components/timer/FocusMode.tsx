@@ -148,10 +148,10 @@ export function FocusMode() {
         <X className="w-5 h-5" />
       </button>
 
-      {/* Ambient sound (sits just left of the exit button — with enough
-          gap that the larger 48px button doesn't collide with the 36px
-          exit button) */}
-      <div className="absolute top-3 right-14 sm:top-5 sm:right-20 z-10">
+      {/* Ambient sound (sits just left of the exit button). The toggle
+          button is now ~64px square (p-4 + 32px icon), so we widen the
+          right offset to keep clear of the 36px exit button. */}
+      <div className="absolute top-2 right-16 sm:top-4 sm:right-24 z-10">
         <AmbientSoundToggle />
       </div>
 
@@ -209,15 +209,19 @@ export function FocusMode() {
         )}
       </AnimatePresence>
 
-      {/* Auto-dismissing intro hint (only during focus) */}
+      {/* Auto-dismissing intro hint (only during focus).
+          Anchored to the BOTTOM of the viewport so it can never collide
+          with the flex-centered title/ring block — which, on shorter or
+          wider viewports, can sit close enough to `top-20` that the two
+          elements stack on top of each other. */}
       <AnimatePresence>
         {showHint && !isBreak && (
           <motion.div
-            initial={{ opacity: 0, y: -8 }}
+            initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
+            exit={{ opacity: 0, y: 8 }}
             transition={{ duration: 0.4 }}
-            className="absolute top-20 left-1/2 -translate-x-1/2 w-full max-w-xs px-4"
+            className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-xs px-4 pointer-events-none"
           >
             <div className="px-3.5 py-2.5 rounded-xl bg-cyan-500/[0.06] border border-cyan-500/10 text-center">
               <p className="text-xs text-white/40 leading-relaxed">

@@ -1225,9 +1225,10 @@ export const useStore = create<AppState>((set, get) => ({
       dailyTasks: [...get().dailyTasks, newTask],
     });
 
-    // Sync to localStorage and cloud
-    storage.createDailyTask(title, pomodorosTarget, repeating, tag);
-    cloudSync(() => api.createDailyTask(title, pomodorosTarget, repeating, tag));
+    // Sync to localStorage and cloud. `goalId` is passed through so the
+    // task-to-goal link persists for cloud users (previously dropped here).
+    storage.createDailyTask(title, pomodorosTarget, repeating, tag, goalId);
+    cloudSync(() => api.createDailyTask(title, pomodorosTarget, repeating, tag, goalId));
   },
 
   addDailyTaskForDate: (title, date, pomodorosTarget = 1, repeating = false, tag, goalId) => {
@@ -1256,9 +1257,10 @@ export const useStore = create<AppState>((set, get) => ({
       });
     }
 
-    // Sync to localStorage and cloud
-    storage.createDailyTaskForDate(title, date, pomodorosTarget, repeating, tag);
-    cloudSync(() => api.createDailyTaskForDate(title, date, pomodorosTarget, repeating, tag));
+    // Sync to localStorage and cloud. `goalId` is passed through so cloud
+    // users keep the task→goal association (previously dropped here).
+    storage.createDailyTaskForDate(title, date, pomodorosTarget, repeating, tag, goalId);
+    cloudSync(() => api.createDailyTaskForDate(title, date, pomodorosTarget, repeating, tag, goalId));
   },
 
   toggleTaskComplete: (taskId) => {

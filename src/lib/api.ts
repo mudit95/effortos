@@ -502,7 +502,11 @@ export async function getDailyTasksForDate(date: string): Promise<DailyTask[]> {
 }
 
 export async function createDailyTask(
-  title: string, pomodorosTarget: number = 1, repeating: boolean = false, tag?: TaskTagId
+  title: string,
+  pomodorosTarget: number = 1,
+  repeating: boolean = false,
+  tag?: TaskTagId,
+  goalId?: string,
 ): Promise<DailyTask | null> {
   const supabase = getSupabase();
   const { data: { user } } = await supabase.auth.getUser();
@@ -520,6 +524,10 @@ export async function createDailyTask(
       repeating,
       tag,
       date,
+      // `goal_id` links the task back to a goal so per-goal rollups and
+      // reporting work. Previously this was silently dropped on create —
+      // only updateDailyTask could set it.
+      goal_id: goalId ?? null,
       sort_order: existing.length,
     })
     .select()
@@ -539,13 +547,19 @@ export async function createDailyTask(
     pomodoros_done: 0,
     date,
     tag,
+    goal_id: (row.goal_id as string | null) ?? undefined,
     created_at: row.created_at as string,
     order: existing.length,
   };
 }
 
 export async function createDailyTaskForDate(
-  title: string, date: string, pomodorosTarget: number = 1, repeating: boolean = false, tag?: TaskTagId
+  title: string,
+  date: string,
+  pomodorosTarget: number = 1,
+  repeating: boolean = false,
+  tag?: TaskTagId,
+  goalId?: string,
 ): Promise<DailyTask | null> {
   const supabase = getSupabase();
   const { data: { user } } = await supabase.auth.getUser();
@@ -562,6 +576,7 @@ export async function createDailyTaskForDate(
       repeating,
       tag,
       date,
+      goal_id: goalId ?? null,
       sort_order: existing.length,
     })
     .select()
@@ -581,6 +596,7 @@ export async function createDailyTaskForDate(
     pomodoros_done: 0,
     date,
     tag,
+    goal_id: (row.goal_id as string | null) ?? undefined,
     created_at: row.created_at as string,
     order: existing.length,
   };
