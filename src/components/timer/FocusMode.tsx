@@ -148,8 +148,10 @@ export function FocusMode() {
         <X className="w-5 h-5" />
       </button>
 
-      {/* Ambient sound (sits just left of the exit button) */}
-      <div className="absolute top-4 right-14 sm:top-6 sm:right-16 z-10">
+      {/* Ambient sound (sits just left of the exit button — with enough
+          gap that the larger 48px button doesn't collide with the 36px
+          exit button) */}
+      <div className="absolute top-3 right-14 sm:top-5 sm:right-20 z-10">
         <AmbientSoundToggle />
       </div>
 

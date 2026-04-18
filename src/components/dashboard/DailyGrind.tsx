@@ -11,6 +11,7 @@ import {
   Plus, Trash2, Play, Pause, RotateCcw, SkipForward,
   Repeat, ChevronLeft, ChevronRight, Maximize2, Circle,
   CheckCircle2, Clock, Flame, Tag, PlusCircle, X, Calendar, Sparkles,
+  CalendarPlus,
 } from 'lucide-react';
 import * as storage from '@/lib/storage';
 import { PiPButton } from '@/components/timer/PiPButton';
@@ -27,6 +28,12 @@ const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
 function getTodayKey(): string {
   return new Date().toISOString().split('T')[0];
+}
+
+function getTomorrowKey(): string {
+  const t = new Date();
+  t.setDate(t.getDate() + 1);
+  return t.toISOString().split('T')[0];
 }
 
 function formatDateLabel(dateStr: string): string {
@@ -55,8 +62,24 @@ function getTagInfo(tagId?: TaskTagId) {
 }
 
 /* ── Manual Pomodoro Entry Modal ──────────────────────────────────── */
-function ManualPomodoroModal({
-  open,
+// Outer shell returns null when closed so the body component unmounts and
+// state resets naturally — avoids the setState-in-effect cascade React 19
+// flags. The AnimatePresence exit animation still plays because the body
+// is rendered inside it when open flips.
+function ManualPomodoroModal(props: {
+  open: boolean;
+  onClose: () => void;
+  tasks: DailyTask[];
+  onSubmit: (taskId: string | null, count: number) => void;
+}) {
+  return (
+    <AnimatePresence>
+      {props.open && <ManualPomodoroBody {...props} />}
+    </AnimatePresence>
+  );
+}
+
+function ManualPomodoroBody({
   onClose,
   tasks,
   onSubmit,
@@ -69,23 +92,14 @@ function ManualPomodoroModal({
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [count, setCount] = useState(1);
 
-  useEffect(() => {
-    if (open) {
-      setSelectedTaskId(null);
-      setCount(1);
-    }
-  }, [open]);
-
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-          onClick={(e) => e.target === e.currentTarget && onClose()}
-        >
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
           <motion.div
             initial={{ scale: 0.95, opacity: 0, y: 20 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
@@ -178,8 +192,6 @@ function ManualPomodoroModal({
             </div>
           </motion.div>
         </motion.div>
-      )}
-    </AnimatePresence>
   );
 }
 
@@ -412,10 +424,25 @@ export function DailyGrind() {
   const isToday = dailyViewDate === getTodayKey();
   const isFutureDate = dailyViewDate > getTodayKey();
 
-  const completedTasks = dailyTasks.filter(t => t.completed);
-  const pendingTasks = dailyTasks.filter(t => !t.completed);
-  const totalPomodoros = dailyTasks.reduce((sum, t) => sum + t.pomodoros_target, 0);
-  const donePomodoros = dailyTasks.reduce((sum, t) => sum + t.pomodoros_done, 0);
+  // Filter to the currently-viewed date defensively. When a task is
+  // rolled to tomorrow, its `date` changes but the in-memory store still
+  // holds the row until a refresh — this filter makes the rolled task
+  // fall out of the list immediately so the exit animation plays.
+  const visibleTasks = dailyTasks.filter(t => t.date === dailyViewDate);
+  const completedTasks = visibleTasks.filter(t => t.completed);
+  const pendingTasks = visibleTasks.filter(t => !t.completed);
+  const totalPomodoros = visibleTasks.reduce((sum, t) => sum + t.pomodoros_target, 0);
+  const donePomodoros = visibleTasks.reduce((sum, t) => sum + t.pomodoros_done, 0);
+
+  const todayKey = getTodayKey();
+  // Only offer "roll to tomorrow" on today/past tasks — not future-dated ones.
+  const canRollForward = dailyViewDate <= todayKey;
+
+  const handleRollToTomorrow = (task: DailyTask) => {
+    const tomorrowKey = getTomorrowKey();
+    updateDailyTaskDetails(task.id, { date: tomorrowKey });
+    addToast({ type: 'success', message: `"${task.title}" rolled to tomorrow` });
+  };
 
   const activeTask = dailyTasks.find(t => t.id === activeDailyTaskId);
   const isTimerActive = timerState === 'running' || timerState === 'paused' || timerState === 'break';
@@ -696,6 +723,14 @@ export function DailyGrind() {
                     onDelete={() => deleteDailyTask(task.id)}
                     onStart={() => handleStartPomodoro(task.id)}
                     onExtend={() => updateDailyTaskDetails(task.id, { pomodoros_target: task.pomodoros_target + 1 })}
+                    // Only surface the roll action on today/past pending, non-repeating
+                    // tasks. Repeating tasks auto-generate fresh copies tomorrow, so
+                    // rolling them would double up.
+                    onRollToTomorrow={
+                      canRollForward && !task.repeating
+                        ? () => handleRollToTomorrow(task)
+                        : undefined
+                    }
                     timerBusy={isTimerActive}
                     goals={goals}
                   />
@@ -1017,6 +1052,7 @@ function TaskRow({
   onDelete,
   onStart,
   onExtend,
+  onRollToTomorrow,
   timerBusy,
   completed = false,
   goals = [],
@@ -1028,6 +1064,7 @@ function TaskRow({
   onDelete: () => void;
   onStart: () => void;
   onExtend: () => void;
+  onRollToTomorrow?: () => void;
   timerBusy: boolean;
   completed?: boolean;
   goals?: any[];
@@ -1131,11 +1168,25 @@ function TaskRow({
         </button>
       )}
 
+      {/* Roll to tomorrow (on hover) — only for uncompleted, rollable tasks */}
+      {!completed && onRollToTomorrow && (
+        <button
+          onClick={onRollToTomorrow}
+          className="flex-shrink-0 p-1.5 rounded-lg text-white/0 group-hover:text-white/15 hover:!text-amber-300 hover:bg-amber-400/10 transition-all"
+          title="Roll to tomorrow"
+          aria-label="Roll this task to tomorrow"
+        >
+          <CalendarPlus className="w-3.5 h-3.5" />
+        </button>
+      )}
+
       {/* Delete (on hover) */}
       {!completed && (
         <button
           onClick={onDelete}
           className="flex-shrink-0 p-1.5 rounded-lg text-white/0 group-hover:text-white/15 hover:!text-red-400 hover:bg-red-500/10 transition-all"
+          title="Delete task"
+          aria-label="Delete task"
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>

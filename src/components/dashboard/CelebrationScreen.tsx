@@ -1,42 +1,77 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
 import { Trophy, Clock, Target, Flame, ArrowRight, Sparkles } from 'lucide-react';
 import { sessionsToHours } from '@/lib/utils';
 
-// Confetti particle component
+const CONFETTI_COLORS = ['#22d3ee', '#3b82f6', '#22c55e', '#eab308', '#ef4444', '#a855f7'];
+
+// Confetti particle component.
+//
+// All of the "random" per-particle values (colour, size, rotation target,
+// duration, horizontal drift, final fall distance) are frozen into a lazy
+// useState initialiser so they're computed exactly once when the particle
+// mounts — not recomputed on every re-render. Calling Math.random / reading
+// window.innerHeight inside the render body tripped React 19's "impure
+// function during render" rule and would also make the particle's
+// animation path re-randomise on every parent re-render.
 function ConfettiParticle({ delay, x }: { delay: number; x: number }) {
-  const colors = ['#22d3ee', '#3b82f6', '#22c55e', '#eab308', '#ef4444', '#a855f7'];
-  const color = colors[Math.floor(Math.random() * colors.length)];
-  const size = 4 + Math.random() * 6;
-  const rotation = Math.random() * 360;
-  const duration = 2 + Math.random() * 2;
+  const [params] = useState(() => ({
+    color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
+    size: 4 + Math.random() * 6,
+    rotation: Math.random() * 360,
+    duration: 2 + Math.random() * 2,
+    drift: (Math.random() - 0.5) * 200,
+    fallTo: typeof window !== 'undefined' ? window.innerHeight + 20 : 800,
+  }));
 
   return (
     <motion.div
       initial={{ y: -20, x, opacity: 1, rotate: 0, scale: 1 }}
       animate={{
-        y: typeof window !== 'undefined' ? window.innerHeight + 20 : 800,
-        x: x + (Math.random() - 0.5) * 200,
+        y: params.fallTo,
+        x: x + params.drift,
         opacity: 0,
-        rotate: rotation + 720,
+        rotate: params.rotation + 720,
         scale: 0.5,
       }}
       transition={{
-        duration,
+        duration: params.duration,
         delay,
         ease: 'linear',
       }}
       className="absolute top-0 rounded-sm"
       style={{
-        width: size,
-        height: size * 1.5,
-        backgroundColor: color,
+        width: params.size,
+        height: params.size * 1.5,
+        backgroundColor: params.color,
       }}
     />
+  );
+}
+
+// Confetti burst — mounts once when the celebration opens, generating
+// the 60 particle descriptors inside a useState lazy initialiser (which
+// React exempts from the purity rule). Unmounted when the celebration
+// closes, so the next open re-runs the initialiser with fresh randomness.
+function ConfettiBurst() {
+  const [particles] = useState(() => {
+    const w = typeof window !== 'undefined' ? window.innerWidth : 1200;
+    return Array.from({ length: 60 }, (_, i) => ({
+      id: i,
+      delay: Math.random() * 1.5,
+      x: Math.random() * w,
+    }));
+  });
+  return (
+    <>
+      {particles.map(p => (
+        <ConfettiParticle key={p.id} delay={p.delay} x={p.x} />
+      ))}
+    </>
   );
 }
 
@@ -45,26 +80,26 @@ export function CelebrationScreen() {
   const setShowCelebration = useStore(s => s.setShowCelebration);
   const activeGoal = useStore(s => s.activeGoal);
   const setView = useStore(s => s.setView);
-  const [particles, setParticles] = useState<{ id: number; delay: number; x: number }[]>([]);
 
-  useEffect(() => {
-    if (showCelebration) {
-      const w = typeof window !== 'undefined' ? window.innerWidth : 1200;
-      const newParticles = Array.from({ length: 60 }, (_, i) => ({
-        id: i,
-        delay: Math.random() * 1.5,
-        x: Math.random() * w,
-      }));
-      setParticles(newParticles);
-    }
-  }, [showCelebration]);
+  // `Date.now()` is impure and cannot be called in render body OR in a
+  // useMemo (React 19 rule: hooks must be idempotent). A useState lazy
+  // initialiser is explicitly exempt — it runs exactly once at mount.
+  // We freeze the "now" at mount, so daysSpent won't flicker across
+  // re-renders.
+  const [nowAtMount] = useState(() => Date.now());
 
-  if (!activeGoal) return null;
+  const derived = useMemo(() => {
+    if (!activeGoal) return null;
+    return {
+      totalHours: sessionsToHours(activeGoal.sessions_completed),
+      daysSpent: Math.ceil(
+        (nowAtMount - new Date(activeGoal.created_at).getTime()) / (1000 * 60 * 60 * 24)
+      ),
+    };
+  }, [activeGoal, nowAtMount]);
 
-  const totalHours = sessionsToHours(activeGoal.sessions_completed);
-  const daysSpent = Math.ceil(
-    (Date.now() - new Date(activeGoal.created_at).getTime()) / (1000 * 60 * 60 * 24)
-  );
+  if (!activeGoal || !derived) return null;
+  const { totalHours, daysSpent } = derived;
 
   return (
     <AnimatePresence>
@@ -75,10 +110,9 @@ export function CelebrationScreen() {
           exit={{ opacity: 0 }}
           className="fixed inset-0 z-[55] flex items-center justify-center bg-[#080b10]/95 backdrop-blur-xl overflow-hidden"
         >
-          {/* Confetti */}
-          {particles.map(p => (
-            <ConfettiParticle key={p.id} delay={p.delay} x={p.x} />
-          ))}
+          {/* Confetti — ConfettiBurst holds its own particle state, so it
+              mounts fresh each time the celebration opens. */}
+          <ConfettiBurst />
 
           <motion.div
             initial={{ scale: 0.8, opacity: 0, y: 30 }}

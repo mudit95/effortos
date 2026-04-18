@@ -28,7 +28,7 @@ function ParticleField() {
     if (!ctx) return;
 
     let animFrame: number;
-    let particles: Array<{
+    const particles: Array<{
       x: number; y: number; vx: number; vy: number; size: number; opacity: number;
     }> = [];
 
@@ -522,6 +522,11 @@ function GoalEstimationPreview() {
 
   useEffect(() => {
     if (!isInView) return;
+    // Reset stage before advancing through the cycle. This is a legitimate
+    // animation reset — scrolling out mid-cycle can leave `stage` stuck on
+    // 1 or 2, and we need it at 0 before the 800ms timer fires. The
+    // "cascading render" this creates is the whole point.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setStage(0);
     const timers = [
       setTimeout(() => setStage(1), 800),

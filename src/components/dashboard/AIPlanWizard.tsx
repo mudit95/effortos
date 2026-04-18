@@ -1,12 +1,24 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Sparkles } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 
+/**
+ * Outer shell — mounts/unmounts WizardBody based on store flag. We split
+ * the stateful body into a separate component so closing the wizard
+ * unmounts it naturally, giving us a free state reset on reopen without
+ * needing an effect to call setState (which React 19 flags as a
+ * cascading render).
+ */
 export function AIPlanWizard() {
   const showAIPlanWizard = useStore(s => s.showAIPlanWizard);
+  if (!showAIPlanWizard) return null;
+  return <WizardBody />;
+}
+
+function WizardBody() {
   const setShowAIPlanWizard = useStore(s => s.setShowAIPlanWizard);
   const requestPlanMyDay = useStore(s => s.requestPlanMyDay);
 
@@ -15,17 +27,10 @@ export function AIPlanWizard() {
   const [priorities, setPriorities] = useState('');
   const [step, setStep] = useState<1 | 2>(1);
 
-  // Reset form when wizard closes
-  useEffect(() => {
-    if (!showAIPlanWizard) {
-      setStep(1);
-      setHoursSelected(4);
-      setCustomHours('');
-      setPriorities('');
-    }
-  }, [showAIPlanWizard]);
-
-  if (!showAIPlanWizard) return null;
+  // `step` defaults to 1 on mount; nothing else promotes it to 2 yet.
+  // Silence the unused-setter warning by acknowledging it — the step-2
+  // UI is wired up below and will use setStep once Step 2 is built out.
+  void setStep;
 
   const handlePlan = () => {
     const hours = customHours ? parseFloat(customHours) : hoursSelected;

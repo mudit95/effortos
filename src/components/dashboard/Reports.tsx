@@ -217,12 +217,14 @@ export function Reports() {
 
   const [period, setPeriod] = useState<ReportPeriod>('daily');
   const [offset, setOffset] = useState(0); // 0 = current, -1 = previous, etc.
+  const [tasksByDate, setTasksByDate] = useState<Record<string, DailyTask[]>>({});
 
-  // Show goal detail report when a specific goal is selected
-  if (reportGoalId) {
-    return <GoalDetailReport />;
-  }
-
+  // NB: hooks must be called in the same order on every render. The prior
+  // `if (reportGoalId) return <GoalDetailReport />` sat ABOVE the
+  // useMemo/useState/useEffect below and violated React's rules of hooks —
+  // toggling reportGoalId changed hook count between renders, which React
+  // 19 surfaces as a runtime error. All hooks must run first; the
+  // conditional delegation to GoalDetailReport happens afterward.
   const today = new Date();
 
   const { dateRange, periodLabel } = useMemo(() => {
@@ -247,10 +249,10 @@ export function Reports() {
       const label = offset === 0 ? 'This Month' : offset === -1 ? 'Last Month' : formatMonthLabel(ref);
       return { dateRange: getDatesInRange(monthStart, monthEnd), periodLabel: label };
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period, offset]);
 
   // Fetch tasks for all dates in range from API (cloud-first)
-  const [tasksByDate, setTasksByDate] = useState<Record<string, DailyTask[]>>({});
   useEffect(() => {
     let cancelled = false;
     const todayKey = new Date().toISOString().split('T')[0];
@@ -312,6 +314,12 @@ export function Reports() {
   // Tag entries sorted by count
   const sortedTags = Object.entries(report.tagBreakdown).sort((a, b) => b[1].count - a[1].count);
   const totalTagPomodoros = sortedTags.reduce((s, [, v]) => s + v.count, 0);
+
+  // All hooks complete — safe to branch. When the user drills into a specific
+  // goal, defer rendering to GoalDetailReport.
+  if (reportGoalId) {
+    return <GoalDetailReport />;
+  }
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
