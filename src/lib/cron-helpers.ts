@@ -51,16 +51,15 @@ export async function getEligibleUsers(
     .select('user_id, display_name')
     .in('user_id', userIds);
 
-  const { data: { users: authUsers } } = await supabase.auth.admin.listUsers({
-    perPage: 1000,
-  });
+  const authUsers = await listAllAuthUsers(supabase);
 
   const profileMap = new Map(profiles?.map(p => [p.user_id, p.display_name]) || []);
   const tzMap = new Map(eligible.map(e => [e.user_id, e.timezone]));
+  const authUserMap = new Map(authUsers.map(u => [u.id, u]));
 
   return userIds
     .map(uid => {
-      const authUser = authUsers?.find(u => u.id === uid);
+      const authUser = authUserMap.get(uid);
       if (!authUser?.email) return null;
       return {
         user_id: uid,
@@ -70,6 +69,46 @@ export async function getEligibleUsers(
       };
     })
     .filter((u): u is NonNullable<typeof u> => u !== null);
+}
+
+/**
+ * Page through supabase.auth.admin.listUsers and return every user.
+ *
+ * The admin API caps `perPage` around 1000. The pre-pagination implementation
+ * passed `perPage: 1000` with no page loop, silently dropping every user
+ * past the first page from email sends. We now loop until we see a short
+ * page (fewer rows than perPage), which is the documented terminator.
+ *
+ * We also O(1)-lookup by id via a Map in callers, rather than the prior
+ * O(N) Array.find per user id — a cron servicing thousands of eligible
+ * users is now linear in that count rather than quadratic.
+ */
+export async function listAllAuthUsers(
+  supabase: ReturnType<typeof getAdminSupabase>,
+): Promise<{ id: string; email?: string; user_metadata?: { name?: string } }[]> {
+  const perPage = 1000;
+  const all: { id: string; email?: string; user_metadata?: { name?: string } }[] = [];
+  // Supabase pages are 1-indexed.
+  for (let page = 1; ; page++) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+    if (error) {
+      console.error('[cron-helpers] listUsers page', page, 'failed:', error);
+      break;
+    }
+    const users = data?.users ?? [];
+    for (const u of users) {
+      all.push({ id: u.id, email: u.email, user_metadata: u.user_metadata });
+    }
+    if (users.length < perPage) break; // last page
+    // Safety valve against a misbehaving API — 100k users is far beyond
+    // anything this tier would serve and prevents infinite looping on a
+    // bad response.
+    if (page > 100) {
+      console.warn('[cron-helpers] listUsers exceeded 100 pages, stopping');
+      break;
+    }
+  }
+  return all;
 }
 
 /**

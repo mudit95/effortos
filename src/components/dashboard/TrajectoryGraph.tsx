@@ -21,6 +21,40 @@ interface TrajectoryGraphProps {
   className?: string;
 }
 
+// Narrow shape of Recharts' Tooltip content props — enough to render what
+// we need, without dragging in the full recharts type (which isn't exported
+// stably across major versions).
+type TrajectoryTooltipPayload = {
+  color?: string;
+  name?: string | number;
+  value?: number | string;
+};
+
+type TrajectoryTooltipProps = {
+  active?: boolean;
+  payload?: TrajectoryTooltipPayload[];
+  label?: string | number;
+};
+
+// Hoisted out of the parent component: the react-hooks/static-components
+// rule flags components created inside render bodies because their
+// identity changes every render, which forces React/Recharts to remount
+// them (and lose internal state). Hoisting makes `content={<CustomTooltip />}`
+// a stable reference.
+function CustomTooltip({ active, payload, label }: TrajectoryTooltipProps) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-[#1a1f2e] border border-white/10 rounded-lg px-3 py-2 text-xs shadow-xl">
+      <p className="text-white/50 mb-1">Session {label}</p>
+      {payload.map((p, i) => (
+        <p key={i} style={{ color: p.color }} className="font-medium">
+          {p.name}: {p.value} remaining
+        </p>
+      ))}
+    </div>
+  );
+}
+
 export function TrajectoryGraph({ goal, className = '' }: TrajectoryGraphProps) {
   const {
     estimated_sessions_initial,
@@ -57,20 +91,6 @@ export function TrajectoryGraph({ goal, className = '' }: TrajectoryGraphProps) 
       actual,
     });
   }
-
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (!active || !payload?.length) return null;
-    return (
-      <div className="bg-[#1a1f2e] border border-white/10 rounded-lg px-3 py-2 text-xs shadow-xl">
-        <p className="text-white/50 mb-1">Session {label}</p>
-        {payload.map((p: any, i: number) => (
-          <p key={i} style={{ color: p.color }} className="font-medium">
-            {p.name}: {p.value} remaining
-          </p>
-        ))}
-      </div>
-    );
-  };
 
   return (
     <Card variant="default" className={className}>

@@ -404,7 +404,7 @@ export function AuthScreen() {
               </Button>
 
               <div className="flex items-center gap-2 justify-center">
-                <span className="text-xs text-white/30">Don't have an account?</span>
+                <span className="text-xs text-white/30">Don&apos;t have an account?</span>
                 <button
                   type="button"
                   onClick={() => { setMode('signup'); setError(''); }}

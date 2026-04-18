@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/admin';
 import { sendEmail } from '@/lib/email';
 import { adminCustomEmail } from '@/lib/email-templates';
-import { getAdminSupabase, logEmail } from '@/lib/cron-helpers';
+import { getAdminSupabase, logEmail, listAllAuthUsers } from '@/lib/cron-helpers';
 
 /**
  * POST /api/admin/email
@@ -27,7 +27,7 @@ export async function POST(req: Request) {
 
   const supabase = getAdminSupabase();
   let recipientEmails: string[] = [];
-  let userIdMap = new Map<string, string>(); // email → user_id
+  const userIdMap = new Map<string, string>(); // email → user_id
 
   if (target === 'individual') {
     if (!individualEmails || !Array.isArray(individualEmails) || individualEmails.length === 0) {
@@ -74,10 +74,12 @@ export async function POST(req: Request) {
     // If no prefs exist for a user, they're still eligible (default is true)
     const finalIds = userIds.filter(id => eligibleIds.has(id) || !prefs?.find(p => p.user_id === id));
 
-    // Get emails from auth
-    const { data: { users: authUsers } } = await supabase.auth.admin.listUsers({ perPage: 1000 });
+    // Get emails from auth. Use the paged helper — single-page listUsers
+    // silently dropped everyone past user #1000 from admin broadcasts.
+    const authUsers = await listAllAuthUsers(supabase);
+    const authUserMap = new Map(authUsers.map(u => [u.id, u]));
     for (const uid of finalIds) {
-      const authUser = authUsers?.find(u => u.id === uid);
+      const authUser = authUserMap.get(uid);
       if (authUser?.email) {
         recipientEmails.push(authUser.email);
         userIdMap.set(authUser.email, uid);

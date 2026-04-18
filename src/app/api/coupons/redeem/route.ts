@@ -6,9 +6,16 @@ import { createClient } from '@/lib/supabase/server';
  * Body: { code: string }
  *
  * Applies a coupon on behalf of the current user. Returns
- *   { applied: 'trial_extension', days } — trial extended
- *   { applied: 'free_months', months } — premium granted
- *   { applied: 'percent_off', percent } — discount returned, caller applies at checkout
+ *   { applied: 'trial_extension', value: <days> }    — trial extended
+ *   { applied: 'free_months',     value: <months> }  — premium granted
+ *   { applied: 'percent_off',     percent, razorpay_offer_id, ... }
+ *                                                     — discount returned,
+ *                                                       caller applies at checkout
+ *
+ * All gating (active? expired? cap reached? already redeemed?) happens
+ * inside the SECURITY DEFINER Postgres function `redeem_coupon_atomic`.
+ * That function row-locks the coupon with FOR UPDATE, so concurrent
+ * redemptions serialise and max_redemptions can no longer be overshot.
  */
 export async function POST(req: Request) {
   const supabase = await createClient();
@@ -18,55 +25,56 @@ export async function POST(req: Request) {
   const { code } = await req.json();
   if (!code) return NextResponse.json({ error: 'code required' }, { status: 400 });
 
-  const normalizedCode = String(code).toUpperCase().trim();
+  // ── Atomic reservation/redemption ─────────────────────────────────
+  const { data: result, error: rpcErr } = await supabase.rpc('redeem_coupon_atomic', {
+    p_user_id: user.id,
+    p_code: String(code),
+  });
 
-  const { data: coupon, error: cErr } = await supabase
-    .from('coupons')
-    .select('*')
-    .eq('code', normalizedCode)
-    .eq('active', true)
-    .single();
-
-  if (cErr || !coupon) {
-    return NextResponse.json({ error: 'Invalid or inactive code' }, { status: 404 });
+  if (rpcErr) {
+    console.error('[coupons/redeem] RPC failed:', rpcErr);
+    return NextResponse.json({ error: 'Failed to redeem code' }, { status: 500 });
   }
 
-  if (coupon.expires_at && new Date(coupon.expires_at) < new Date()) {
-    return NextResponse.json({ error: 'This code has expired' }, { status: 400 });
+  type RedeemResult =
+    | { ok: false; code: 'not_found' | 'expired' | 'max_reached' | 'already_redeemed'; message: string }
+    | { ok: true; kind: 'percent_off'; percent: number; coupon_id: string; code: string; razorpay_offer_id: string | null }
+    | { ok: true; kind: 'trial_extension' | 'free_months'; value: number; coupon_id: string; code: string };
+
+  const r = result as RedeemResult | null;
+  if (!r) {
+    return NextResponse.json({ error: 'Unexpected empty result' }, { status: 500 });
   }
 
-  if (coupon.max_redemptions !== null && coupon.redemption_count >= coupon.max_redemptions) {
-    return NextResponse.json({ error: 'Code has reached its redemption limit' }, { status: 400 });
+  if (!r.ok) {
+    const statusCode =
+      r.code === 'not_found' ? 404 :
+      r.code === 'expired' ? 400 :
+      r.code === 'max_reached' ? 400 :
+      r.code === 'already_redeemed' ? 400 : 400;
+    return NextResponse.json({ error: r.message }, { status: statusCode });
   }
 
-  // Already redeemed by this user?
-  const { data: prior } = await supabase
-    .from('coupon_redemptions')
-    .select('id')
-    .eq('coupon_id', coupon.id)
-    .eq('user_id', user.id)
-    .maybeSingle();
-  if (prior) {
-    return NextResponse.json({ error: 'You have already redeemed this code' }, { status: 400 });
-  }
-
-  // For percent_off, we don't finalize — caller applies at checkout. We don't record redemption yet.
-  if (coupon.kind === 'percent_off') {
+  // percent_off: nothing to apply yet; checkout layer uses offer_id.
+  if (r.kind === 'percent_off') {
     return NextResponse.json({
       applied: 'percent_off',
-      percent: Number(coupon.discount_value),
-      coupon_id: coupon.id,
-      code: coupon.code,
-      razorpay_offer_id: coupon.razorpay_offer_id ?? null,
+      percent: Number(r.percent),
+      coupon_id: r.coupon_id,
+      code: r.code,
+      razorpay_offer_id: r.razorpay_offer_id ?? null,
     });
   }
 
-  // For trial_extension and free_months, we apply immediately.
+  // ── Apply the subscription-side effect for trial_extension / free_months ─
   //
-  // `maybeSingle()` with an order+limit guards against a 500 when a
-  // user ends up with zero OR multiple subscription rows (which does
-  // happen in edge cases — see migrations/006_subscriptions_dedup.sql).
-  // We pick the most recent row and treat older rows as stale.
+  // The redemption counter and coupon_redemptions row are already committed
+  // by the RPC. If this subscription update fails, the coupon is "spent"
+  // without the user getting their perk — which is a soft concern for
+  // admin-created coupons but shouldn't happen in practice (same DB, same
+  // connection). We log loudly so ops can spot the rare drift and refund
+  // by hand. Wrapping both into a single transaction would require moving
+  // the subscription update into the RPC too — a worthwhile future step.
   const { data: existing } = await supabase
     .from('subscriptions')
     .select('*')
@@ -75,19 +83,32 @@ export async function POST(req: Request) {
     .limit(1)
     .maybeSingle();
 
-  if (coupon.kind === 'trial_extension') {
-    const days = Number(coupon.discount_value);
+  if (r.kind === 'trial_extension') {
+    const days = Number(r.value);
     const now = Date.now();
-    const baseMs = existing?.trial_ends_at ? Math.max(new Date(existing.trial_ends_at).getTime(), now) : now;
+    const baseMs = existing?.trial_ends_at
+      ? Math.max(new Date(existing.trial_ends_at).getTime(), now)
+      : now;
     const newTrialEnd = new Date(baseMs + days * 86400000).toISOString();
 
-    if (existing) {
-      await supabase.from('subscriptions').update({ status: 'trialing', trial_ends_at: newTrialEnd }).eq('user_id', user.id);
-    } else {
-      await supabase.from('subscriptions').insert({ user_id: user.id, status: 'trialing', trial_ends_at: newTrialEnd });
+    const { error: subErr } = existing
+      ? await supabase.from('subscriptions')
+          .update({ status: 'trialing', trial_ends_at: newTrialEnd })
+          .eq('user_id', user.id)
+      : await supabase.from('subscriptions')
+          .insert({ user_id: user.id, status: 'trialing', trial_ends_at: newTrialEnd });
+
+    if (subErr) {
+      console.error('[coupons/redeem] trial_extension subscription write failed AFTER coupon was burned:', {
+        user_id: user.id,
+        coupon_id: r.coupon_id,
+        code: r.code,
+        error: subErr.message,
+      });
+      return NextResponse.json({ error: 'Failed to apply trial extension' }, { status: 500 });
     }
-  } else if (coupon.kind === 'free_months') {
-    const months = Number(coupon.discount_value);
+  } else if (r.kind === 'free_months') {
+    const months = Number(r.value);
     const now = new Date();
     const baseMs = existing?.current_period_end
       ? Math.max(new Date(existing.current_period_end).getTime(), now.getTime())
@@ -96,19 +117,26 @@ export async function POST(req: Request) {
     end.setMonth(end.getMonth() + months);
     const newPeriodEnd = end.toISOString();
 
-    if (existing) {
-      await supabase.from('subscriptions').update({ status: 'active', current_period_end: newPeriodEnd, cancelled_at: null }).eq('user_id', user.id);
-    } else {
-      await supabase.from('subscriptions').insert({ user_id: user.id, status: 'active', current_period_end: newPeriodEnd });
+    const { error: subErr } = existing
+      ? await supabase.from('subscriptions')
+          .update({ status: 'active', current_period_end: newPeriodEnd, cancelled_at: null })
+          .eq('user_id', user.id)
+      : await supabase.from('subscriptions')
+          .insert({ user_id: user.id, status: 'active', current_period_end: newPeriodEnd });
+
+    if (subErr) {
+      console.error('[coupons/redeem] free_months subscription write failed AFTER coupon was burned:', {
+        user_id: user.id,
+        coupon_id: r.coupon_id,
+        code: r.code,
+        error: subErr.message,
+      });
+      return NextResponse.json({ error: 'Failed to apply free months' }, { status: 500 });
     }
   }
 
-  // Record redemption + increment counter
-  await supabase.from('coupon_redemptions').insert({ coupon_id: coupon.id, user_id: user.id });
-  await supabase.from('coupons').update({ redemption_count: coupon.redemption_count + 1 }).eq('id', coupon.id);
-
   return NextResponse.json({
-    applied: coupon.kind,
-    value: Number(coupon.discount_value),
+    applied: r.kind,
+    value: Number(r.value),
   });
 }

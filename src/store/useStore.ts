@@ -755,8 +755,9 @@ export const useStore = create<AppState>((set, get) => ({
     const newCompleted = goal.sessions_completed + 1;
     const now = new Date().toISOString();
 
-    // Apply updates in memory
-    let updatedGoal = { ...goal, sessions_completed: newCompleted };
+    // Apply updates in memory — mutate fields on the same object, so the
+    // binding is const even though the object is reshaped below.
+    const updatedGoal = { ...goal, sessions_completed: newCompleted };
 
     // Check milestones
     const updatedMilestones = updatedGoal.milestones.map(m => {
@@ -1088,8 +1089,9 @@ export const useStore = create<AppState>((set, get) => ({
     const goal = get().goals.find(g => g.id === feedbackGoalId);
     if (!goal) return;
 
-    // Add feedback and recalibrate in memory
-    let updatedGoal = { ...goal };
+    // Add feedback and recalibrate in memory — same const-binding, mutable-object
+    // pattern as completeSession above.
+    const updatedGoal = { ...goal };
     const now = new Date().toISOString();
     const newFeedbackEntry: FeedbackEntry = {
       timestamp: now,

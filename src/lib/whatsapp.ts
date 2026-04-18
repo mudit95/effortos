@@ -13,8 +13,56 @@ function getBaseUrl(phoneId: string) {
   return `https://graph.facebook.com/${API_VERSION}/${phoneId}/messages`;
 }
 
+// WhatsApp caps text bodies at 4096 UTF-16 code units per Meta's docs.
+// We leave margin so AI replies with odd Unicode (emoji + ZWJ sequences)
+// can't tip over the hard limit and trigger a 400 from Meta.
+const WHATSAPP_TEXT_MAX = 4000;
+
+/**
+ * Split `body` into WhatsApp-sendable chunks, preferring paragraph / line /
+ * word boundaries over mid-word splits. Each chunk is <= WHATSAPP_TEXT_MAX.
+ *
+ * Exported so callers that want their own chunk-counting prefix can
+ * chunk first and customise the boundary text.
+ */
+export function splitForWhatsApp(body: string, max = WHATSAPP_TEXT_MAX): string[] {
+  if (body.length <= max) return [body];
+
+  const chunks: string[] = [];
+  let remaining = body;
+
+  while (remaining.length > max) {
+    // Prefer a paragraph break, then a line break, then a word break,
+    // then a hard split — in that order — within the last 20% of the window.
+    const window = remaining.slice(0, max);
+    const floor = Math.floor(max * 0.8);
+    let splitAt = -1;
+    const para = window.lastIndexOf('\n\n');
+    if (para >= floor) splitAt = para + 2;
+    if (splitAt < 0) {
+      const line = window.lastIndexOf('\n');
+      if (line >= floor) splitAt = line + 1;
+    }
+    if (splitAt < 0) {
+      const space = window.lastIndexOf(' ');
+      if (space >= floor) splitAt = space + 1;
+    }
+    if (splitAt < 0) splitAt = max;
+
+    chunks.push(remaining.slice(0, splitAt).trimEnd());
+    remaining = remaining.slice(splitAt).trimStart();
+  }
+  if (remaining.length > 0) chunks.push(remaining);
+  return chunks;
+}
+
 /**
  * Send a plain text message to a WhatsApp user.
+ *
+ * Automatically chunks long bodies so we never POST a 4097+ char payload
+ * (Meta returns 400 for oversized text). Long replies are prefixed with
+ * (1/N) so the user knows there's more coming. Returns `true` only if
+ * every chunk was accepted by Meta.
  */
 export async function sendTextMessage(to: string, body: string): Promise<boolean> {
   const token = process.env.WHATSAPP_TOKEN;
@@ -25,32 +73,40 @@ export async function sendTextMessage(to: string, body: string): Promise<boolean
     return false;
   }
 
-  try {
-    const res = await fetch(getBaseUrl(phoneId), {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to,
-        type: 'text',
-        text: { preview_url: false, body },
-      }),
-    });
+  const chunks = splitForWhatsApp(body);
+  const url = getBaseUrl(phoneId);
 
-    if (!res.ok) {
-      const err = await res.text();
-      console.error('[WhatsApp] Send failed:', res.status, err);
+  for (let i = 0; i < chunks.length; i++) {
+    const text = chunks.length > 1
+      ? `(${i + 1}/${chunks.length}) ${chunks[i]}`
+      : chunks[i];
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to,
+          type: 'text',
+          text: { preview_url: false, body: text },
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.text();
+        console.error('[WhatsApp] Send failed:', res.status, err, 'chunk', i + 1, 'of', chunks.length);
+        return false;
+      }
+    } catch (err) {
+      console.error('[WhatsApp] Send error on chunk', i + 1, ':', err);
       return false;
     }
-    return true;
-  } catch (err) {
-    console.error('[WhatsApp] Send error:', err);
-    return false;
   }
+  return true;
 }
 
 /**

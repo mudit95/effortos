@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { rateLimitByIpOrNull } from '@/lib/ratelimit';
 
 /**
  * GET /api/health
@@ -11,14 +12,24 @@ import { createServiceClient } from '@/lib/supabase/service';
  * Returns 503 with a `degraded` flag if Supabase is unreachable — uptime
  * monitors should treat 503 as DOWN so we're paged on real infra issues.
  *
- * Intentionally does NOT require auth. Response body is intentionally small.
+ * Intentionally does NOT require auth — but IS rate-limited per client IP
+ * so a hostile scraper can't weaponise the Supabase ping into a free
+ * read-amplifier against our DB. Legit monitors (even at a 10s cadence from
+ * multiple regions) sit well under the 60/min/IP budget.
+ *
+ * Response body is intentionally small.
  */
 
 // 5s max for the Supabase ping so a slow DB doesn't exceed Vercel's function
 // budget. Uptime monitors will time out at ~10s and mark us down anyway.
 export const maxDuration = 10;
 
-export async function GET() {
+export async function GET(req: Request) {
+  // IP-rate-limit before we touch Supabase. Fails open if Upstash isn't
+  // configured (local dev, pre-rollout) — see rateLimitByIp().
+  const blocked = await rateLimitByIpOrNull(req, 'health');
+  if (blocked) return blocked;
+
   const startedAt = Date.now();
   const checks = {
     env: {

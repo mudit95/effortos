@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
 import { useTimer } from '@/hooks/useTimer';
 import { formatDuration } from '@/lib/utils';
-import { TASK_TAGS, type TaskTagId, type DailyTask } from '@/types';
+import { TASK_TAGS, type TaskTagId, type DailyTask, type Goal } from '@/types';
 import {
   Plus, Trash2, Play, Pause, RotateCcw, SkipForward,
   Repeat, ChevronLeft, ChevronRight, Maximize2, Circle,
@@ -441,7 +441,7 @@ export function DailyGrind() {
   const handleRollToTomorrow = (task: DailyTask) => {
     const tomorrowKey = getTomorrowKey();
     updateDailyTaskDetails(task.id, { date: tomorrowKey });
-    addToast({ type: 'success', message: `"${task.title}" rolled to tomorrow` });
+    addToast(`"${task.title}" rolled to tomorrow`, 'success');
   };
 
   const activeTask = dailyTasks.find(t => t.id === activeDailyTaskId);
@@ -926,7 +926,7 @@ export function DailyGrind() {
             transition={{ delay: 0.05, duration: 0.4, ease }}
             className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]"
           >
-            <h3 className="text-[10px] text-white/25 uppercase tracking-widest mb-3">Today's Charter</h3>
+            <h3 className="text-[10px] text-white/25 uppercase tracking-widest mb-3">Today&apos;s Charter</h3>
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm font-medium text-white/70">{donePomodoros} of {totalPomodoros} pomodoros</p>
               <span className="text-xs text-white/30">{totalPomodoros > 0 ? Math.round((donePomodoros / totalPomodoros) * 100) : 0}%</span>
@@ -1067,7 +1067,7 @@ function TaskRow({
   onRollToTomorrow?: () => void;
   timerBusy: boolean;
   completed?: boolean;
-  goals?: any[];
+  goals?: Goal[];
 }) {
   const tagInfo = getTagInfo(task.tag as TaskTagId);
   const linkedGoal = task.goal_id ? goals.find(g => g.id === task.goal_id) : null;

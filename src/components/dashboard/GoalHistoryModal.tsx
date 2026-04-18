@@ -59,11 +59,18 @@ function GoalCard({
     : 0;
   const hoursInvested = sessionsToHours(goal.sessions_completed);
   const startedDate = formatDate(goal.created_at);
-  const daysElapsed = Math.max(1, Math.floor((Date.now() - new Date(goal.created_at).getTime()) / (1000 * 60 * 60 * 24)));
+
+  // Freeze "now" at mount so Date.now() doesn't run in render body
+  // (React 19 purity rule) and so the row doesn't flicker across renders.
+  const [nowAtMount] = useState(() => Date.now());
+  const daysElapsed = Math.max(
+    1,
+    Math.floor((nowAtMount - new Date(goal.created_at).getTime()) / (1000 * 60 * 60 * 24)),
+  );
 
   // Calculate days remaining from deadline
-  const daysRemaining = (goal as any).deadline
-    ? Math.ceil((new Date((goal as any).deadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+  const daysRemaining = goal.deadline
+    ? Math.ceil((new Date(goal.deadline).getTime() - nowAtMount) / (1000 * 60 * 60 * 24))
     : null;
 
   // Calculate milestones progress

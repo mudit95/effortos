@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { verifyCronAuth } from '@/lib/cron-auth';
-import { getAdminSupabase, logEmail } from '@/lib/cron-helpers';
+import { getAdminSupabase, logEmail, listAllAuthUsers } from '@/lib/cron-helpers';
 import { trialEndingEmail } from '@/lib/email-templates';
 import { sendEmail } from '@/lib/email';
 
@@ -50,13 +50,15 @@ export async function GET(request: Request) {
   // ── 2. Pull profile + email prefs + auth email in one pass ─────
   const userIds = subs.map(s => s.user_id);
 
-  const [{ data: profiles }, { data: prefs }, { data: { users: authUsers } }] = await Promise.all([
+  const [{ data: profiles }, { data: prefs }, authUsers] = await Promise.all([
     supabase.from('profiles').select('id, name').in('id', userIds),
     supabase
       .from('email_preferences')
       .select('user_id, unsubscribed_all')
       .in('user_id', userIds),
-    supabase.auth.admin.listUsers({ perPage: 1000 }),
+    // Page through all auth users — the prior single-page listUsers call
+    // silently dropped everyone past the first 1k from trial-ending notices.
+    listAllAuthUsers(supabase),
   ]);
 
   const profileMap = new Map(profiles?.map(p => [p.id, p.name]) || []);
@@ -64,7 +66,7 @@ export async function GET(request: Request) {
     (prefs || []).filter(p => p.unsubscribed_all).map(p => p.user_id),
   );
   const emailMap = new Map(
-    (authUsers || []).map(u => [u.id, u.email]),
+    authUsers.map(u => [u.id, u.email]),
   );
 
   // ── 3. Send, with per-subscription idempotency via email_log ───

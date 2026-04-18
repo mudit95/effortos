@@ -551,7 +551,7 @@ export function SettingsModal() {
                           <li>• All AI coach data</li>
                         </ul>
                         <p className="text-[11px] text-red-400/60 mt-2">
-                          Your account (email & password) will be preserved. You'll start fresh from onboarding.
+                          Your account (email &amp; password) will be preserved. You&apos;ll start fresh from onboarding.
                         </p>
                       </div>
                     </div>

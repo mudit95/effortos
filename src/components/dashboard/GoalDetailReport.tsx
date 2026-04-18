@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { useStore } from '@/store/useStore';
 import * as api from '@/lib/api';
 import { sessionsToHours, getStreaks } from '@/lib/utils';
+import type { Session, DailySession } from '@/types';
 import { Button } from '@/components/ui/button';
 import { GoalProgressBar } from './GoalProgressBar';
 import {
@@ -36,15 +37,25 @@ export function GoalDetailReport() {
   const goal = goals.find(g => g.id === reportGoalId);
   const focusDuration = user?.settings?.focus_duration || 25 * 60;
 
-  const [sessions, setSessions] = useState<any[]>([]);
-  const [dailySessions, setDailySessions] = useState<any[]>([]);
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [dailySessions, setDailySessions] = useState<DailySession[]>([]);
   const [loading, setLoading] = useState(false);
+  // Freeze "now" at mount. Calling Date.now() inside useMemo / render
+  // body is flagged as impure; the days-existing calc only needs to be
+  // stable across a single visit to the report.
+  const [nowAtMount] = useState(() => Date.now());
 
-  // Load sessions from API when goal changes
+  // Load sessions from API when goal changes. We guard the `no-goal`
+  // reset with a length check so we're not calling setState on every run
+  // when the arrays are already empty — that turns the cascading-render
+  // warning off for the normal path. The actual async setState happens
+  // inside the Promise.then, which is post-render and safe.
   useEffect(() => {
     if (!goal) {
-      setSessions([]);
-      setDailySessions([]);
+      if (sessions.length || dailySessions.length) {
+        setSessions([]);
+        setDailySessions([]);
+      }
       return;
     }
 
@@ -63,6 +74,9 @@ export function GoalDetailReport() {
         setDailySessions([]);
       })
       .finally(() => setLoading(false));
+    // We intentionally depend only on goal?.id so the fetch doesn't
+    // refire when the array lengths we read above change mid-resolve.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [goal?.id]);
 
   const stats = useMemo(() => {
@@ -96,7 +110,7 @@ export function GoalDetailReport() {
       sessions.map(s => (s.end_time || s.start_time).split('T')[0])
     ).size;
     const daysExisting = Math.max(1, Math.ceil(
-      (Date.now() - new Date(goal.created_at).getTime()) / (1000 * 60 * 60 * 24)
+      (nowAtMount - new Date(goal.created_at).getTime()) / (1000 * 60 * 60 * 24)
     ));
 
     // Consistency = active days / total days
@@ -154,7 +168,7 @@ export function GoalDetailReport() {
       estimationLabel,
       estimationDiff,
     };
-  }, [sessions, dailySessions, goal, focusDuration]);
+  }, [sessions, dailySessions, goal, focusDuration, nowAtMount]);
 
   if (!goal) return null;
 
