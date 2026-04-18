@@ -466,6 +466,7 @@ export async function getAllDailyTasks(): Promise<DailyTask[]> {
     pomodoros_done: d.pomodoros_done as number,
     date: d.date as string,
     tag: d.tag as TaskTagId | undefined,
+    goal_id: (d.goal_id as string | null) ?? undefined,
     created_at: d.created_at as string,
     completed_at: d.completed_at as string | undefined,
     order: d.sort_order as number,
@@ -493,6 +494,7 @@ export async function getDailyTasksForDate(date: string): Promise<DailyTask[]> {
     pomodoros_done: d.pomodoros_done as number,
     date: d.date as string,
     tag: d.tag as TaskTagId | undefined,
+    goal_id: (d.goal_id as string | null) ?? undefined,
     created_at: d.created_at as string,
     completed_at: d.completed_at as string | undefined,
     order: d.sort_order as number,
@@ -594,6 +596,11 @@ export async function updateDailyTask(id: string, updates: Partial<DailyTask>): 
   if (updates.tag !== undefined) dbUpdates.tag = updates.tag;
   if (updates.completed_at !== undefined) dbUpdates.completed_at = updates.completed_at;
   if (updates.order !== undefined) dbUpdates.sort_order = updates.order;
+  // `date` and `goal_id` were previously dropped by this allowlist, which
+  // silently broke "Roll to tomorrow" (date change reverted on next refresh)
+  // and any goal-reassignment UI for cloud users.
+  if (updates.date !== undefined) dbUpdates.date = updates.date;
+  if (updates.goal_id !== undefined) dbUpdates.goal_id = updates.goal_id;
 
   const { data: row } = await supabase
     .from('daily_tasks')
@@ -612,6 +619,7 @@ export async function updateDailyTask(id: string, updates: Partial<DailyTask>): 
     pomodoros_done: row.pomodoros_done as number,
     date: row.date as string,
     tag: row.tag as TaskTagId | undefined,
+    goal_id: (row.goal_id as string | null) ?? undefined,
     created_at: row.created_at as string,
     completed_at: row.completed_at as string | undefined,
     order: row.sort_order as number,
