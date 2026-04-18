@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, ChevronRight, Flame, Clock, Target } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Flame, Clock, Target, BookOpen, PlusCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface DailySession {
@@ -23,6 +23,11 @@ interface StreakCalendarProps {
   focusDurationSec?: number;
   className?: string;
   onDayClick?: (date: string) => void;
+  // Dates (YYYY-MM-DD) that already have a journal entry. Used to show
+  // an indicator dot on the cell and to swap the tooltip CTA between
+  // "Add journal entry" and "View journal entry". Passed as an array
+  // for ergonomics; we normalize to a Set internally for O(1) lookup.
+  journalDates?: string[];
 }
 
 type HoverInfo = {
@@ -34,6 +39,7 @@ type HoverInfo = {
   perf: number; // 0-1 fill
   isToday: boolean;
   isFuture: boolean;
+  hasJournal: boolean;
   // anchor rect for positioning
   rect: { left: number; top: number; width: number; height: number };
 };
@@ -47,7 +53,14 @@ export function StreakCalendar({
   focusDurationSec = 25 * 60,
   className = '',
   onDayClick,
+  journalDates,
 }: StreakCalendarProps) {
+  // Normalize the journal date array to a Set for O(1) membership checks
+  // inside the render loop (one lookup per cell, 35+ cells per month).
+  const journalDateSet = useMemo(
+    () => new Set(journalDates ?? []),
+    [journalDates],
+  );
   // Convert dailySessions to dailyData map if needed
   const dataMap = useMemo(() => {
     if (dailyData) return dailyData;
@@ -271,6 +284,7 @@ export function StreakCalendar({
           const perf = getPerformance(count);
           const isTodayCell = isTodayDate(y, m, day);
           const isFutureCell = isFutureDate(y, m, day);
+          const hasJournal = journalDateSet.has(dateStr);
 
           return (
             <motion.button
@@ -287,6 +301,7 @@ export function StreakCalendar({
                   perf,
                   isToday: isTodayCell,
                   isFuture: isFutureCell,
+                  hasJournal,
                 })
               }
               onMouseLeave={handleMouseLeave}
@@ -301,7 +316,10 @@ export function StreakCalendar({
                 isFutureCell && 'border border-dashed border-white/20 cursor-default',
               )}
               disabled={isFutureCell}
-              aria-label={`${dateStr}: ${count} pomodoros`}
+              aria-label={
+                `${dateStr}: ${count} pomodoros` +
+                (hasJournal ? ' · journal entry present' : '')
+              }
             >
               {/* Fill-level bar at bottom of the cell — shows pace toward target */}
               {!isFutureCell && perf > 0 && (
@@ -311,6 +329,20 @@ export function StreakCalendar({
                     perf >= 1 ? 'bg-emerald-400' : 'bg-cyan-300',
                   )}
                   style={{ width: `${Math.round(perf * 100)}%` }}
+                  aria-hidden
+                />
+              )}
+              {/* Journal indicator — tiny dot in the top-right corner of the
+                  cell when an entry exists for this date. Uses amber so it
+                  reads as distinct from the cyan/emerald performance ramp.
+                  On today's cell we nudge it slightly to avoid visually
+                  crashing into the ring-inset. */}
+              {hasJournal && !isFutureCell && (
+                <span
+                  className={cn(
+                    'absolute rounded-full bg-amber-300/90 shadow-[0_0_4px_rgba(251,191,36,0.6)]',
+                    isTodayCell ? 'top-1 right-1 w-1 h-1' : 'top-0.5 right-0.5 w-1.5 h-1.5',
+                  )}
                   aria-hidden
                 />
               )}
@@ -390,7 +422,7 @@ function CalendarTooltip({
       style={{ left, top }}
       role="tooltip"
     >
-      <div className="min-w-[180px] rounded-lg border border-white/10 bg-[#0B0F14]/95 backdrop-blur-md shadow-xl p-3 text-left">
+      <div className="min-w-[200px] rounded-lg border border-white/10 bg-[#0B0F14]/95 backdrop-blur-md shadow-xl p-3 text-left">
         <div className="text-[11px] text-white/40 uppercase tracking-wider mb-1">
           {label}
           {hover.isToday && <span className="ml-1.5 text-cyan-400/80 normal-case">· Today</span>}
@@ -436,6 +468,27 @@ function CalendarTooltip({
                 {pct}%
               </span>
             </div>
+          )}
+        </div>
+
+        {/* Journal CTA — swaps label based on existence. Not a button
+            because the whole cell is already the click target; this is
+            pure signal. */}
+        <div className="mt-2.5 pt-2 border-t border-white/[0.06] flex items-center gap-1.5">
+          {hover.hasJournal ? (
+            <>
+              <BookOpen className="w-3 h-3 text-amber-300/90" />
+              <span className="text-[11px] text-amber-200/80 font-medium">
+                Click to view journal entry
+              </span>
+            </>
+          ) : (
+            <>
+              <PlusCircle className="w-3 h-3 text-cyan-400/80" />
+              <span className="text-[11px] text-white/55">
+                Click to add journal entry
+              </span>
+            </>
           )}
         </div>
       </div>

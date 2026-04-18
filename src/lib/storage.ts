@@ -1,6 +1,6 @@
 // Local Storage Persistence Layer
 
-import { Goal, Session, User, FeedbackEntry, DailySession, UserSettings, DEFAULT_SETTINGS, DailyTask, RepeatingTaskTemplate, TaskTagId, DashboardMode } from '@/types';
+import { Goal, Session, User, FeedbackEntry, DailySession, UserSettings, DEFAULT_SETTINGS, DailyTask, RepeatingTaskTemplate, TaskTagId, DashboardMode, JournalEntry, JournalMoodId } from '@/types';
 import { generateId } from './utils';
 
 const STORAGE_KEYS = {
@@ -11,6 +11,7 @@ const STORAGE_KEYS = {
   DAILY_TASKS: 'effortos_daily_tasks',
   REPEATING_TEMPLATES: 'effortos_repeating_templates',
   DASHBOARD_MODE: 'effortos_dashboard_mode',
+  JOURNAL_ENTRIES: 'effortos_journal_entries',
 } as const;
 
 function safeGet<T>(key: string, fallback: T): T {
@@ -440,4 +441,63 @@ export function ensureRepeatingTasksForDate(date: string): DailyTask[] {
 export function clearAllData(): void {
   if (typeof window === 'undefined') return;
   Object.values(STORAGE_KEYS).forEach(key => localStorage.removeItem(key));
+}
+
+// ── Journal entries (one per calendar day) ────────────────────────────
+// The DB has UNIQUE(user_id, date); mirror that invariant here by always
+// upserting on date rather than creating duplicates.
+
+export function getJournalEntries(): JournalEntry[] {
+  return safeGet<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []);
+}
+
+export function getJournalEntryForDate(date: string): JournalEntry | null {
+  const entries = getJournalEntries();
+  return entries.find(e => e.date === date) ?? null;
+}
+
+/**
+ * Insert-or-update by date. If an entry already exists for `date`, its
+ * `content`/`mood` are replaced and `updated_at` bumped; otherwise a new
+ * row is appended.
+ *
+ * Returns the resulting entry so callers can sync state in one go.
+ */
+export function upsertJournalEntry(
+  date: string,
+  content: string,
+  mood?: JournalMoodId,
+): JournalEntry {
+  const entries = getJournalEntries();
+  const now = new Date().toISOString();
+  const idx = entries.findIndex(e => e.date === date);
+
+  if (idx >= 0) {
+    const updated: JournalEntry = {
+      ...entries[idx],
+      content,
+      mood,
+      updated_at: now,
+    };
+    entries[idx] = updated;
+    safeSet(STORAGE_KEYS.JOURNAL_ENTRIES, entries);
+    return updated;
+  }
+
+  const created: JournalEntry = {
+    id: generateId(),
+    date,
+    content,
+    mood,
+    created_at: now,
+    updated_at: now,
+  };
+  entries.push(created);
+  safeSet(STORAGE_KEYS.JOURNAL_ENTRIES, entries);
+  return created;
+}
+
+export function deleteJournalEntry(date: string): void {
+  const entries = getJournalEntries().filter(e => e.date !== date);
+  safeSet(STORAGE_KEYS.JOURNAL_ENTRIES, entries);
 }

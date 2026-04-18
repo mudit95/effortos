@@ -190,6 +190,30 @@ export interface RepeatingTaskTemplate {
   active: boolean;
 }
 
+// ── Journal ──────────────────────────────────────────────────────────
+// One entry per calendar day per user, keyed by YYYY-MM-DD. Stored both
+// in localStorage (anonymous users) and Supabase (cloud users). The
+// UNIQUE(user_id, date) constraint in the DB enforces the "one per day"
+// invariant so upsert-by-date is the natural operation.
+export const JOURNAL_MOODS = [
+  { id: 'great',  emoji: '😄', label: 'Great'  },
+  { id: 'good',   emoji: '🙂', label: 'Good'   },
+  { id: 'meh',    emoji: '😐', label: 'Meh'    },
+  { id: 'rough',  emoji: '😟', label: 'Rough'  },
+  { id: 'hard',   emoji: '😩', label: 'Hard'   },
+] as const;
+
+export type JournalMoodId = typeof JOURNAL_MOODS[number]['id'];
+
+export interface JournalEntry {
+  id: string;
+  date: string;           // YYYY-MM-DD (local calendar date the entry is FOR)
+  content: string;        // plain text, no markdown parsing yet
+  mood?: JournalMoodId;
+  created_at: string;
+  updated_at: string;
+}
+
 // Subscription types
 export type SubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'cancelled' | 'expired' | 'none';
 

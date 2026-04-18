@@ -409,6 +409,17 @@ export function DailyGrind() {
     setShowAIPlanWizard,
   } = useStore();
 
+  // Journal subscriptions — kept as individual selectors so the grid doesn't
+  // re-render when unrelated store slices change. `journalEntries` is a list
+  // of all entries (all dates) so the calendar cell indicator is accurate
+  // regardless of which day we're viewing.
+  const journalEntries = useStore(s => s.journalEntries);
+  const setJournalModalDate = useStore(s => s.setJournalModalDate);
+  const journalDates = React.useMemo(
+    () => journalEntries.map(e => e.date),
+    [journalEntries],
+  );
+
   const {
     timerState,
     timeRemaining,
@@ -570,6 +581,8 @@ export function DailyGrind() {
           dailySessions={dashboardStats?.daily_sessions || []}
           recommendedDaily={activeGoal?.recommended_sessions_per_day}
           focusDurationSec={user?.settings?.focus_duration ?? 25 * 60}
+          journalDates={journalDates}
+          onDayClick={(date) => setJournalModalDate(date)}
         />
         <AIInsightCard
           sessionsCompleted={donePomodoros}

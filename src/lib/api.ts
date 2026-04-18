@@ -1,7 +1,7 @@
 // Supabase API Data Layer
 // Mirrors storage.ts interface but reads/writes to Supabase instead of localStorage.
 
-import { Goal, Session, User, FeedbackEntry, DailySession, UserSettings, DEFAULT_SETTINGS, DailyTask, RepeatingTaskTemplate, TaskTagId, Milestone, DashboardMode } from '@/types';
+import { Goal, Session, User, FeedbackEntry, DailySession, UserSettings, DEFAULT_SETTINGS, DailyTask, RepeatingTaskTemplate, TaskTagId, Milestone, DashboardMode, JournalEntry, JournalMoodId } from '@/types';
 import { createClient } from './supabase/client';
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -769,4 +769,91 @@ export async function ensureRepeatingTasksForDate(date: string): Promise<DailyTa
     }
   }
   return [...existingTasks, ...newTasks];
+}
+
+// ── Journal entries ───────────────────────────────────────────────────
+// The DB has UNIQUE(user_id, date); we lean on that by always using
+// `upsert(..., onConflict: 'user_id,date')` so upstream code doesn't
+// have to branch on "does this day already exist?".
+
+function mapJournalRow(row: Record<string, unknown>): JournalEntry {
+  return {
+    id: row.id as string,
+    date: row.date as string,
+    content: (row.content as string) ?? '',
+    mood: (row.mood as JournalMoodId | null) ?? undefined,
+    created_at: row.created_at as string,
+    updated_at: row.updated_at as string,
+  };
+}
+
+export async function getJournalEntries(): Promise<JournalEntry[]> {
+  const supabase = getSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  const { data } = await supabase
+    .from('journal_entries')
+    .select('*')
+    .eq('user_id', user.id)
+    .order('date', { ascending: false });
+
+  return (data ?? []).map(mapJournalRow);
+}
+
+export async function getJournalEntryForDate(date: string): Promise<JournalEntry | null> {
+  const supabase = getSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const { data } = await supabase
+    .from('journal_entries')
+    .select('*')
+    .eq('user_id', user.id)
+    .eq('date', date)
+    .maybeSingle();
+
+  return data ? mapJournalRow(data) : null;
+}
+
+export async function upsertJournalEntry(
+  date: string,
+  content: string,
+  mood?: JournalMoodId,
+): Promise<JournalEntry | null> {
+  const supabase = getSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  // `onConflict` must list the columns in the unique constraint so Postgres
+  // picks it (otherwise it errors with "there is no unique or exclusion
+  // constraint matching the ON CONFLICT specification").
+  const { data } = await supabase
+    .from('journal_entries')
+    .upsert(
+      {
+        user_id: user.id,
+        date,
+        content,
+        mood: mood ?? null,
+        // updated_at is bumped by the DB trigger defined in migration 013.
+      },
+      { onConflict: 'user_id,date' },
+    )
+    .select()
+    .single();
+
+  return data ? mapJournalRow(data) : null;
+}
+
+export async function deleteJournalEntry(date: string): Promise<void> {
+  const supabase = getSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+
+  await supabase
+    .from('journal_entries')
+    .delete()
+    .eq('user_id', user.id)
+    .eq('date', date);
 }

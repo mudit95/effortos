@@ -14,6 +14,7 @@ import { SettingsModal } from './SettingsModal';
 import { GoalHistoryModal } from './GoalHistoryModal';
 import { EditGoalModal } from './EditGoalModal';
 import { ManualSessionModal } from './ManualSessionModal';
+import { JournalModal } from './JournalModal';
 import { ModeToggle } from './ModeToggle';
 import { GoalSelector } from './GoalSelector';
 import { WelcomeCard } from './WelcomeCard';
@@ -217,6 +218,7 @@ export function Dashboard() {
       <GoalHistoryModal />
       <EditGoalModal />
       <ManualSessionModal />
+      <JournalModal />
       <PaywallModal />
     </div>
   );
@@ -297,10 +299,9 @@ function LongTermView({
           {/* Streak Calendar */}
           <PremiumGate label="Streak Calendar" minHeight="200px">
             <div className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
-              <StreakCalendar
+              <LongTermStreakCalendar
                 dailySessions={dashboardStats?.daily_sessions || []}
                 recommendedDaily={activeGoal.recommended_sessions_per_day}
-                focusDurationSec={useStore.getState().user?.settings?.focus_duration ?? 25 * 60}
               />
             </div>
           </PremiumGate>
@@ -356,6 +357,37 @@ function LongTermView({
         </motion.div>
       )}
     </>
+  );
+}
+
+// Small wrapper around StreakCalendar that subscribes to journal state
+// and wires click-to-open. Kept as its own component so the hook
+// subscriptions for journal don't force LongTermView to re-render on
+// every journal save (its other dependencies are coarse-grained).
+function LongTermStreakCalendar({
+  dailySessions,
+  recommendedDaily,
+}: {
+  dailySessions: ReadonlyArray<{ date: string; count: number }>;
+  recommendedDaily?: number;
+}) {
+  const focusDuration = useStore(s => s.user?.settings?.focus_duration ?? 25 * 60);
+  const journalEntries = useStore(s => s.journalEntries);
+  const setJournalModalDate = useStore(s => s.setJournalModalDate);
+
+  const journalDates = React.useMemo(
+    () => journalEntries.map(e => e.date),
+    [journalEntries],
+  );
+
+  return (
+    <StreakCalendar
+      dailySessions={Array.from(dailySessions)}
+      recommendedDaily={recommendedDaily}
+      focusDurationSec={focusDuration}
+      journalDates={journalDates}
+      onDayClick={(date) => setJournalModalDate(date)}
+    />
   );
 }
 

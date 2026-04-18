@@ -6,6 +6,7 @@ import {
   DashboardStats, RecalibrationResult, Toast, UserSettings, DEFAULT_SETTINGS,
   DashboardMode, DailyTask, DailySession, RepeatingTaskTemplate, TaskTagId,
   SubscriptionStatus, SubscriptionInfo, FeedbackEntry,
+  JournalEntry, JournalMoodId,
 } from '@/types';
 import * as storage from '@/lib/storage';
 import { estimateEffort, recalibrate, shouldTriggerFeedback, calculateTimeBias } from '@/lib/estimation';
@@ -94,6 +95,14 @@ interface AppState {
   activeDailyTaskId: string | null;
   dailyViewDate: string; // YYYY-MM-DD
 
+  // Journal
+  // Hydrated from storage/cloud at init, then kept in sync on save/delete.
+  // This is the full list (all dates) so the calendar can render an
+  // indicator dot for every day that has an entry without extra fetches.
+  journalEntries: JournalEntry[];
+  // Date currently open in the JournalModal; null when the modal is closed.
+  journalModalDate: string | null;
+
   // Onboarding
   onboardingStep: number;
   onboardingData: Partial<OnboardingData>;
@@ -171,6 +180,16 @@ interface AppState {
   removeRepeatingTemplate: (templateId: string) => void;
   updateDailyTaskDetails: (taskId: string, updates: Partial<DailyTask>) => void;
 
+  // Journal actions
+  // Open the JournalModal for the given YYYY-MM-DD, or close it by passing null.
+  setJournalModalDate: (date: string | null) => void;
+  // Upsert a journal entry keyed by date. Optimistically updates the in-memory
+  // list, then syncs to localStorage + cloud. One call serves "create" and
+  // "update" because the DB enforces UNIQUE(user_id, date).
+  saveJournalEntry: (date: string, content: string, mood?: JournalMoodId) => void;
+  // Remove the entry for a given date. No-op if no entry exists for that date.
+  deleteJournalEntry: (date: string) => void;
+
   // Subscription
   fetchSubscriptionStatus: () => void;
   startTrial: (opts?: { couponCode?: string; couponId?: string; offerId?: string }) => void;
@@ -236,6 +255,8 @@ export const useStore = create<AppState>((set, get) => ({
   repeatingTemplates: [],
   activeDailyTaskId: null,
   dailyViewDate: new Date().toISOString().split('T')[0],
+  journalEntries: [],
+  journalModalDate: null,
   subscription: { status: 'none' as SubscriptionStatus },
   subscriptionLoading: true,
   showPaywall: false,
@@ -371,6 +392,17 @@ export const useStore = create<AppState>((set, get) => ({
             repeatingTemplates = storage.getRepeatingTemplates().filter(t => t.active);
           }
 
+          // Load the user's journal entries (all dates) so the calendar
+          // can render indicator dots without a second round-trip. Fall
+          // back to localStorage if the cloud call fails so anonymous
+          // journaling still survives a cloud outage.
+          let journalEntries: JournalEntry[] = [];
+          try {
+            journalEntries = await api.getJournalEntries();
+          } catch {
+            journalEntries = storage.getJournalEntries();
+          }
+
           // Also cache goals to localStorage for offline access
           // (storage.setGoals doesn't exist, but individual goal data is cached via the store)
 
@@ -387,6 +419,7 @@ export const useStore = create<AppState>((set, get) => ({
             dailyTasks,
             repeatingTemplates,
             dailyViewDate: todayKey,
+            journalEntries,
             // Priority: active goal → dashboard.
             // Otherwise, if user has ever completed onboarding OR has ANY goal
             // in their history (paused/completed), keep them on dashboard.
@@ -471,6 +504,7 @@ export const useStore = create<AppState>((set, get) => ({
       const todayKey = new Date().toISOString().split('T')[0];
       const dailyTasks = storage.ensureRepeatingTasksForDate(todayKey);
       const repeatingTemplates = storage.getRepeatingTemplates().filter(t => t.active);
+      const journalEntries = storage.getJournalEntries();
 
       set({
         user,
@@ -485,6 +519,7 @@ export const useStore = create<AppState>((set, get) => ({
         dailyTasks,
         repeatingTemplates,
         dailyViewDate: todayKey,
+        journalEntries,
         currentView: activeGoal ? 'dashboard' : (goals.length > 0 ? 'dashboard' : 'onboarding'),
       });
 
@@ -541,6 +576,8 @@ export const useStore = create<AppState>((set, get) => ({
       goals: [],
       dailyTasks: [],
       repeatingTemplates: [],
+      journalEntries: [],
+      journalModalDate: null,
       timerState: 'idle',
       timeRemaining: 25 * 60,
       currentSessionId: null,
@@ -1396,6 +1433,46 @@ export const useStore = create<AppState>((set, get) => ({
     // Sync to localStorage and cloud
     storage.updateDailyTask(taskId, updates);
     cloudSync(() => api.updateDailyTask(taskId, updates));
+  },
+
+  // ─── Journal ─────────────────────────────────────────────────────
+
+  setJournalModalDate: (date) => {
+    set({ journalModalDate: date });
+  },
+
+  saveJournalEntry: (date, content, mood) => {
+    // Write to localStorage first — it returns the canonical row (with id +
+    // timestamps) that we mirror into Zustand. This keeps the in-memory list
+    // consistent whether or not cloud is reachable.
+    const saved = storage.upsertJournalEntry(date, content, mood);
+
+    // Optimistically merge into state: replace existing entry for this date,
+    // or append if new. `journalEntries` is unordered in memory — consumers
+    // that need chronological order sort at render time.
+    const current = get().journalEntries;
+    const idx = current.findIndex(e => e.date === date);
+    const next = idx >= 0
+      ? current.map((e, i) => (i === idx ? saved : e))
+      : [...current, saved];
+    set({ journalEntries: next });
+
+    // Fire-and-forget cloud upsert. The server re-generates its own id +
+    // timestamps via the UNIQUE(user_id, date) constraint and the
+    // touch_updated_at trigger; we don't reconcile them back into state
+    // because the local copy is already canonical for the UI's purposes.
+    cloudSync(() => api.upsertJournalEntry(date, content, mood));
+  },
+
+  deleteJournalEntry: (date) => {
+    // Optimistic removal from state so the indicator dot disappears
+    // immediately. Both storage and cloud calls are idempotent — missing
+    // rows are silent no-ops.
+    const next = get().journalEntries.filter(e => e.date !== date);
+    set({ journalEntries: next });
+
+    storage.deleteJournalEntry(date);
+    cloudSync(() => api.deleteJournalEntry(date));
   },
 
   // ─── Subscription ────────────────────────────────────────────────
