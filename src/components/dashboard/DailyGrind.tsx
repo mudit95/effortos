@@ -30,10 +30,17 @@ function getTodayKey(): string {
   return new Date().toISOString().split('T')[0];
 }
 
-function getTomorrowKey(): string {
-  const t = new Date();
-  t.setDate(t.getDate() + 1);
-  return t.toISOString().split('T')[0];
+// Add `n` calendar days to a YYYY-MM-DD key using LOCAL time, so the result
+// never drifts a day back/forward due to UTC conversion near midnight. We
+// split the key manually instead of `new Date(dateKey)` (which parses as UTC
+// for 'YYYY-MM-DD') and rebuild via local-calendar math.
+function addDays(dateKey: string, days: number): string {
+  const [y, m, d] = dateKey.split('-').map(Number);
+  const dt = new Date(y, m - 1, d + days);
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
 }
 
 function formatDateLabel(dateStr: string): string {
@@ -438,10 +445,14 @@ export function DailyGrind() {
   // Only offer "roll to tomorrow" on today/past tasks — not future-dated ones.
   const canRollForward = dailyViewDate <= todayKey;
 
+  // Roll forward by one day RELATIVE to the task's own date — so a task from
+  // two days ago moves to yesterday, another click moves it to today, etc.
+  // Previously this hard-jumped to today+1, which skipped intermediate days
+  // and made multi-day backlogs unmanageable.
   const handleRollToTomorrow = (task: DailyTask) => {
-    const tomorrowKey = getTomorrowKey();
-    updateDailyTaskDetails(task.id, { date: tomorrowKey });
-    addToast(`"${task.title}" rolled to tomorrow`, 'success');
+    const next = addDays(task.date, 1);
+    updateDailyTaskDetails(task.id, { date: next });
+    addToast(`"${task.title}" rolled to ${formatDateLabel(next)}`, 'success');
   };
 
   const activeTask = dailyTasks.find(t => t.id === activeDailyTaskId);
@@ -1173,8 +1184,8 @@ function TaskRow({
         <button
           onClick={onRollToTomorrow}
           className="flex-shrink-0 p-1.5 rounded-lg text-white/0 group-hover:text-white/15 hover:!text-amber-300 hover:bg-amber-400/10 transition-all"
-          title="Roll to tomorrow"
-          aria-label="Roll this task to tomorrow"
+          title="Roll forward one day"
+          aria-label="Roll this task forward by one day"
         >
           <CalendarPlus className="w-3.5 h-3.5" />
         </button>
