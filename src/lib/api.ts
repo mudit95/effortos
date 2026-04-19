@@ -1,7 +1,7 @@
 // Supabase API Data Layer
 // Mirrors storage.ts interface but reads/writes to Supabase instead of localStorage.
 
-import { Goal, Session, User, FeedbackEntry, DailySession, UserSettings, DEFAULT_SETTINGS, DailyTask, RepeatingTaskTemplate, TaskTagId, Milestone, DashboardMode, JournalEntry, JournalMoodId } from '@/types';
+import { Goal, Session, User, FeedbackEntry, DailySession, UserSettings, DEFAULT_SETTINGS, DailyTask, RepeatingTaskTemplate, TaskTagId, Milestone, DashboardMode, JournalEntry, JournalMoodId, ShadowGoal, TimeBlock } from '@/types';
 import { createClient } from './supabase/client';
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -467,6 +467,7 @@ export async function getAllDailyTasks(): Promise<DailyTask[]> {
     date: d.date as string,
     tag: d.tag as TaskTagId | undefined,
     goal_id: (d.goal_id as string | null) ?? undefined,
+    time_block: (d.time_block as TimeBlock | null) ?? undefined,
     created_at: d.created_at as string,
     completed_at: d.completed_at as string | undefined,
     order: d.sort_order as number,
@@ -495,6 +496,7 @@ export async function getDailyTasksForDate(date: string): Promise<DailyTask[]> {
     date: d.date as string,
     tag: d.tag as TaskTagId | undefined,
     goal_id: (d.goal_id as string | null) ?? undefined,
+    time_block: (d.time_block as TimeBlock | null) ?? undefined,
     created_at: d.created_at as string,
     completed_at: d.completed_at as string | undefined,
     order: d.sort_order as number,
@@ -614,9 +616,13 @@ export async function updateDailyTask(id: string, updates: Partial<DailyTask>): 
   if (updates.order !== undefined) dbUpdates.sort_order = updates.order;
   // `date` and `goal_id` were previously dropped by this allowlist, which
   // silently broke "Roll to tomorrow" (date change reverted on next refresh)
-  // and any goal-reassignment UI for cloud users.
+  // and any goal-reassignment UI for cloud users. Same trap waits for any
+  // new field added here — `time_block` (Schedule view drag-and-drop)
+  // explicitly serializes `null` to mean "unscheduled" so the column can
+  // be cleared without falling through the `!== undefined` guard.
   if (updates.date !== undefined) dbUpdates.date = updates.date;
   if (updates.goal_id !== undefined) dbUpdates.goal_id = updates.goal_id;
+  if (updates.time_block !== undefined) dbUpdates.time_block = updates.time_block ?? null;
 
   const { data: row } = await supabase
     .from('daily_tasks')
@@ -636,6 +642,7 @@ export async function updateDailyTask(id: string, updates: Partial<DailyTask>): 
     date: row.date as string,
     tag: row.tag as TaskTagId | undefined,
     goal_id: (row.goal_id as string | null) ?? undefined,
+    time_block: (row.time_block as TimeBlock | null) ?? undefined,
     created_at: row.created_at as string,
     completed_at: row.completed_at as string | undefined,
     order: row.sort_order as number,
@@ -782,6 +789,7 @@ function mapJournalRow(row: Record<string, unknown>): JournalEntry {
     date: row.date as string,
     content: (row.content as string) ?? '',
     mood: (row.mood as JournalMoodId | null) ?? undefined,
+    ai_prompt: (row.ai_prompt as string | null) ?? undefined,
     created_at: row.created_at as string,
     updated_at: row.updated_at as string,
   };
@@ -856,4 +864,134 @@ export async function deleteJournalEntry(date: string): Promise<void> {
     .delete()
     .eq('user_id', user.id)
     .eq('date', date);
+}
+
+/**
+ * Attach a one-time AI-generated prompt to an entry. Uses upsert so the
+ * row is created if it doesn't exist yet (content defaults to '' server-
+ * side). Only ai_prompt is included in the payload, so existing content/
+ * mood are untouched — Supabase's upsert maps to ON CONFLICT DO UPDATE
+ * over only the payload columns.
+ */
+export async function setJournalAIPrompt(
+  date: string,
+  prompt: string,
+): Promise<JournalEntry | null> {
+  const supabase = getSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const { data } = await supabase
+    .from('journal_entries')
+    .upsert(
+      {
+        user_id: user.id,
+        date,
+        ai_prompt: prompt,
+      },
+      { onConflict: 'user_id,date' },
+    )
+    .select()
+    .single();
+
+  return data ? mapJournalRow(data) : null;
+}
+
+// ── Shadow goals ──────────────────────────────────────────────────────
+// "Someday shelf" rows. RLS gates by user_id so we can leave the
+// `.eq('user_id', user.id)` filter in for defence-in-depth (matches the
+// pattern in goals/daily_tasks/journal_entries) — the policy would block
+// cross-user reads anyway but explicit beats implicit here.
+
+function mapShadowGoalRow(row: Record<string, unknown>): ShadowGoal {
+  return {
+    id: row.id as string,
+    title: (row.title as string) ?? '',
+    note: (row.note as string) ?? '',
+    created_at: row.created_at as string,
+    updated_at: row.updated_at as string,
+  };
+}
+
+export async function getShadowGoals(): Promise<ShadowGoal[]> {
+  const supabase = getSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  const { data } = await supabase
+    .from('shadow_goals')
+    .select('*')
+    .eq('user_id', user.id)
+    .order('created_at', { ascending: false });
+
+  return (data ?? []).map(mapShadowGoalRow);
+}
+
+export async function createShadowGoal(
+  title: string,
+  note = '',
+): Promise<ShadowGoal | null> {
+  const supabase = getSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const { data } = await supabase
+    .from('shadow_goals')
+    .insert({
+      user_id: user.id,
+      title: title.trim(),
+      note: note.trim(),
+    })
+    .select()
+    .single();
+
+  return data ? mapShadowGoalRow(data) : null;
+}
+
+export async function updateShadowGoal(
+  id: string,
+  patch: { title?: string; note?: string },
+): Promise<ShadowGoal | null> {
+  const supabase = getSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const update: Record<string, unknown> = {};
+  if (patch.title !== undefined) update.title = patch.title.trim();
+  if (patch.note !== undefined) update.note = patch.note.trim();
+  // updated_at is bumped by the DB trigger defined in migration 014.
+
+  // Avoid issuing an empty UPDATE — Supabase will accept it but it's a
+  // pointless round trip and would still touch updated_at via the trigger.
+  if (Object.keys(update).length === 0) {
+    const { data } = await supabase
+      .from('shadow_goals')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('id', id)
+      .maybeSingle();
+    return data ? mapShadowGoalRow(data) : null;
+  }
+
+  const { data } = await supabase
+    .from('shadow_goals')
+    .update(update)
+    .eq('user_id', user.id)
+    .eq('id', id)
+    .select()
+    .single();
+
+  return data ? mapShadowGoalRow(data) : null;
+}
+
+export async function deleteShadowGoal(id: string): Promise<void> {
+  const supabase = getSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+
+  await supabase
+    .from('shadow_goals')
+    .delete()
+    .eq('user_id', user.id)
+    .eq('id', id);
 }

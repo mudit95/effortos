@@ -1,6 +1,6 @@
 // Local Storage Persistence Layer
 
-import { Goal, Session, User, FeedbackEntry, DailySession, UserSettings, DEFAULT_SETTINGS, DailyTask, RepeatingTaskTemplate, TaskTagId, DashboardMode, JournalEntry, JournalMoodId } from '@/types';
+import { Goal, Session, User, FeedbackEntry, DailySession, UserSettings, DEFAULT_SETTINGS, DailyTask, RepeatingTaskTemplate, TaskTagId, DashboardMode, JournalEntry, JournalMoodId, ShadowGoal, DailyGrindLayout } from '@/types';
 import { generateId } from './utils';
 
 const STORAGE_KEYS = {
@@ -12,6 +12,8 @@ const STORAGE_KEYS = {
   REPEATING_TEMPLATES: 'effortos_repeating_templates',
   DASHBOARD_MODE: 'effortos_dashboard_mode',
   JOURNAL_ENTRIES: 'effortos_journal_entries',
+  SHADOW_GOALS: 'effortos_shadow_goals',
+  DAILY_GRIND_LAYOUT: 'effortos_daily_grind_layout',
 } as const;
 
 function safeGet<T>(key: string, fallback: T): T {
@@ -252,6 +254,20 @@ export function getDashboardMode(): DashboardMode {
 export function setDashboardMode(mode: DashboardMode): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem(STORAGE_KEYS.DASHBOARD_MODE, mode);
+}
+
+// Daily Grind layout (list vs schedule). Persisted separately from
+// DashboardMode because they toggle independently — the user might want
+// "Daily mode → Schedule layout" or "Daily mode → List layout".
+export function getDailyGrindLayout(): DailyGrindLayout {
+  if (typeof window === 'undefined') return 'list';
+  const raw = localStorage.getItem(STORAGE_KEYS.DAILY_GRIND_LAYOUT);
+  return raw === 'schedule' ? 'schedule' : 'list';
+}
+
+export function setDailyGrindLayout(layout: DailyGrindLayout): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(STORAGE_KEYS.DAILY_GRIND_LAYOUT, layout);
 }
 
 // Daily Tasks
@@ -500,4 +516,93 @@ export function upsertJournalEntry(
 export function deleteJournalEntry(date: string): void {
   const entries = getJournalEntries().filter(e => e.date !== date);
   safeSet(STORAGE_KEYS.JOURNAL_ENTRIES, entries);
+}
+
+/**
+ * Attach an AI-generated writing prompt to an entry. Creates a shell
+ * entry if none exists for the date (so the prompt isn't lost just
+ * because the user hasn't typed yet). Returns the resulting entry.
+ *
+ * The normal autosave path (upsertJournalEntry) preserves ai_prompt
+ * via spread, so calling this once and then continuing to write is
+ * safe — the prompt survives every subsequent save.
+ */
+export function setJournalAIPrompt(date: string, prompt: string): JournalEntry {
+  const entries = getJournalEntries();
+  const now = new Date().toISOString();
+  const idx = entries.findIndex(e => e.date === date);
+
+  if (idx >= 0) {
+    const updated: JournalEntry = {
+      ...entries[idx],
+      ai_prompt: prompt,
+      updated_at: now,
+    };
+    entries[idx] = updated;
+    safeSet(STORAGE_KEYS.JOURNAL_ENTRIES, entries);
+    return updated;
+  }
+
+  const created: JournalEntry = {
+    id: generateId(),
+    date,
+    content: '',
+    ai_prompt: prompt,
+    created_at: now,
+    updated_at: now,
+  };
+  entries.push(created);
+  safeSet(STORAGE_KEYS.JOURNAL_ENTRIES, entries);
+  return created;
+}
+
+// ── Shadow goals (the "someday shelf") ────────────────────────────────
+// Parked goal ideas with no estimation/scheduling attached. Stored
+// separately from goals so the active-goal list stays lean. The shelf is
+// rendered newest-first, which is why we keep the array sorted by
+// created_at DESC on every write.
+
+function sortShadowGoals(list: ShadowGoal[]): ShadowGoal[] {
+  return [...list].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+}
+
+export function getShadowGoals(): ShadowGoal[] {
+  return sortShadowGoals(safeGet<ShadowGoal[]>(STORAGE_KEYS.SHADOW_GOALS, []));
+}
+
+export function createShadowGoal(title: string, note = ''): ShadowGoal {
+  const now = new Date().toISOString();
+  const created: ShadowGoal = {
+    id: generateId(),
+    title: title.trim(),
+    note: note.trim(),
+    created_at: now,
+    updated_at: now,
+  };
+  const next = sortShadowGoals([created, ...getShadowGoals()]);
+  safeSet(STORAGE_KEYS.SHADOW_GOALS, next);
+  return created;
+}
+
+export function updateShadowGoal(
+  id: string,
+  patch: { title?: string; note?: string },
+): ShadowGoal | null {
+  const list = getShadowGoals();
+  const idx = list.findIndex(g => g.id === id);
+  if (idx < 0) return null;
+  const updated: ShadowGoal = {
+    ...list[idx],
+    ...(patch.title !== undefined ? { title: patch.title.trim() } : {}),
+    ...(patch.note !== undefined ? { note: patch.note.trim() } : {}),
+    updated_at: new Date().toISOString(),
+  };
+  list[idx] = updated;
+  safeSet(STORAGE_KEYS.SHADOW_GOALS, list);
+  return updated;
+}
+
+export function deleteShadowGoal(id: string): void {
+  const next = getShadowGoals().filter(g => g.id !== id);
+  safeSet(STORAGE_KEYS.SHADOW_GOALS, next);
 }

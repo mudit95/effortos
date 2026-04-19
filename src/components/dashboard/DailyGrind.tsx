@@ -11,7 +11,7 @@ import {
   Plus, Trash2, Play, Pause, RotateCcw, SkipForward,
   Repeat, ChevronLeft, ChevronRight, Maximize2, Circle,
   CheckCircle2, Clock, Flame, Tag, PlusCircle, X, Calendar, Sparkles,
-  CalendarPlus,
+  CalendarPlus, List, LayoutGrid,
 } from 'lucide-react';
 import * as storage from '@/lib/storage';
 import { PiPButton } from '@/components/timer/PiPButton';
@@ -23,6 +23,7 @@ import { GoalProgressBar } from './GoalProgressBar';
 import { AIPlanWizard } from './AIPlanWizard';
 import { StreakCalendar } from './StreakCalendar';
 import { AIInsightCard, AIMotivationCard } from './AICards';
+import { TimeBoxView } from './TimeBoxView';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
@@ -407,6 +408,8 @@ export function DailyGrind() {
     dashboardStats,
     goals,
     setShowAIPlanWizard,
+    dailyGrindLayout,
+    setDailyGrindLayout,
   } = useStore();
 
   // Journal subscriptions — kept as individual selectors so the grid doesn't
@@ -681,6 +684,38 @@ export function DailyGrind() {
                 Plan Tomorrow
               </button>
             )}
+
+            {/* List / Schedule layout toggle — pushed to the right. Persisted
+                per-device via localStorage so the user's preference survives
+                page reloads without needing a DB round-trip. */}
+            <div className="ml-auto flex items-center gap-0.5 p-0.5 rounded-lg bg-white/[0.03] border border-white/[0.06]">
+              <button
+                onClick={() => setDailyGrindLayout('list')}
+                className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-all ${
+                  dailyGrindLayout === 'list'
+                    ? 'bg-white/[0.08] text-white/80'
+                    : 'text-white/30 hover:text-white/60'
+                }`}
+                title="List view"
+                aria-pressed={dailyGrindLayout === 'list'}
+              >
+                <List className="w-3 h-3" />
+                List
+              </button>
+              <button
+                onClick={() => setDailyGrindLayout('schedule')}
+                className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-all ${
+                  dailyGrindLayout === 'schedule'
+                    ? 'bg-white/[0.08] text-white/80'
+                    : 'text-white/30 hover:text-white/60'
+                }`}
+                title="Schedule view — drag tasks between morning / afternoon / evening"
+                aria-pressed={dailyGrindLayout === 'schedule'}
+              >
+                <LayoutGrid className="w-3 h-3" />
+                Schedule
+              </button>
+            </div>
           </div>
         </motion.div>
 
@@ -724,44 +759,73 @@ export function DailyGrind() {
           Add tasks and assign pomodoros for your day. Use <strong className="text-cyan-400/70">Plan My Day with AI</strong> to let AI build your schedule automatically.
         </HintBanner>
 
-        {/* Task list — framed panel so the day's plan reads as a distinct block */}
-        {pendingTasks.length > 0 && (
-          <div className="rounded-2xl border border-white/[0.08] bg-white/[0.015] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
-            <div className="flex items-center justify-between px-2 pt-1 pb-2">
-              <p className="text-[10px] text-white/30 uppercase tracking-widest">
-                {isToday ? "Today's tasks" : 'Tasks'} ({pendingTasks.length})
-              </p>
-              <p className="text-[10px] text-white/20">
-                {donePomodoros}/{totalPomodoros} pom
-              </p>
+        {/* Task list — framed panel so the day's plan reads as a distinct block.
+            The `list` layout uses the classic ordered pending list. The
+            `schedule` layout hands rendering off to <TimeBoxView/>, which
+            splits tasks by time_block into drag-and-drop columns. We pass
+            the full visibleTasks (not just pendingTasks) to TimeBoxView so
+            completed tasks stay visible in their original column — that way
+            the schedule reads as a record of the day, not just a plan. */}
+        {dailyGrindLayout === 'schedule' ? (
+          visibleTasks.length > 0 && (
+            <TimeBoxView
+              tasks={visibleTasks}
+              activeTaskId={activeDailyTaskId}
+              isTimerActive={isTimerActive}
+              isToday={isToday}
+              canRollForward={canRollForward}
+              goals={goals}
+              onUpdateTask={(taskId, updates) => updateDailyTaskDetails(taskId, updates)}
+              onToggleComplete={(taskId) => toggleTaskComplete(taskId)}
+              onDelete={(taskId) => deleteDailyTask(taskId)}
+              onStart={(taskId) => handleStartPomodoro(taskId)}
+              onExtend={(taskId) => {
+                const t = visibleTasks.find(x => x.id === taskId);
+                if (!t) return;
+                updateDailyTaskDetails(taskId, { pomodoros_target: t.pomodoros_target + 1 });
+              }}
+              onRollToTomorrow={(task) => handleRollToTomorrow(task)}
+            />
+          )
+        ) : (
+          pendingTasks.length > 0 && (
+            <div className="rounded-2xl border border-white/[0.08] bg-white/[0.015] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+              <div className="flex items-center justify-between px-2 pt-1 pb-2">
+                <p className="text-[10px] text-white/30 uppercase tracking-widest">
+                  {isToday ? "Today's tasks" : 'Tasks'} ({pendingTasks.length})
+                </p>
+                <p className="text-[10px] text-white/20">
+                  {donePomodoros}/{totalPomodoros} pom
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <AnimatePresence>
+                  {pendingTasks.map((task) => (
+                    <TaskRow
+                      key={task.id}
+                      task={task}
+                      isActive={task.id === activeDailyTaskId && isTimerActive}
+                      isToday={isToday}
+                      onToggle={() => toggleTaskComplete(task.id)}
+                      onDelete={() => deleteDailyTask(task.id)}
+                      onStart={() => handleStartPomodoro(task.id)}
+                      onExtend={() => updateDailyTaskDetails(task.id, { pomodoros_target: task.pomodoros_target + 1 })}
+                      // Only surface the roll action on today/past pending, non-repeating
+                      // tasks. Repeating tasks auto-generate fresh copies tomorrow, so
+                      // rolling them would double up.
+                      onRollToTomorrow={
+                        canRollForward && !task.repeating
+                          ? () => handleRollToTomorrow(task)
+                          : undefined
+                      }
+                      timerBusy={isTimerActive}
+                      goals={goals}
+                    />
+                  ))}
+                </AnimatePresence>
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <AnimatePresence>
-                {pendingTasks.map((task) => (
-                  <TaskRow
-                    key={task.id}
-                    task={task}
-                    isActive={task.id === activeDailyTaskId && isTimerActive}
-                    isToday={isToday}
-                    onToggle={() => toggleTaskComplete(task.id)}
-                    onDelete={() => deleteDailyTask(task.id)}
-                    onStart={() => handleStartPomodoro(task.id)}
-                    onExtend={() => updateDailyTaskDetails(task.id, { pomodoros_target: task.pomodoros_target + 1 })}
-                    // Only surface the roll action on today/past pending, non-repeating
-                    // tasks. Repeating tasks auto-generate fresh copies tomorrow, so
-                    // rolling them would double up.
-                    onRollToTomorrow={
-                      canRollForward && !task.repeating
-                        ? () => handleRollToTomorrow(task)
-                        : undefined
-                    }
-                    timerBusy={isTimerActive}
-                    goals={goals}
-                  />
-                ))}
-              </AnimatePresence>
-            </div>
-          </div>
+          )
         )}
 
         {/* Quick start unassigned pomodoro */}

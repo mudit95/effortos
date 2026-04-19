@@ -7,6 +7,7 @@ import {
   DashboardMode, DailyTask, DailySession, RepeatingTaskTemplate, TaskTagId,
   SubscriptionStatus, SubscriptionInfo, FeedbackEntry,
   JournalEntry, JournalMoodId,
+  ShadowGoal, DailyGrindLayout,
 } from '@/types';
 import * as storage from '@/lib/storage';
 import { estimateEffort, recalibrate, shouldTriggerFeedback, calculateTimeBias } from '@/lib/estimation';
@@ -94,6 +95,10 @@ interface AppState {
   repeatingTemplates: RepeatingTaskTemplate[];
   activeDailyTaskId: string | null;
   dailyViewDate: string; // YYYY-MM-DD
+  // Layout within the Daily Grind view — 'list' (default) or 'schedule'.
+  // Persisted to localStorage; not a cloud-synced preference (per-device
+  // preference makes more sense here than per-account).
+  dailyGrindLayout: DailyGrindLayout;
 
   // Journal
   // Hydrated from storage/cloud at init, then kept in sync on save/delete.
@@ -102,6 +107,18 @@ interface AppState {
   journalEntries: JournalEntry[];
   // Date currently open in the JournalModal; null when the modal is closed.
   journalModalDate: string | null;
+
+  // Shadow goals (someday shelf)
+  // Loaded at init, kept in sync via add/update/delete/promote actions.
+  shadowGoals: ShadowGoal[];
+  // Controls visibility of the ShadowGoalsModal.
+  showShadowGoals: boolean;
+  // When a user clicks "Promote" on a shadow, we stash the shadow's id here
+  // and route them through the onboarding flow. On successful goal creation
+  // (`completeOnboarding` → `createNewGoal`) we clear this and delete the
+  // corresponding shadow row. If the user bails out of onboarding, we leave
+  // the shadow alone so they can promote it again later.
+  pendingShadowGoalId: string | null;
 
   // Onboarding
   onboardingStep: number;
@@ -169,6 +186,7 @@ interface AppState {
 
   // Daily Grind actions
   setDashboardMode: (mode: DashboardMode) => void;
+  setDailyGrindLayout: (layout: DailyGrindLayout) => void;
   addDailyTask: (title: string, pomodorosTarget?: number, repeating?: boolean, tag?: TaskTagId, goalId?: string) => void;
   addDailyTaskForDate: (title: string, date: string, pomodorosTarget?: number, repeating?: boolean, tag?: TaskTagId, goalId?: string) => void;
   toggleTaskComplete: (taskId: string) => void;
@@ -189,6 +207,22 @@ interface AppState {
   saveJournalEntry: (date: string, content: string, mood?: JournalMoodId) => void;
   // Remove the entry for a given date. No-op if no entry exists for that date.
   deleteJournalEntry: (date: string) => void;
+  // Ask the AI coach for a one-time journal-writing prompt for the given
+  // date. Returns the generated prompt on success, or null if already set
+  // (caller is expected to read the existing `ai_prompt` in that case).
+  // Falls back to a curated static prompt if the API call fails. The
+  // resulting prompt is persisted to state, localStorage, and cloud.
+  requestJournalAIPrompt: (date: string) => Promise<string | null>;
+
+  // Shadow goal actions
+  setShowShadowGoals: (show: boolean) => void;
+  addShadowGoal: (title: string, note?: string) => void;
+  updateShadowGoal: (id: string, patch: { title?: string; note?: string }) => void;
+  removeShadowGoal: (id: string) => void;
+  // "Promote" means: park the shadow's id in `pendingShadowGoalId`, prefill
+  // onboarding with its title/note, and route the user into onboarding. The
+  // shadow row is not removed until the goal is actually created.
+  promoteShadowGoal: (id: string) => void;
 
   // Subscription
   fetchSubscriptionStatus: () => void;
@@ -255,8 +289,14 @@ export const useStore = create<AppState>((set, get) => ({
   repeatingTemplates: [],
   activeDailyTaskId: null,
   dailyViewDate: new Date().toISOString().split('T')[0],
+  // Hydrated synchronously from localStorage in initializeApp; 'list' here is
+  // just the sane default for first-render-before-hydration.
+  dailyGrindLayout: 'list',
   journalEntries: [],
   journalModalDate: null,
+  shadowGoals: [],
+  showShadowGoals: false,
+  pendingShadowGoalId: null,
   subscription: { status: 'none' as SubscriptionStatus },
   subscriptionLoading: true,
   showPaywall: false,
@@ -381,6 +421,7 @@ export const useStore = create<AppState>((set, get) => ({
 
           // Load daily grind state
           const dashboardMode = storage.getDashboardMode();
+          const dailyGrindLayout = storage.getDailyGrindLayout();
           const todayKey = new Date().toISOString().split('T')[0];
           let dailyTasks: DailyTask[] = [];
           let repeatingTemplates: RepeatingTaskTemplate[] = [];
@@ -403,6 +444,15 @@ export const useStore = create<AppState>((set, get) => ({
             journalEntries = storage.getJournalEntries();
           }
 
+          // Same fallback strategy for shadow goals — they're tiny rows
+          // and the shelf renders empty if neither source has data.
+          let shadowGoals: ShadowGoal[] = [];
+          try {
+            shadowGoals = await api.getShadowGoals();
+          } catch {
+            shadowGoals = storage.getShadowGoals();
+          }
+
           // Also cache goals to localStorage for offline access
           // (storage.setGoals doesn't exist, but individual goal data is cached via the store)
 
@@ -416,10 +466,12 @@ export const useStore = create<AppState>((set, get) => ({
             timerState,
             currentSessionId,
             dashboardMode,
+            dailyGrindLayout,
             dailyTasks,
             repeatingTemplates,
             dailyViewDate: todayKey,
             journalEntries,
+            shadowGoals,
             // Priority: active goal → dashboard.
             // Otherwise, if user has ever completed onboarding OR has ANY goal
             // in their history (paused/completed), keep them on dashboard.
@@ -501,10 +553,12 @@ export const useStore = create<AppState>((set, get) => ({
 
       // Load daily grind state
       const dashboardMode = storage.getDashboardMode();
+      const dailyGrindLayout = storage.getDailyGrindLayout();
       const todayKey = new Date().toISOString().split('T')[0];
       const dailyTasks = storage.ensureRepeatingTasksForDate(todayKey);
       const repeatingTemplates = storage.getRepeatingTemplates().filter(t => t.active);
       const journalEntries = storage.getJournalEntries();
+      const shadowGoals = storage.getShadowGoals();
 
       set({
         user,
@@ -516,10 +570,12 @@ export const useStore = create<AppState>((set, get) => ({
         timerState,
         currentSessionId,
         dashboardMode,
+        dailyGrindLayout,
         dailyTasks,
         repeatingTemplates,
         dailyViewDate: todayKey,
         journalEntries,
+        shadowGoals,
         currentView: activeGoal ? 'dashboard' : (goals.length > 0 ? 'dashboard' : 'onboarding'),
       });
 
@@ -578,6 +634,10 @@ export const useStore = create<AppState>((set, get) => ({
       repeatingTemplates: [],
       journalEntries: [],
       journalModalDate: null,
+      shadowGoals: [],
+      showShadowGoals: false,
+      pendingShadowGoalId: null,
+      dailyGrindLayout: 'list',
       timerState: 'idle',
       timeRemaining: 25 * 60,
       currentSessionId: null,
@@ -613,14 +673,16 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   completeOnboarding: () => {
-    const { onboardingData, user } = get();
+    const { onboardingData, user, pendingShadowGoalId } = get();
     if (!user || !onboardingData.goalTitle) return;
 
     let goal: Goal;
     try {
       goal = get().createNewGoal(onboardingData as OnboardingData);
     } catch {
-      // Max goals reached — go back to dashboard
+      // Max goals reached — go back to dashboard. Leave the shadow alone:
+      // the user didn't actually consume the shelf entry, so it should
+      // still be there waiting if they free up a slot.
       set({ currentView: 'dashboard', onboardingStep: 0, onboardingData: {} });
       return;
     }
@@ -634,12 +696,19 @@ export const useStore = create<AppState>((set, get) => ({
       }
     });
 
+    // If this onboarding run was a "promote shadow" flow, the shadow's job
+    // is done — remove it from the shelf now that it has a real goal.
+    if (pendingShadowGoalId) {
+      get().removeShadowGoal(pendingShadowGoalId);
+    }
+
     set({
       user: { ...user, onboarding_completed: true },
       activeGoal: goal,
       currentView: 'dashboard',
       onboardingStep: 0,
       onboardingData: {},
+      pendingShadowGoalId: null,
     });
 
     get().refreshDashboard();
@@ -1238,6 +1307,11 @@ export const useStore = create<AppState>((set, get) => ({
     set({ dashboardMode: mode });
   },
 
+  setDailyGrindLayout: (layout) => {
+    storage.setDailyGrindLayout(layout);
+    set({ dailyGrindLayout: layout });
+  },
+
   addDailyTask: (title, pomodorosTarget = 1, repeating = false, tag, goalId) => {
     const todayKey = new Date().toISOString().split('T')[0];
     const now = new Date().toISOString();
@@ -1473,6 +1547,144 @@ export const useStore = create<AppState>((set, get) => ({
 
     storage.deleteJournalEntry(date);
     cloudSync(() => api.deleteJournalEntry(date));
+  },
+
+  requestJournalAIPrompt: async (date) => {
+    // One-time guard. If the entry already has an ai_prompt we refuse
+    // to overwrite it — the product rule is "one AI prompt per entry".
+    // The UI disables the button too, but we defend the invariant here
+    // for programmatic callers.
+    const existing = get().journalEntries.find(e => e.date === date);
+    if (existing?.ai_prompt) return null;
+
+    // Gather context for a richer prompt. Everything is optional on the
+    // server side so we can omit any field — but passing what we have
+    // gets us prompts that reference the user's current situation.
+    const { user, activeGoal, dashboardStats } = get();
+    const payload = {
+      date,
+      mood: existing?.mood,
+      goalTitle: activeGoal?.title,
+      sessionsCompleted: activeGoal?.sessions_completed,
+      sessionsTotal: activeGoal?.estimated_sessions_current,
+      streakDays: dashboardStats?.current_streak,
+      userName: user?.name,
+    };
+
+    // Curated fallback pool for when the API is unreachable (anonymous
+    // users without a subscription, offline, etc.). These are
+    // deliberately open-ended and don't assume any particular mood.
+    const FALLBACK_PROMPTS = [
+      'What is one small thing that went better than you expected today?',
+      'If today had a headline, what would it say?',
+      'What are you carrying into tomorrow — and what would you rather set down?',
+      'Where did your attention actually go today, versus where you meant it to go?',
+      'What is one thing you learned about yourself this week?',
+      'If a friend had your exact day, what would you tell them?',
+      'What tiny win is worth writing down so you remember it next month?',
+      'What moment from today do you want to remember in a year?',
+      'What is one thing you did today that your past self would be proud of?',
+    ];
+
+    let prompt = '';
+    try {
+      const res = await fetch('/api/coach/journal-prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        prompt = (typeof data?.prompt === 'string' ? data.prompt : '').trim();
+      }
+    } catch {
+      // Swallow network errors — fallback kicks in below.
+    }
+
+    if (!prompt) {
+      prompt = FALLBACK_PROMPTS[Math.floor(Math.random() * FALLBACK_PROMPTS.length)];
+    }
+
+    // Persist locally. `setJournalAIPrompt` creates a shell entry if none
+    // exists for the date, so we never lose the prompt just because the
+    // user hadn't typed anything yet.
+    const saved = storage.setJournalAIPrompt(date, prompt);
+
+    // Merge into in-memory state: replace if this date already has a row,
+    // otherwise append. Preserves the "unordered list" invariant.
+    const current = get().journalEntries;
+    const idx = current.findIndex(e => e.date === date);
+    const next = idx >= 0
+      ? current.map((e, i) => (i === idx ? saved : e))
+      : [...current, saved];
+    set({ journalEntries: next });
+
+    // Best-effort cloud write. Uses a targeted upsert that only touches
+    // the ai_prompt column so any in-flight content autosave is not
+    // clobbered.
+    cloudSync(() => api.setJournalAIPrompt(date, prompt));
+
+    return prompt;
+  },
+
+  // ─── Shadow goals ────────────────────────────────────────────────
+
+  setShowShadowGoals: (show) => set({ showShadowGoals: show }),
+
+  addShadowGoal: (title, note = '') => {
+    const trimmed = title.trim();
+    if (!trimmed) return; // Ignore empty additions silently — UI guards too.
+
+    // Local write returns the canonical row (id + timestamps); we mirror that
+    // into Zustand so the new item shows up immediately, ahead of any cloud
+    // round-trip. The sort ordering (newest-first) is enforced inside
+    // storage.createShadowGoal.
+    const created = storage.createShadowGoal(trimmed, note);
+    set({ shadowGoals: [created, ...get().shadowGoals] });
+
+    cloudSync(() => api.createShadowGoal(trimmed, note));
+  },
+
+  updateShadowGoal: (id, patch) => {
+    const updated = storage.updateShadowGoal(id, patch);
+    if (!updated) return; // Already gone — bail without touching state.
+
+    set({
+      shadowGoals: get().shadowGoals.map(g => (g.id === id ? updated : g)),
+    });
+
+    cloudSync(() => api.updateShadowGoal(id, patch));
+  },
+
+  removeShadowGoal: (id) => {
+    set({ shadowGoals: get().shadowGoals.filter(g => g.id !== id) });
+    storage.deleteShadowGoal(id);
+    cloudSync(() => api.deleteShadowGoal(id));
+  },
+
+  promoteShadowGoal: (id) => {
+    // Find the shadow first — if it's gone (e.g. deleted in another tab and
+    // synced back) bail without mutating onboarding state.
+    const shadow = get().shadowGoals.find(g => g.id === id);
+    if (!shadow) return;
+
+    // Park the id so completeOnboarding/createNewGoal can delete the shadow
+    // row on success. We do NOT delete the shadow row up front — the user
+    // might back out of onboarding, in which case the shelf entry should
+    // still be there waiting for them.
+    set({
+      pendingShadowGoalId: id,
+      // Prefill onboarding with the shadow's title + note. The motivation
+      // note maps cleanly to the goal description field via OnboardingData.
+      onboardingData: {
+        goalTitle: shadow.title,
+        motivationNote: shadow.note || undefined,
+      },
+      onboardingStep: 0,
+      currentView: 'onboarding',
+      // Close the shelf so the user isn't looking at it through the wizard.
+      showShadowGoals: false,
+    });
   },
 
   // ─── Subscription ────────────────────────────────────────────────

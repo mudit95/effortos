@@ -155,6 +155,10 @@ export interface Toast {
 // Daily Grind types
 export type DashboardMode = 'daily' | 'longterm' | 'reports';
 
+// Layout for the Daily Grind view. 'list' is the classic ordered task list;
+// 'schedule' is the 4-column drag-and-drop time-box grid.
+export type DailyGrindLayout = 'list' | 'schedule';
+
 export const TASK_TAGS = [
   { id: 'startup', label: 'Startup', color: '#c026d3' },
   { id: 'job', label: 'Job', color: '#0ea5e9' },
@@ -166,6 +170,17 @@ export const TASK_TAGS = [
 
 export type TaskTagId = typeof TASK_TAGS[number]['id'];
 
+// Coarse time-boxing buckets used by the Schedule view. Kept as a union
+// (not an enum) so it composes with `?:` for "unscheduled" without needing
+// a sentinel value. Matches the CHECK constraint in migration 015.
+export const TIME_BLOCKS = [
+  { id: 'morning',   label: 'Morning',   hint: 'before noon'    },
+  { id: 'afternoon', label: 'Afternoon', hint: 'noon – evening' },
+  { id: 'evening',   label: 'Evening',   hint: 'after dinner'   },
+] as const;
+
+export type TimeBlock = typeof TIME_BLOCKS[number]['id'];
+
 export interface DailyTask {
   id: string;
   title: string;
@@ -176,6 +191,7 @@ export interface DailyTask {
   date: string;               // YYYY-MM-DD
   tag?: TaskTagId;            // effort category
   goal_id?: string;           // link to long-term goal
+  time_block?: TimeBlock;     // coarse schedule bucket (Schedule view only)
   created_at: string;
   completed_at?: string;
   order: number;              // for sorting/reordering
@@ -210,6 +226,25 @@ export interface JournalEntry {
   date: string;           // YYYY-MM-DD (local calendar date the entry is FOR)
   content: string;        // plain text, no markdown parsing yet
   mood?: JournalMoodId;
+  // One-time AI-generated writing prompt. Once set, the "Ask for AI Prompt"
+  // button is disabled for this entry — the prompt is a single marker the
+  // user uses to write against, not a chat.
+  ai_prompt?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// ── Shadow goals ─────────────────────────────────────────────────────
+// The "someday shelf" — parked goal ideas the user wants to revisit
+// without committing to estimation/scheduling yet. Intentionally a
+// separate type from `Goal` because shadows carry no estimation,
+// milestones, status machinery, or scheduling fields. A shadow can be
+// "promoted" into a real goal via the onboarding flow, after which the
+// shadow row is deleted.
+export interface ShadowGoal {
+  id: string;
+  title: string;
+  note: string;           // free-form context; may be empty
   created_at: string;
   updated_at: string;
 }

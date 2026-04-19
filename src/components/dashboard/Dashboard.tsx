@@ -15,6 +15,7 @@ import { GoalHistoryModal } from './GoalHistoryModal';
 import { EditGoalModal } from './EditGoalModal';
 import { ManualSessionModal } from './ManualSessionModal';
 import { JournalModal } from './JournalModal';
+import { ShadowGoalsModal } from './ShadowGoalsModal';
 import { ModeToggle } from './ModeToggle';
 import { GoalSelector } from './GoalSelector';
 import { WelcomeCard } from './WelcomeCard';
@@ -111,10 +112,19 @@ export function Dashboard() {
                 <BookOpen className="w-4 h-4" />
                 View Goal History
               </Button>
+              <Button
+                variant="ghost"
+                onClick={() => useStore.getState().setShowShadowGoals(true)}
+                className="gap-2"
+              >
+                <Sparkles className="w-4 h-4" />
+                Shadow Goals
+              </Button>
             </div>
           </div>
         </div>
         <GoalHistoryModal />
+        <ShadowGoalsModal />
         <SettingsModal />
       </div>
     );
@@ -219,6 +229,7 @@ export function Dashboard() {
       <EditGoalModal />
       <ManualSessionModal />
       <JournalModal />
+      <ShadowGoalsModal />
       <PaywallModal />
     </div>
   );
@@ -250,14 +261,22 @@ function LongTermView({
       {/* Welcome card for first-time users */}
       <WelcomeCard />
 
-      {/* Review all goals button */}
-      <motion.div {...fadeUp()} className="mb-2">
+      {/* Review all goals + shadow shelf — sibling affordances so discovery
+          of the shelf piggybacks on the existing "review goals" path. */}
+      <motion.div {...fadeUp()} className="mb-2 flex items-center gap-4">
         <button
           onClick={() => setShowGoalHistory(true)}
           className="flex items-center gap-1.5 text-xs text-white/30 hover:text-white/60 transition-colors px-1"
         >
           <List className="w-3.5 h-3.5" />
           Review All Long Term Goals
+        </button>
+        <button
+          onClick={() => useStore.getState().setShowShadowGoals(true)}
+          className="flex items-center gap-1.5 text-xs text-white/30 hover:text-purple-200/80 transition-colors px-1"
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          Shadow Goals
         </button>
       </motion.div>
 
