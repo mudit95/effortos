@@ -23,14 +23,14 @@ import { DailyGrind } from './DailyGrind';
 import { Reports } from './Reports';
 import { StreakCalendar } from './StreakCalendar';
 import { TimezoneClock } from './TimezoneClock';
-import { AIInsightCard, AIMotivationCard } from './AICards';
+import { AIMotivationCard } from './AICards';
 import { PaywallModal } from '@/components/subscription/PaywallModal';
 import { TrialBanner } from '@/components/subscription/TrialBanner';
 import { PremiumGate } from '@/components/subscription/PremiumGate';
 import { TimerDisplay } from '@/components/timer/TimerDisplay';
 import {
   Target, LogOut, Plus,
-  Sparkles, Settings, ChevronRight, BookOpen, Edit3,
+  Sparkles, Settings, BookOpen, Edit3,
   PlusCircle, Shield, List
 } from 'lucide-react';
 
@@ -251,8 +251,6 @@ function LongTermView({
   setShowManualSession: (show: boolean) => void;
   setShowGoalHistory: (show: boolean) => void;
 }) {
-  const completionPct = dashboardStats?.completion_percentage ?? 0;
-
   return (
     <>
       {/* Goal list */}
@@ -261,36 +259,33 @@ function LongTermView({
       {/* Welcome card for first-time users */}
       <WelcomeCard />
 
-      {/* Review all goals + shadow shelf — sibling affordances so discovery
-          of the shelf piggybacks on the existing "review goals" path. */}
-      <motion.div {...fadeUp()} className="mb-2 flex items-center gap-4">
-        <button
-          onClick={() => setShowGoalHistory(true)}
-          className="flex items-center gap-1.5 text-xs text-white/30 hover:text-white/60 transition-colors px-1"
-        >
-          <List className="w-3.5 h-3.5" />
-          Review All Long Term Goals
-        </button>
-        <button
-          onClick={() => useStore.getState().setShowShadowGoals(true)}
-          className="flex items-center gap-1.5 text-xs text-white/30 hover:text-purple-200/80 transition-colors px-1"
-        >
-          <Sparkles className="w-3.5 h-3.5" />
-          Shadow Goals
-        </button>
-      </motion.div>
-
-      {/* 3-column layout: Goal+Calendar (left) | Timer (center) | AI Cards (right) — all visible without scroll */}
+      {/* 3-column layout: Goal+Calendar (left) | Timer (center) | AI Motivation (right) — all visible without scroll */}
       <motion.div {...fadeUp()} className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 mb-4">
         {/* Left column — Goal details + Streak Calendar */}
         <div className="lg:col-span-5 space-y-3">
-          {/* Goal header */}
-          <div className="flex items-center justify-between">
+          {/* Goal header — title + inline review links + edit/log icons */}
+          <div className="flex items-center justify-between gap-2">
             <div className="min-w-0 flex-1">
-              <p className="text-[10px] text-white/25 uppercase tracking-wider">Current Goal</p>
               <h1 className="text-base sm:text-lg font-semibold text-white truncate">{activeGoal.title}</h1>
             </div>
-            <div className="flex items-center gap-1 shrink-0 ml-2">
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => setShowGoalHistory(true)}
+                className="flex items-center gap-1 text-[11px] text-white/30 hover:text-white/60 transition-colors px-1.5 py-1"
+                aria-label="Review all long term goals"
+              >
+                <List className="w-3 h-3" />
+                <span className="hidden sm:inline">All goals</span>
+              </button>
+              <button
+                onClick={() => useStore.getState().setShowShadowGoals(true)}
+                className="flex items-center gap-1 text-[11px] text-white/30 hover:text-purple-200/80 transition-colors px-1.5 py-1"
+                aria-label="Shadow goals"
+              >
+                <Sparkles className="w-3 h-3" />
+                <span className="hidden sm:inline">Shadow</span>
+              </button>
+              <div className="w-px h-3.5 bg-white/[0.06] mx-0.5" />
               <Button variant="ghost" size="icon" onClick={() => setShowEditGoal(true)} className="w-7 h-7" aria-label="Edit goal">
                 <Edit3 className="w-3 h-3" />
               </Button>
@@ -308,49 +303,33 @@ function LongTermView({
             onClick={() => useStore.getState().openGoalReport(activeGoal.id)}
           />
 
-          {/* Stats line */}
+          {/* Progress caption — streak lives in the calendar card below, so
+              this line only carries sessions + invested hours. */}
           {dashboardStats && (
             <p className="text-xs text-white/30">
-              {dashboardStats.sessions_done}/{activeGoal.estimated_sessions_current} sessions &middot; {dashboardStats.total_hours}h invested &middot; {dashboardStats.current_streak} day streak
+              {dashboardStats.sessions_done}/{activeGoal.estimated_sessions_current} sessions &middot; {dashboardStats.total_hours}h invested
             </p>
           )}
 
-          {/* Streak Calendar */}
+          {/* Streak Calendar — flush (no inner card chrome) so it reads as a
+              sibling of the progress bar instead of a nested card-in-a-column. */}
           <PremiumGate label="Streak Calendar" minHeight="200px">
-            <div className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
-              <LongTermStreakCalendar
-                dailySessions={dashboardStats?.daily_sessions || []}
-                recommendedDaily={activeGoal.recommended_sessions_per_day}
-              />
-            </div>
-          </PremiumGate>
-        </div>
-
-        {/* Center column — Timer + controls */}
-        <div className="lg:col-span-3 flex flex-col items-center justify-start pt-2">
-          <TimerDisplay onEnterFocus={() => setView('focus')} />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setView('focus')}
-            className="mt-3 gap-1 text-xs text-white/30 hover:text-white/60"
-          >
-            Enter Focus Mode
-            <ChevronRight className="w-3 h-3" />
-          </Button>
-        </div>
-
-        {/* Right column — AI Insight + Motivation stacked */}
-        <div className="lg:col-span-4 space-y-4">
-          <PremiumGate label="AI Insight" minHeight="140px">
-            <AIInsightCard
-              goalTitle={activeGoal.title}
-              sessionsCompleted={activeGoal.sessions_completed}
-              sessionsTotal={activeGoal.estimated_sessions_current}
-              streakDays={dashboardStats?.current_streak ?? 0}
-              context="longterm"
+            <LongTermStreakCalendar
+              dailySessions={dashboardStats?.daily_sessions || []}
+              recommendedDaily={activeGoal.recommended_sessions_per_day}
             />
           </PremiumGate>
+        </div>
+
+        {/* Center column — Timer. The previous "Enter Focus Mode" ghost link
+            was a second CTA for the same action the timer already exposes. */}
+        <div className="lg:col-span-3 flex flex-col items-center justify-start pt-2">
+          <TimerDisplay onEnterFocus={() => setView('focus')} />
+        </div>
+
+        {/* Right column — AI Motivation (AIInsightCard dropped; the progress
+            bar + stats already carry the "how am I doing" signal). */}
+        <div className="lg:col-span-4 space-y-4">
           <PremiumGate label="AI Motivation" minHeight="140px">
             <AIMotivationCard
               goalTitle={activeGoal.title}
