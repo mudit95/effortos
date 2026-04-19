@@ -352,15 +352,24 @@ export function StreakCalendar({
         })}
       </div>
 
-      {/* Streak Badge */}
-      <div className="flex items-center justify-center gap-2 text-sm text-white/80 px-2 py-2 bg-white/[0.02] rounded-lg border border-white/10">
-        <Flame className="w-3.5 h-3.5 text-orange-400" />
-        <span className="font-semibold">{currentStreak}</span>
-        <span className="text-white/50">day streak</span>
-        <span className="text-white/30">·</span>
-        <span className="text-white/50">Best:</span>
-        <span className="font-semibold text-white">{bestStreak}</span>
-      </div>
+      {/* Streak Badge — hidden in the empty state. A "0 day streak · Best: 0"
+          chip is visual noise on day one; users who haven't completed a
+          session yet don't need a reminder that their streak is zero.
+          Surfaces as soon as there's anything to report. */}
+      {(currentStreak > 0 || bestStreak > 0) && (
+        <div className="flex items-center justify-center gap-2 text-sm text-white/80 px-2 py-2 bg-white/[0.02] rounded-lg border border-white/10">
+          <Flame className="w-3.5 h-3.5 text-orange-400" />
+          <span className="font-semibold">{currentStreak}</span>
+          <span className="text-white/50">day streak</span>
+          {bestStreak > 0 && (
+            <>
+              <span className="text-white/30">·</span>
+              <span className="text-white/50">Best:</span>
+              <span className="font-semibold text-white">{bestStreak}</span>
+            </>
+          )}
+        </div>
+      )}
 
       {/* ── Rich hover tooltip ─────────────────────────────────────── */}
       <AnimatePresence>

@@ -10,7 +10,7 @@ import { TASK_TAGS, type TaskTagId, type DailyTask, type Goal } from '@/types';
 import {
   Plus, Trash2, Play, Pause, RotateCcw, SkipForward,
   Repeat, ChevronLeft, ChevronRight, Maximize2, Circle,
-  CheckCircle2, Clock, Flame, Tag, PlusCircle, X, Calendar, Sparkles,
+  CheckCircle2, Clock, Flame, PlusCircle, X, Calendar, Sparkles,
   CalendarPlus, List, LayoutGrid,
 } from 'lucide-react';
 import * as storage from '@/lib/storage';
@@ -18,11 +18,17 @@ import { PiPButton } from '@/components/timer/PiPButton';
 import { HintBanner } from '@/components/ui/HintBanner';
 import { CoachPlanPanel } from './CoachPlanPanel';
 import { CoachDebriefCard } from './CoachDebriefCard';
-import { MotivationMessage } from './MotivationMessage';
+// MotivationMessage (the italic AI quote above the task list) was removed
+// during the density pass — AIMotivationCard in the right rail covers the
+// same job, so having both created a third pep talk on a single screen.
 import { GoalProgressBar } from './GoalProgressBar';
 import { AIPlanWizard } from './AIPlanWizard';
 import { StreakCalendar } from './StreakCalendar';
-import { AIInsightCard, AIMotivationCard } from './AICards';
+// AIInsightCard lives on the long-term dashboard; the daily view only
+// surfaces a single AI pep talk via AIMotivationCard in the right rail.
+// Having two AI text blocks stacked in the same viewport created
+// redundant "motivate the user" real estate.
+import { AIMotivationCard } from './AICards';
 import { TimeBoxView } from './TimeBoxView';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
@@ -578,7 +584,10 @@ export function DailyGrind() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      {/* Left column: Calendar + AI Insight */}
+      {/* Left column: Calendar only. Trimmed from col-span-3 to col-span-3
+          still, but with the AI Insight card removed the rail reads as a
+          compact sidebar rather than competing for vertical space with the
+          main tasks column. */}
       <div className="lg:col-span-3 space-y-4">
         <StreakCalendar
           dailySessions={dashboardStats?.daily_sessions || []}
@@ -587,22 +596,27 @@ export function DailyGrind() {
           journalDates={journalDates}
           onDayClick={(date) => setJournalModalDate(date)}
         />
-        <AIInsightCard
-          sessionsCompleted={donePomodoros}
-          sessionsTotal={totalPomodoros}
-          streakDays={dashboardStats?.current_streak ?? 0}
-          context="daily"
-        />
       </div>
 
       {/* Main column */}
       <div className="lg:col-span-5 space-y-4">
-        {/* Date nav + progress */}
+        {/* Date nav + view controls — consolidated into two rows total:
+              Row 1: date navigation on the left, List/Schedule view toggle
+                     + manual-log button on the right. The view toggle is a
+                     navigation-level concern (which lens are you looking
+                     through?), so it sits with the date chevrons, not with
+                     the planning actions below.
+              Row 2: progress bar with a single slim caption beneath it that
+                     merges "done/total" and "total work planned" into one
+                     line.
+              Row 3: planning actions (Plan My Day with AI, Plan Tomorrow).
+            Previously this was seven vertical rows tall. Now it's three. */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, ease }}
         >
+          {/* Row 1: date nav + view toggle + log */}
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-1.5">
               <button onClick={goToPreviousDay} className="p-1.5 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 transition-all">
@@ -621,7 +635,36 @@ export function DailyGrind() {
               )}
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-white/25 font-mono">{donePomodoros}/{totalPomodoros}</span>
+              {/* List / Schedule layout toggle. Persisted per-device via
+                  localStorage so the preference survives reloads. */}
+              <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-white/[0.03] border border-white/[0.06]">
+                <button
+                  onClick={() => setDailyGrindLayout('list')}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-all ${
+                    dailyGrindLayout === 'list'
+                      ? 'bg-white/[0.08] text-white/80'
+                      : 'text-white/30 hover:text-white/60'
+                  }`}
+                  title="List view"
+                  aria-pressed={dailyGrindLayout === 'list'}
+                >
+                  <List className="w-3 h-3" />
+                  List
+                </button>
+                <button
+                  onClick={() => setDailyGrindLayout('schedule')}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-all ${
+                    dailyGrindLayout === 'schedule'
+                      ? 'bg-white/[0.08] text-white/80'
+                      : 'text-white/30 hover:text-white/60'
+                  }`}
+                  title="Schedule view — drag tasks between morning / afternoon / evening"
+                  aria-pressed={dailyGrindLayout === 'schedule'}
+                >
+                  <LayoutGrid className="w-3 h-3" />
+                  Schedule
+                </button>
+              </div>
               {isToday && (
                 <button
                   onClick={() => setShowManualPomodoro(true)}
@@ -635,33 +678,30 @@ export function DailyGrind() {
             </div>
           </div>
 
-          {/* Progress bar */}
+          {/* Row 2: progress bar + merged caption. Caption collapses the two
+              previously-separate summary lines ("X of Y pomodoros done" and
+              "Hm total work planned") into one subtle right-aligned string. */}
           {totalPomodoros > 0 && (
-            <div className="h-1.5 rounded-full bg-white/[0.04] overflow-hidden mb-2">
-              <motion.div
-                className="h-full rounded-full"
-                style={{ backgroundColor: 'var(--accent, #22d3ee)' }}
-                animate={{ width: `${(donePomodoros / totalPomodoros) * 100}%` }}
-                transition={{ duration: 0.5, ease }}
-              />
-            </div>
+            <>
+              <div className="h-1.5 rounded-full bg-white/[0.04] overflow-hidden mb-1.5">
+                <motion.div
+                  className="h-full rounded-full"
+                  style={{ backgroundColor: 'var(--accent, #22d3ee)' }}
+                  animate={{ width: `${(donePomodoros / totalPomodoros) * 100}%` }}
+                  transition={{ duration: 0.5, ease }}
+                />
+              </div>
+              <p className="text-[11px] text-white/30 tabular-nums">
+                {donePomodoros}/{totalPomodoros} pomodoros
+                <span className="text-white/15 mx-1.5">·</span>
+                {totalEstHours > 0 ? `${totalEstHours}h ` : ''}{totalEstMins}m planned
+              </p>
+            </>
           )}
 
-          {/* Daily totals bar */}
-          {totalPomodoros > 0 && (
-            <div className="flex items-center justify-between text-xs text-white/30">
-              <span>
-                {donePomodoros} of {totalPomodoros} pomodoros done
-              </span>
-              <span>
-                {totalEstHours > 0 ? `${totalEstHours}h ` : ''}{totalEstMins}m total work planned
-              </span>
-            </div>
-          )}
-
-          {/* Plan buttons row */}
-          <div className="mt-2 flex items-center gap-4">
-            {/* Plan My Day with AI button */}
+          {/* Row 3: planning actions. Plan Tomorrow sits as a quiet text link
+              next to the primary AI planning button. */}
+          <div className="mt-3 flex items-center gap-4">
             <button
               onClick={() => setShowAIPlanWizard(true)}
               disabled={coachPlanLoading}
@@ -671,7 +711,6 @@ export function DailyGrind() {
               {coachPlanLoading ? 'Planning...' : 'Plan My Day with AI'}
             </button>
 
-            {/* Plan Tomorrow button */}
             {isToday && (
               <button
                 onClick={() => {
@@ -684,38 +723,6 @@ export function DailyGrind() {
                 Plan Tomorrow
               </button>
             )}
-
-            {/* List / Schedule layout toggle — pushed to the right. Persisted
-                per-device via localStorage so the user's preference survives
-                page reloads without needing a DB round-trip. */}
-            <div className="ml-auto flex items-center gap-0.5 p-0.5 rounded-lg bg-white/[0.03] border border-white/[0.06]">
-              <button
-                onClick={() => setDailyGrindLayout('list')}
-                className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-all ${
-                  dailyGrindLayout === 'list'
-                    ? 'bg-white/[0.08] text-white/80'
-                    : 'text-white/30 hover:text-white/60'
-                }`}
-                title="List view"
-                aria-pressed={dailyGrindLayout === 'list'}
-              >
-                <List className="w-3 h-3" />
-                List
-              </button>
-              <button
-                onClick={() => setDailyGrindLayout('schedule')}
-                className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-all ${
-                  dailyGrindLayout === 'schedule'
-                    ? 'bg-white/[0.08] text-white/80'
-                    : 'text-white/30 hover:text-white/60'
-                }`}
-                title="Schedule view — drag tasks between morning / afternoon / evening"
-                aria-pressed={dailyGrindLayout === 'schedule'}
-              >
-                <LayoutGrid className="w-3 h-3" />
-                Schedule
-              </button>
-            </div>
           </div>
         </motion.div>
 
@@ -723,18 +730,6 @@ export function DailyGrind() {
         <AIPlanWizard />
         <CoachPlanPanel />
         <CoachDebriefCard />
-
-        {/* AI motivation message — shown before timer starts */}
-        {isToday && !isTimerActive && activeGoal && (
-          <MotivationMessage
-            taskTitle={activeTask?.title}
-            goalTitle={activeGoal.title}
-            sessionsCompleted={activeGoal.sessions_completed}
-            sessionsTotal={activeGoal.estimated_sessions_current}
-            streakDays={dashboardStats?.current_streak ?? 0}
-            userName={user?.name || 'there'}
-          />
-        )}
 
         {/* ── LARGE CENTERED TIMER ─── when a pomodoro is active */}
         <AnimatePresence>
@@ -1006,42 +1001,44 @@ export function DailyGrind() {
           streakDays={dashboardStats?.current_streak ?? 0}
           userName={useStore.getState().user?.name || 'there'}
         />
-        {/* Today's Charter progress */}
-        {activeGoal && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.05, duration: 0.4, ease }}
-            className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]"
-          >
-            <h3 className="text-[10px] text-white/25 uppercase tracking-widest mb-3">Today&apos;s Charter</h3>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-sm font-medium text-white/70">{donePomodoros} of {totalPomodoros} pomodoros</p>
-              <span className="text-xs text-white/30">{totalPomodoros > 0 ? Math.round((donePomodoros / totalPomodoros) * 100) : 0}%</span>
-            </div>
-            <div className="h-2 rounded-full bg-white/[0.04] overflow-hidden">
-              <motion.div
-                className="h-full rounded-full"
-                style={{ backgroundColor: 'var(--accent, #22d3ee)' }}
-                animate={{ width: `${totalPomodoros > 0 ? (donePomodoros / totalPomodoros) * 100 : 0}%` }}
-                transition={{ duration: 0.5, ease }}
-              />
-            </div>
-            <p className="text-[10px] text-white/20 mt-2">{completedTasks.length} of {dailyTasks.length} tasks completed</p>
-          </motion.div>
-        )}
-
-        {/* Today's stats */}
+        {/* Today at a glance — the old "Today's Charter" and "Today's Focus"
+            cards said nearly the same thing with different framings. Both are
+            now folded into a single compact card: four stats in a 2x2 grid
+            with a single thin progress bar. Previously the user saw the
+            same pomodoro count in four places (header, task-list header,
+            Charter, Focus). Now it lives once on the right and once in the
+            main column's progress bar. */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1, duration: 0.4, ease }}
+          transition={{ delay: 0.05, duration: 0.4, ease }}
           className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]"
         >
-          <h3 className="text-[10px] text-white/25 uppercase tracking-widest mb-3">
-            {isToday ? "Today's Focus" : formatDateLabel(dailyViewDate)}
-          </h3>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-[10px] text-white/25 uppercase tracking-widest">
+              {isToday ? 'Today at a glance' : formatDateLabel(dailyViewDate)}
+            </h3>
+            {totalPomodoros > 0 && (
+              <span className="text-[10px] text-white/30 tabular-nums">
+                {Math.round((donePomodoros / totalPomodoros) * 100)}%
+              </span>
+            )}
+          </div>
+
+          {/* Thin day-progress bar — carries what the Charter card used to
+              show, without a second title or second numeric readout. */}
+          {totalPomodoros > 0 && (
+            <div className="h-1.5 rounded-full bg-white/[0.04] overflow-hidden mb-4">
+              <motion.div
+                className="h-full rounded-full"
+                style={{ backgroundColor: 'var(--accent, #22d3ee)' }}
+                animate={{ width: `${(donePomodoros / totalPomodoros) * 100}%` }}
+                transition={{ duration: 0.5, ease }}
+              />
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-x-3 gap-y-4">
             <div>
               <div className="flex items-center gap-1.5 mb-1">
                 <Clock className="w-3 h-3 text-[var(--accent,#22d3ee)]" />
@@ -1071,12 +1068,12 @@ export function DailyGrind() {
             </div>
             <div>
               <div className="flex items-center gap-1.5 mb-1">
-                <Tag className="w-3 h-3 text-purple-400" />
-                <span className="text-[10px] text-white/30 uppercase">Focus</span>
+                <Flame className="w-3 h-3 text-orange-400/70" />
+                <span className="text-[10px] text-white/30 uppercase">Streak</span>
               </div>
               <p className="text-lg font-bold text-white">
-                {totalPomodoros > 0 ? Math.round((donePomodoros / totalPomodoros) * 100) : 0}
-                <span className="text-sm text-white/25 font-normal">%</span>
+                {dashboardStats?.current_streak ?? 0}
+                <span className="text-sm text-white/25 font-normal"> day{(dashboardStats?.current_streak ?? 0) === 1 ? '' : 's'}</span>
               </p>
             </div>
           </div>
