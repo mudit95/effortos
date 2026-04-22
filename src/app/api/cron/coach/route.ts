@@ -6,14 +6,26 @@ import { generateCoachMessage } from '@/lib/coach-ai';
 import { sendTextMessage } from '@/lib/whatsapp';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 120; // 2 minutes — processing multiple users
+export const maxDuration = 300; // 5 minutes — processing multiple users across all timezones
 
 /**
  * GET /api/cron/coach
  *
- * Runs every hour via Vercel Cron. For each Pro-tier user with a linked
- * WhatsApp number, the coach engine decides if a nudge is due, generates
- * a personalized message via AI, and sends it.
+ * Runs once daily at 02:00 UTC via Vercel Cron (Hobby plan limitation).
+ *
+ * Since we can't run hourly, the approach is:
+ *   1. For each Pro user, check their LOCAL hour right now.
+ *   2. If it matches a nudge window (8 AM, 1 PM, 6 PM, 8 PM, etc.),
+ *      send the nudge immediately.
+ *   3. For timezone coverage, this cron also supports being called
+ *      manually or via an external scheduler (e.g. cron-job.org)
+ *      multiple times per day for better coverage.
+ *
+ * To get hourly coverage without Vercel Pro, set up a free external
+ * cron service (cron-job.org, EasyCron, etc.) to hit:
+ *   GET https://your-domain.vercel.app/api/cron/coach
+ *   Header: Authorization: Bearer <your-CRON_SECRET>
+ *   Schedule: Every hour
  */
 export async function GET(request: Request) {
   const authErr = verifyCronAuth(request);
@@ -23,7 +35,6 @@ export async function GET(request: Request) {
 
   try {
     // ── 1. Find all Pro users with linked WhatsApp ──
-    // Join subscriptions (for tier) with profiles (for phone + preferences)
     const { data: proUsers, error: queryErr } = await supabase
       .from('profiles')
       .select(`
@@ -82,7 +93,7 @@ export async function GET(request: Request) {
         const message = await generateCoachMessage(decision.nudge_type, decision.context);
 
         // Send via WhatsApp
-        const phone = user.phone_number.replace(/^\+/, ''); // strip leading +
+        const phone = user.phone_number.replace(/^\+/, '');
         const delivered = await sendTextMessage(phone, message);
 
         // Log to coach_log
