@@ -17,15 +17,29 @@ export function getRazorpay(): Razorpay {
   return _instance;
 }
 
-/** Plan ID — create this once in your Razorpay dashboard or via the setup script */
-export const PLAN_ID = process.env.RAZORPAY_PLAN_ID || '';
+/** Starter plan ID — create in Razorpay dashboard (₹499/month) */
+export const STARTER_PLAN_ID = process.env.RAZORPAY_PLAN_ID || '';
+
+/** Pro plan ID — create in Razorpay dashboard (₹999/month) */
+export const PRO_PLAN_ID = process.env.RAZORPAY_PRO_PLAN_ID || '';
+
+/** Legacy alias */
+export const PLAN_ID = STARTER_PLAN_ID;
 
 /** Trial duration in days */
 export const TRIAL_DAYS = 3;
 
-/** Monthly price in smallest currency unit (paise for INR, cents for USD) */
-export const MONTHLY_PRICE = Number(process.env.RAZORPAY_MONTHLY_PRICE || 49900); // default ₹499 = 49900 paise
+/** Monthly prices in smallest currency unit (paise for INR) */
+export const STARTER_MONTHLY_PRICE = Number(process.env.RAZORPAY_MONTHLY_PRICE || 49900);   // ₹499
+export const PRO_MONTHLY_PRICE = Number(process.env.RAZORPAY_PRO_MONTHLY_PRICE || 99900);    // ₹999
+
+/** Legacy alias */
+export const MONTHLY_PRICE = STARTER_MONTHLY_PRICE;
 
 /** Currency */
 export const CURRENCY = process.env.RAZORPAY_CURRENCY || 'INR';
 
+/** Get the correct plan ID for a tier */
+export function getPlanIdForTier(tier: 'starter' | 'pro'): string {
+  return tier === 'pro' ? PRO_PLAN_ID : STARTER_PLAN_ID;
+}

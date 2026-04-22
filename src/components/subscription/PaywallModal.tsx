@@ -4,16 +4,26 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store/useStore';
 import { Button } from '@/components/ui/button';
-import { Sparkles, X, Shield, Zap, Brain, BarChart3, Clock, Ticket } from 'lucide-react';
-import { DISPLAY_PRICE, DISPLAY_PRICE_PER_MONTH } from '@/lib/pricing';
+import { Sparkles, X, Shield, Zap, Brain, BarChart3, Clock, Ticket, MessageCircle, Check } from 'lucide-react';
+import { STARTER_PRICE, PRO_PRICE } from '@/lib/pricing';
+import type { PlanTier } from '@/types';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
-const FEATURES = [
-  { icon: Brain, label: 'AI Coach', desc: 'Plan My Day, Session Debriefs, Weekly Insights' },
-  { icon: Zap, label: 'Focus Timer', desc: 'Pomodoro timer with auto-breaks and focus mode' },
-  { icon: BarChart3, label: 'Smart Reports', desc: 'Goal tracking, consistency analytics, patterns' },
-  { icon: Clock, label: 'Adaptive Estimation', desc: 'AI learns your pace and recalibrates over time' },
+const STARTER_FEATURES = [
+  { icon: Brain, label: 'AI Goal Estimation' },
+  { icon: Zap, label: 'Pomodoro Focus Timer' },
+  { icon: BarChart3, label: 'Reports & Streaks' },
+  { icon: Clock, label: 'Daily Task Management' },
+  { icon: MessageCircle, label: 'WhatsApp Bot (reactive)' },
+];
+
+const PRO_FEATURES = [
+  { icon: Sparkles, label: 'Everything in Starter' },
+  { icon: MessageCircle, label: 'Proactive AI Coach on WhatsApp' },
+  { icon: Zap, label: 'Morning, Midday & Evening Check-ins' },
+  { icon: BarChart3, label: 'Weekly AI Recap & Pace Alerts' },
+  { icon: Clock, label: 'Streak Saver & Idle Nudges' },
 ];
 
 export function PaywallModal() {
@@ -22,6 +32,7 @@ export function PaywallModal() {
   const startTrial = useStore(s => s.startTrial);
   const subscription = useStore(s => s.subscription);
   const [loading, setLoading] = useState(false);
+  const [selectedTier, setSelectedTier] = useState<PlanTier>('starter');
   const [couponCode, setCouponCode] = useState('');
   const [couponMsg, setCouponMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [redeeming, setRedeeming] = useState(false);
@@ -51,7 +62,7 @@ export function PaywallModal() {
           type: data.razorpay_offer_id ? 'ok' : 'err',
           text: data.razorpay_offer_id
             ? `${data.percent}% off will apply at checkout.`
-            : `Code valid, but ${data.percent}% discount isn't configured at the processor yet. Contact support.`,
+            : `Code valid, but discount isn't configured at the processor yet.`,
         });
       } else if (data.applied === 'trial_extension') {
         setCouponMsg({ type: 'ok', text: `Trial extended by ${data.value} days.` });
@@ -69,18 +80,25 @@ export function PaywallModal() {
 
   const isExpired = subscription.status === 'expired';
   const trialEnded = isExpired && subscription.trial_ends_at;
+  const isCurrentlyStarter = subscription.plan_tier === 'starter' && (subscription.status === 'trialing' || subscription.status === 'active');
 
   const handleStartTrial = async () => {
     setLoading(true);
-    await startTrial(appliedCoupon && appliedCoupon.razorpay_offer_id ? {
-      couponCode: appliedCoupon.code,
-      couponId: appliedCoupon.coupon_id,
-      offerId: appliedCoupon.razorpay_offer_id,
-    } : undefined);
+    await startTrial({
+      tier: selectedTier,
+      ...(appliedCoupon && appliedCoupon.razorpay_offer_id ? {
+        couponCode: appliedCoupon.code,
+        couponId: appliedCoupon.coupon_id,
+        offerId: appliedCoupon.razorpay_offer_id,
+      } : {}),
+    });
     setLoading(false);
   };
 
   if (!showPaywall) return null;
+
+  const features = selectedTier === 'pro' ? PRO_FEATURES : STARTER_FEATURES;
+  const price = selectedTier === 'pro' ? PRO_PRICE : STARTER_PRICE;
 
   return (
     <AnimatePresence>
@@ -99,10 +117,10 @@ export function PaywallModal() {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 30, scale: 0.95 }}
           transition={{ duration: 0.4, ease }}
-          className="relative bg-[#0d1117] border border-white/[0.08] rounded-2xl max-w-md w-full overflow-hidden"
+          className="relative bg-[#0d1117] border border-white/[0.08] rounded-2xl max-w-lg w-full overflow-hidden"
         >
-          {/* Gradient header */}
-          <div className="relative px-6 pt-8 pb-6 text-center bg-gradient-to-b from-cyan-500/[0.08] to-transparent">
+          {/* Header */}
+          <div className="relative px-6 pt-8 pb-4 text-center bg-gradient-to-b from-cyan-500/[0.08] to-transparent">
             <button
               onClick={() => setShowPaywall(false)}
               className="absolute top-4 right-4 text-white/20 hover:text-white/50 transition-colors"
@@ -115,45 +133,83 @@ export function PaywallModal() {
             </div>
 
             <h2 className="text-xl font-bold text-white mb-1">
-              {trialEnded ? 'Your trial has ended' : 'Unlock EffortOS'}
+              {trialEnded ? 'Your trial has ended' : isCurrentlyStarter ? 'Upgrade to Pro' : 'Choose Your Plan'}
             </h2>
             <p className="text-sm text-white/40">
               {trialEnded
-                ? 'Subscribe to keep tracking your goals with AI-powered insights'
-                : 'Start your 3-day free trial. Cancel anytime.'}
+                ? 'Subscribe to keep tracking your goals'
+                : isCurrentlyStarter
+                  ? 'Get a proactive AI coach on WhatsApp'
+                  : 'Start your 3-day free trial. Cancel anytime.'}
             </p>
           </div>
 
+          {/* Tier selector */}
+          <div className="px-6 pb-3">
+            <div className="flex gap-2">
+              <button
+                onClick={() => setSelectedTier('starter')}
+                className={`flex-1 py-3 px-3 rounded-xl border text-sm font-medium transition-all ${
+                  selectedTier === 'starter'
+                    ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-400'
+                    : 'border-white/[0.08] bg-white/[0.02] text-white/40 hover:border-white/[0.15]'
+                }`}
+              >
+                <div className="text-center">
+                  <div className="font-bold">Starter</div>
+                  <div className="text-xs mt-0.5 opacity-70">{STARTER_PRICE}/mo</div>
+                </div>
+              </button>
+              <button
+                onClick={() => setSelectedTier('pro')}
+                className={`flex-1 py-3 px-3 rounded-xl border text-sm font-medium transition-all relative ${
+                  selectedTier === 'pro'
+                    ? 'border-purple-500/50 bg-purple-500/10 text-purple-400'
+                    : 'border-white/[0.08] bg-white/[0.02] text-white/40 hover:border-white/[0.15]'
+                }`}
+              >
+                <div className="absolute -top-2 right-2 px-1.5 py-0.5 bg-purple-500 text-[9px] font-bold text-white rounded-full">
+                  AI COACH
+                </div>
+                <div className="text-center">
+                  <div className="font-bold">Pro</div>
+                  <div className="text-xs mt-0.5 opacity-70">{PRO_PRICE}/mo</div>
+                </div>
+              </button>
+            </div>
+          </div>
+
           {/* Features */}
-          <div className="px-6 pb-4 space-y-3">
-            {FEATURES.map((f, i) => (
+          <div className="px-6 pb-4 space-y-2.5">
+            {features.map((f, i) => (
               <motion.div
-                key={f.label}
+                key={`${selectedTier}-${f.label}`}
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.1 + i * 0.05 }}
+                transition={{ delay: 0.05 + i * 0.04 }}
                 className="flex items-center gap-3"
               >
-                <div className="w-8 h-8 rounded-lg bg-white/[0.04] flex items-center justify-center shrink-0">
-                  <f.icon className="w-4 h-4 text-cyan-400" />
+                <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                  selectedTier === 'pro' ? 'bg-purple-500/10' : 'bg-white/[0.04]'
+                }`}>
+                  <Check className={`w-3.5 h-3.5 ${selectedTier === 'pro' ? 'text-purple-400' : 'text-cyan-400'}`} />
                 </div>
-                <div>
-                  <p className="text-sm font-medium text-white/70">{f.label}</p>
-                  <p className="text-xs text-white/30">{f.desc}</p>
-                </div>
+                <p className="text-sm text-white/60">{f.label}</p>
               </motion.div>
             ))}
           </div>
 
-          {/* Pricing */}
+          {/* Pricing + CTA */}
           <div className="px-6 py-5 border-t border-white/[0.06]">
             <div className="text-center mb-4">
               <div className="flex items-baseline justify-center gap-1">
-                <span className="text-3xl font-bold text-white">{DISPLAY_PRICE}</span>
+                <span className="text-3xl font-bold text-white">{price}</span>
                 <span className="text-sm text-white/30">/month</span>
               </div>
               <p className="text-xs text-white/25 mt-1">
-                {trialEnded ? 'Billed monthly. Cancel anytime.' : `3 days free, then ${DISPLAY_PRICE_PER_MONTH}. Cancel anytime.`}
+                {trialEnded ? 'Billed monthly. Cancel anytime.'
+                  : isCurrentlyStarter && selectedTier === 'pro' ? 'Upgrade now. Billed monthly.'
+                  : `3 days free, then ${price}/month. Cancel anytime.`}
               </p>
             </div>
 
@@ -190,12 +246,19 @@ export function PaywallModal() {
               size="lg"
               onClick={handleStartTrial}
               disabled={loading}
-              className="w-full gap-2 h-12 text-base"
+              className={`w-full gap-2 h-12 text-base ${
+                selectedTier === 'pro' ? 'bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400' : ''
+              }`}
             >
               {loading ? (
                 'Opening checkout...'
               ) : trialEnded ? (
                 <>Subscribe Now</>
+              ) : isCurrentlyStarter && selectedTier === 'pro' ? (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  Upgrade to Pro
+                </>
               ) : (
                 <>
                   <Shield className="w-4 h-4" />

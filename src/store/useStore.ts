@@ -5,7 +5,7 @@ import {
   User, Goal, Session, TimerState, OnboardingData,
   DashboardStats, RecalibrationResult, Toast, UserSettings, DEFAULT_SETTINGS,
   DashboardMode, DailyTask, DailySession, RepeatingTaskTemplate, TaskTagId,
-  SubscriptionStatus, SubscriptionInfo, FeedbackEntry,
+  SubscriptionStatus, SubscriptionInfo, PlanTier, FeedbackEntry,
   JournalEntry, JournalMoodId,
   ShadowGoal, DailyGrindLayout,
 } from '@/types';
@@ -226,10 +226,11 @@ interface AppState {
 
   // Subscription
   fetchSubscriptionStatus: () => void;
-  startTrial: (opts?: { couponCode?: string; couponId?: string; offerId?: string }) => void;
+  startTrial: (opts?: { tier?: PlanTier; couponCode?: string; couponId?: string; offerId?: string }) => void;
   cancelSubscription: () => void;
   setShowPaywall: (show: boolean) => void;
   isSubscriptionActive: () => boolean;
+  isProTier: () => boolean;
 
   // Reports
   setReportGoalId: (goalId: string | null) => void;
@@ -297,7 +298,7 @@ export const useStore = create<AppState>((set, get) => ({
   shadowGoals: [],
   showShadowGoals: false,
   pendingShadowGoalId: null,
-  subscription: { status: 'none' as SubscriptionStatus },
+  subscription: { status: 'none' as SubscriptionStatus, plan_tier: 'starter' as PlanTier },
   subscriptionLoading: true,
   showPaywall: false,
   reportGoalId: null,
@@ -1694,13 +1695,14 @@ export const useStore = create<AppState>((set, get) => ({
     try {
       const res = await fetch('/api/subscription/status');
       if (!res.ok) {
-        set({ subscription: { status: 'none' }, subscriptionLoading: false });
+        set({ subscription: { status: 'none', plan_tier: 'starter' }, subscriptionLoading: false });
         return;
       }
       const data = await res.json();
       set({
         subscription: {
           status: data.status,
+          plan_tier: data.plan_tier || 'starter',
           razorpay_subscription_id: data.razorpay_subscription_id,
           plan_id: data.plan_id,
           trial_ends_at: data.trial_ends_at,
@@ -1711,16 +1713,20 @@ export const useStore = create<AppState>((set, get) => ({
         subscriptionLoading: false,
       });
     } catch {
-      set({ subscription: { status: 'none' }, subscriptionLoading: false });
+      set({ subscription: { status: 'none', plan_tier: 'starter' }, subscriptionLoading: false });
     }
   },
 
   startTrial: async (opts) => {
     try {
+      const tier = opts?.tier || 'starter';
+      const isUpgrade = tier === 'pro' && get().isSubscriptionActive();
+
       const res = await fetch('/api/subscription/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          tier,
           couponCode: opts?.couponCode ?? null,
           couponId: opts?.couponId ?? null,
           offerId: opts?.offerId ?? null,
@@ -1733,6 +1739,11 @@ export const useStore = create<AppState>((set, get) => ({
       }
       const data = await res.json();
 
+      const priceLabel = tier === 'pro' ? '₹999/mo' : '₹499/mo';
+      const description = isUpgrade
+        ? `Upgrade to Pro — ${priceLabel}`
+        : `3-day free trial, then ${priceLabel}`;
+
       // Open Razorpay checkout
       if (typeof window !== 'undefined' && (window as unknown as Record<string, unknown>).Razorpay) {
         const RazorpayConstructor = (window as unknown as Record<string, new (opts: Record<string, unknown>) => { open: () => void }>).Razorpay;
@@ -1740,29 +1751,33 @@ export const useStore = create<AppState>((set, get) => ({
           key: data.key_id,
           subscription_id: data.subscription_id,
           name: 'EffortOS',
-          description: '3-day free trial, then ₹499/mo',
+          description,
           handler: async (response: { razorpay_payment_id: string; razorpay_subscription_id: string; razorpay_signature: string }) => {
             // Verify payment
             const verifyRes = await fetch('/api/subscription/verify', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(response),
+              body: JSON.stringify({ ...response, plan_tier: tier }),
             });
             if (verifyRes.ok) {
               set({
                 subscription: {
-                  status: 'trialing',
+                  status: isUpgrade ? 'active' : 'trialing',
+                  plan_tier: tier,
                   razorpay_subscription_id: data.subscription_id,
                   trial_ends_at: data.trial_ends_at,
                 },
                 showPaywall: false,
               });
-              get().addToast('Trial started! You have 3 days of full access.', 'success');
+              const msg = isUpgrade
+                ? 'Upgraded to Pro! Your AI coach is now active.'
+                : 'Trial started! You have 3 days of full access.';
+              get().addToast(msg, 'success');
             } else {
               get().addToast('Payment verification failed. Please try again.', 'error');
             }
           },
-          theme: { color: '#06b6d4' },
+          theme: { color: tier === 'pro' ? '#8b5cf6' : '#06b6d4' },
         });
         rzp.open();
       }
@@ -1798,6 +1813,11 @@ export const useStore = create<AppState>((set, get) => ({
   isSubscriptionActive: () => {
     const { subscription } = get();
     return subscription.status === 'trialing' || subscription.status === 'active';
+  },
+
+  isProTier: () => {
+    const { subscription } = get();
+    return (subscription.status === 'trialing' || subscription.status === 'active') && subscription.plan_tier === 'pro';
   },
 
   // ─── Reports ──────────────────────────────────────────────────────

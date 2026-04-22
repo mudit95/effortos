@@ -10,6 +10,8 @@ export type WAIntent =
   | { type: 'complete_task'; query: string }
   | { type: 'check_progress' }
   | { type: 'help' }
+  | { type: 'pause_coaching' }
+  | { type: 'plan_tomorrow' }
   | { type: 'off_topic' }
   | { type: 'unknown'; raw: string };
 

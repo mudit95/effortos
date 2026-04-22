@@ -501,6 +501,9 @@ export function SettingsModal() {
               {/* WhatsApp linking */}
               <WhatsAppLinking />
 
+              {/* AI Coach preferences (Pro tier) */}
+              <CoachingPreferences />
+
               {/* Your Data — export is safe and belongs above the destructive actions */}
               <div className="pt-4 border-t border-white/[0.06]">
                 <div className="flex items-center gap-2 mb-3">
@@ -1125,4 +1128,147 @@ function WhatsAppLinking() {
       )}
     </div>
   );
+}
+
+// ── AI Coaching Preferences (Pro Tier) ────────────────────────────
+
+function CoachingPreferences() {
+  const isProTier = useStore(s => s.isProTier);
+  const setShowPaywall = useStore(s => s.setShowPaywall);
+  const [intensity, setIntensity] = React.useState<'light' | 'balanced' | 'intense'>('balanced');
+  const [quietStart, setQuietStart] = React.useState(22);
+  const [quietEnd, setQuietEnd] = React.useState(7);
+  const [saving, setSaving] = React.useState(false);
+  const [loaded, setLoaded] = React.useState(false);
+
+  // Load current preferences
+  React.useEffect(() => {
+    if (!isProTier()) return;
+    fetch('/api/coach/preferences')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data) {
+          setIntensity(data.coaching_intensity || 'balanced');
+          setQuietStart(data.coaching_quiet_start ?? 22);
+          setQuietEnd(data.coaching_quiet_end ?? 7);
+        }
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, [isProTier]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await fetch('/api/coach/preferences', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          coaching_intensity: intensity,
+          coaching_quiet_start: quietStart,
+          coaching_quiet_end: quietEnd,
+        }),
+      });
+    } catch { /* silent */ }
+    setSaving(false);
+  };
+
+  if (!isProTier()) {
+    return (
+      <div className="pt-4 border-t border-white/[0.06]">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-xs font-medium text-white/50 flex items-center gap-1.5">
+            <span className="text-purple-400">✨</span> AI Coach
+            <span className="text-[9px] px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded-full font-bold">PRO</span>
+          </h3>
+        </div>
+        <p className="text-[11px] text-white/30 mb-2">
+          Get proactive WhatsApp check-ins, streak alerts, and weekly AI recaps.
+        </p>
+        <button
+          onClick={() => setShowPaywall(true)}
+          className="text-[11px] text-purple-400/80 hover:text-purple-400 transition-colors"
+        >
+          Upgrade to Pro →
+        </button>
+      </div>
+    );
+  }
+
+  if (!loaded) return null;
+
+  return (
+    <div className="pt-4 border-t border-white/[0.06]">
+      <h3 className="text-xs font-medium text-white/50 mb-3 flex items-center gap-1.5">
+        <span className="text-purple-400">✨</span> AI Coach Settings
+        <span className="text-[9px] px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded-full font-bold">PRO</span>
+      </h3>
+
+      {/* Coaching intensity */}
+      <div className="mb-3">
+        <label className="text-[11px] text-white/40 mb-1.5 block">Coaching Intensity</label>
+        <div className="flex gap-1.5">
+          {(['light', 'balanced', 'intense'] as const).map((level) => (
+            <button
+              key={level}
+              onClick={() => setIntensity(level)}
+              className={`flex-1 py-1.5 px-2 rounded-lg text-[11px] font-medium transition-all ${
+                intensity === level
+                  ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                  : 'bg-white/[0.03] text-white/30 border border-white/[0.06] hover:border-white/[0.12]'
+              }`}
+            >
+              {level === 'light' ? '☀️ Light' : level === 'balanced' ? '⚡ Balanced' : '🔥 Intense'}
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-white/20 mt-1">
+          {intensity === 'light' ? 'Morning + evening only'
+            : intensity === 'balanced' ? '3x daily + smart triggers'
+            : 'All nudges + idle detection'}
+        </p>
+      </div>
+
+      {/* Quiet hours */}
+      <div className="mb-3">
+        <label className="text-[11px] text-white/40 mb-1.5 block">Quiet Hours (no nudges)</label>
+        <div className="flex items-center gap-2">
+          <select
+            value={quietStart}
+            onChange={(e) => setQuietStart(Number(e.target.value))}
+            className="h-8 rounded-lg border border-white/10 bg-white/5 px-2 text-[11px] text-white/70 focus:outline-none"
+          >
+            {Array.from({ length: 24 }, (_, i) => (
+              <option key={i} value={i}>{formatHour(i)}</option>
+            ))}
+          </select>
+          <span className="text-[11px] text-white/30">to</span>
+          <select
+            value={quietEnd}
+            onChange={(e) => setQuietEnd(Number(e.target.value))}
+            className="h-8 rounded-lg border border-white/10 bg-white/5 px-2 text-[11px] text-white/70 focus:outline-none"
+          >
+            {Array.from({ length: 24 }, (_, i) => (
+              <option key={i} value={i}>{formatHour(i)}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <button
+        onClick={handleSave}
+        disabled={saving}
+        className="px-4 h-8 rounded-lg text-[11px] font-medium bg-purple-500/20 text-purple-400 hover:bg-purple-500/30 transition-all disabled:opacity-40"
+      >
+        {saving ? 'Saving...' : 'Save Preferences'}
+      </button>
+    </div>
+  );
+}
+
+function formatHour(h: number): string {
+  if (h === 0) return '12 AM';
+  if (h < 12) return `${h} AM`;
+  if (h === 12) return '12 PM';
+  return `${h - 12} PM`;
 }

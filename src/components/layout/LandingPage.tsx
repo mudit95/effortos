@@ -1068,40 +1068,83 @@ export function LandingPage() {
 
       {/* ── Pricing ────────────────────────────────────────────── */}
       <Section className="py-16 sm:py-24 px-4">
-        <div className="max-w-lg mx-auto">
+        <div className="text-center mb-10">
+          <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">Choose your plan</h2>
+          <p className="text-sm text-white/40 max-w-md mx-auto">3 days free on both plans. Cancel anytime.</p>
+        </div>
+        <div className="max-w-3xl mx-auto grid sm:grid-cols-2 gap-4">
+          {/* Starter */}
           <motion.div
             whileHover={{ y: -4 }}
-            className="text-center rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.03] to-transparent p-8 sm:p-10 relative overflow-hidden"
+            className="rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.03] to-transparent p-6 sm:p-8 relative overflow-hidden"
           >
-            <div className="absolute -top-20 -right-20 w-40 h-40 bg-cyan-500/[0.08] rounded-full blur-3xl pointer-events-none" />
-            <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-blue-500/[0.06] rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute -top-20 -right-20 w-40 h-40 bg-cyan-500/[0.06] rounded-full blur-3xl pointer-events-none" />
             <div className="relative z-10">
-              <motion.div whileInView={{ rotate: [0, 15, -15, 0] }} viewport={{ once: true }} transition={{ delay: 0.3, duration: 0.6 }}>
-                <Award size={28} className="text-cyan-400/60 mx-auto mb-4" />
-              </motion.div>
-              <h2 className="text-xl sm:text-2xl font-bold text-white mb-2">Start free, upgrade when ready</h2>
-              <p className="text-sm text-white/40 mb-6 max-w-sm mx-auto">
-                Try everything free for 3 days. Then unlock AI coaching, reports, daily planning, and more.
-              </p>
-              <div className="flex items-baseline justify-center gap-1 mb-6">
-                <motion.span
-                  className="text-4xl font-bold text-white"
-                  initial={{ scale: 0.8, opacity: 0 }}
-                  whileInView={{ scale: 1, opacity: 1 }}
-                  viewport={{ once: true }}
-                  transition={{ type: 'spring', stiffness: 300, damping: 15 }}
-                >
-                  ₹499
-                </motion.span>
+              <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-2">Starter</div>
+              <div className="flex items-baseline gap-1 mb-4">
+                <span className="text-3xl font-bold text-white">₹499</span>
                 <span className="text-sm text-white/30">/month</span>
               </div>
-              <Button variant="glow" size="lg" onClick={() => setView('auth')} className="gap-2 px-8">
-                Start Your Free Trial <ArrowRight size={16} />
+              <ul className="space-y-2.5 mb-6 text-sm text-white/50">
+                {[
+                  'AI goal estimation & recalibration',
+                  'Pomodoro focus timer',
+                  'Daily task management',
+                  'Streak tracking & reports',
+                  'WhatsApp bot (reactive)',
+                  'Email coaching digests',
+                  'Journal & mood tracking',
+                ].map((f) => (
+                  <li key={f} className="flex items-center gap-2">
+                    <CheckCircle2 size={14} className="text-cyan-400/60 shrink-0" />
+                    {f}
+                  </li>
+                ))}
+              </ul>
+              <Button variant="outline" size="lg" onClick={() => setView('auth')} className="w-full gap-2">
+                Start Free Trial <ArrowRight size={14} />
               </Button>
-              <p className="text-[11px] text-white/20 mt-4">Cancel anytime. No questions asked.</p>
+            </div>
+          </motion.div>
+
+          {/* Pro */}
+          <motion.div
+            whileHover={{ y: -4 }}
+            className="rounded-2xl border border-purple-500/30 bg-gradient-to-b from-purple-500/[0.06] to-transparent p-6 sm:p-8 relative overflow-hidden"
+          >
+            <div className="absolute -top-20 -right-20 w-40 h-40 bg-purple-500/[0.1] rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute top-4 right-4 px-2 py-0.5 bg-purple-500 text-[10px] font-bold text-white rounded-full">
+              AI COACH
+            </div>
+            <div className="relative z-10">
+              <div className="text-xs font-bold text-purple-400 uppercase tracking-wider mb-2">Pro</div>
+              <div className="flex items-baseline gap-1 mb-4">
+                <span className="text-3xl font-bold text-white">₹999</span>
+                <span className="text-sm text-white/30">/month</span>
+              </div>
+              <ul className="space-y-2.5 mb-6 text-sm text-white/50">
+                {[
+                  'Everything in Starter, plus:',
+                  'Proactive AI coach on WhatsApp',
+                  'Morning kickoff & evening wrap-up',
+                  'Streak saver & idle alerts',
+                  'Weekly AI-generated recap',
+                  '"Plan tomorrow" via WhatsApp',
+                  'Coaching intensity controls',
+                ].map((f, i) => (
+                  <li key={f} className="flex items-center gap-2">
+                    <CheckCircle2 size={14} className={`shrink-0 ${i === 0 ? 'text-cyan-400/60' : 'text-purple-400/70'}`} />
+                    <span className={i === 0 ? 'text-white/40 text-xs' : ''}>{f}</span>
+                  </li>
+                ))}
+              </ul>
+              <Button variant="glow" size="lg" onClick={() => setView('auth')} className="w-full gap-2 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 border-purple-500/30">
+                Start Free Trial <Sparkles size={14} />
+              </Button>
             </div>
           </motion.div>
         </div>
+        <p className="text-[11px] text-white/20 text-center mt-4">Both plans include a 3-day free trial. Cancel anytime, no questions asked.</p>
       </Section>
 
       {/* ── Final CTA ──────────────────────────────────────────── */}

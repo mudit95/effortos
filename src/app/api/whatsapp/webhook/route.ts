@@ -139,8 +139,19 @@ export async function POST(req: NextRequest) {
     const lowerText = text.trim().toLowerCase();
     let intent: WAIntent;
 
+    // Pause coaching — "shh", "quiet", "pause", "stop coaching"
+    if (/^(shh+|quiet|pause|mute|stop coaching|pause coaching)$/i.test(lowerText)) {
+      intent = { type: 'pause_coaching' };
+    }
+    // Plan tomorrow
+    else if (
+      /^plan\s*tomorrow$/i.test(lowerText) ||
+      /tomorrow.?s?\s*(plan|tasks)/i.test(lowerText)
+    ) {
+      intent = { type: 'plan_tomorrow' };
+    }
     // Help / greeting
-    if (/^(help|\/help|hi|hello|hey|\/start|menu|commands)$/i.test(lowerText)) {
+    else if (/^(help|\/help|hi|hello|hey|\/start|menu|commands)$/i.test(lowerText)) {
       intent = { type: 'help' };
     }
     // List tasks — exact or contains keywords
@@ -217,6 +228,12 @@ async function executeIntent(
       break;
     case 'check_progress':
       await handleCheckProgress(supabase, profile.id, phone, profile.name);
+      break;
+    case 'pause_coaching':
+      await handlePauseCoaching(supabase, profile.id, phone, profile.name);
+      break;
+    case 'plan_tomorrow':
+      await handlePlanTomorrow(supabase, profile.id, phone, profile.name);
       break;
     case 'help':
       await sendHelpMessage(phone, profile.name);
@@ -476,12 +493,90 @@ async function sendHelpMessage(phone: string, name: string) {
   await sendTextMessage(
     phone,
     `👋 Hey ${name}! Here's what I can do:\n\n` +
-    `📝 *Add tasks*\n"Study React for 2 pomodoros and review PRs"\n"Write blog post, design mockups 3 poms"\n\n` +
+    `📝 *Add tasks*\n"Study React for 2 pomodoros and review PRs"\n\n` +
     `📋 *See today's tasks*\n"What's my plan?" or "Show tasks"\n\n` +
     `✅ *Complete a task*\n"Done with React" or "Finished the blog post"\n\n` +
     `📊 *Check progress*\n"How am I doing?" or "Stats"\n\n` +
+    `📅 *Plan tomorrow*\n"Plan tomorrow"\n\n` +
+    `🤫 *Pause coaching*\n"Shh" — pauses AI coach for 24h\n\n` +
     `Just type naturally — I'll figure it out! 🧠`,
   );
+}
+
+async function handlePauseCoaching(
+  supabase: SupabaseClient,
+  userId: string,
+  phone: string,
+  name: string,
+) {
+  // Pause coaching nudges for 24 hours
+  const pauseUntil = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+  const { error } = await supabase
+    .from('profiles')
+    .update({ coaching_paused_until: pauseUntil })
+    .eq('id', userId);
+
+  if (error) {
+    console.error('[WhatsApp] Failed to pause coaching:', error);
+    await sendTextMessage(phone, '❌ Something went wrong. Try again?');
+    return;
+  }
+
+  await sendTextMessage(
+    phone,
+    `🤫 Got it, ${name}. Coaching paused for 24 hours. I won't send any nudges until tomorrow.\n\nText me anytime to manage tasks — I'm still here for that!`,
+  );
+}
+
+async function handlePlanTomorrow(
+  supabase: SupabaseClient,
+  userId: string,
+  phone: string,
+  name: string,
+) {
+  // Get today's stats for context
+  const tz = await getUserTimezone(supabase, userId);
+  const todayKey = todayKeyInTz(tz);
+
+  const { data: tasks } = await supabase
+    .from('daily_tasks')
+    .select('title, completed, pomodoros_target, pomodoros_done')
+    .eq('user_id', userId)
+    .eq('date', todayKey);
+
+  const totalTasks = tasks?.length || 0;
+  const completedTasks = tasks?.filter((t: { completed: boolean }) => t.completed).length || 0;
+
+  // Check if there are incomplete tasks that might carry over
+  const incomplete = tasks
+    ?.filter((t: { completed: boolean }) => !t.completed)
+    ?.map((t: { title: string }) => t.title) || [];
+
+  let msg = `📅 Let's plan tomorrow, ${name}!\n\n`;
+
+  if (totalTasks > 0) {
+    msg += `Today you finished ${completedTasks}/${totalTasks} tasks. `;
+    if (incomplete.length > 0) {
+      msg += `\n\nCarry over from today?\n${incomplete.map((t: string) => `  • ${t}`).join('\n')}\n\n`;
+    } else {
+      msg += 'Clean slate!\n\n';
+    }
+  }
+
+  msg += `Just text me tomorrow's tasks like:\n"Review docs 2 pomodoros, team meeting prep, design mockups 3 poms"\n\nThey'll be saved for tomorrow automatically.`;
+
+  // Set a flag so the next add_tasks message gets filed under tomorrow
+  // We do this via a simple state flag in the coach_log
+  await supabase.from('coach_log').insert({
+    user_id: userId,
+    nudge_type: 'plan_tomorrow',
+    message_sent: msg,
+    delivered: true,
+    context_json: { planning_for: 'tomorrow', initiated_by: 'user' },
+  });
+
+  await sendTextMessage(phone, msg);
 }
 
 async function handleButtonReply(

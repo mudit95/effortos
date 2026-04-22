@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getRazorpay, PLAN_ID, TRIAL_DAYS } from '@/lib/razorpay';
+import { getRazorpay, TRIAL_DAYS, getPlanIdForTier } from '@/lib/razorpay';
 import { createClient } from '@/lib/supabase/server';
+import type { PlanTier } from '@/types';
 
 /**
  * POST /api/subscription/create
@@ -8,27 +9,34 @@ import { createClient } from '@/lib/supabase/server';
  * The trial is implemented via `start_at` — the first charge happens
  * 3 days after authorization.
  *
- * Optional body: { couponCode, couponId, offerId }
+ * Body: { tier?: 'starter' | 'pro', couponCode?, couponId?, offerId? }
+ *   - tier: which plan tier to subscribe to (default: 'starter')
  *   - If couponId is provided, re-validate server-side and forward the
  *     Razorpay offer_id attached to that coupon so the discount applies.
  */
 export async function POST(req: Request) {
   try {
-    if (!PLAN_ID) {
-      return NextResponse.json({ error: 'Payment system not configured' }, { status: 503 });
-    }
-
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Parse optional body (may be empty for non-coupon flow)
+    // Parse body
     const body = await req.json().catch(() => ({}));
+    const tier: PlanTier = (body?.tier === 'pro') ? 'pro' : 'starter';
     const couponCode: string | null = body?.couponCode ?? null;
     const couponId: string | null = body?.couponId ?? null;
     let offerId: string | null = body?.offerId ?? null;
+
+    // Resolve the correct Razorpay plan ID for the tier
+    const planId = getPlanIdForTier(tier);
+    if (!planId) {
+      return NextResponse.json(
+        { error: `Payment plan not configured for ${tier} tier` },
+        { status: 503 },
+      );
+    }
 
     // Re-validate the coupon server-side if provided (never trust client)
     if (couponId) {
@@ -74,25 +82,42 @@ export async function POST(req: Request) {
       .single();
 
     if (existing) {
-      return NextResponse.json({
-        error: 'Already subscribed',
-        subscription: existing,
-      }, { status: 409 });
+      // If they're upgrading from starter to pro, allow it
+      if (existing.plan_tier === 'starter' && tier === 'pro') {
+        // Cancel the old starter subscription at Razorpay if it exists
+        if (existing.razorpay_subscription_id) {
+          try {
+            await getRazorpay().subscriptions.cancel(existing.razorpay_subscription_id);
+          } catch (e) {
+            console.warn('[Subscription] Failed to cancel old starter sub:', e);
+          }
+        }
+        // Continue to create new Pro subscription below
+      } else {
+        return NextResponse.json({
+          error: 'Already subscribed',
+          subscription: existing,
+        }, { status: 409 });
+      }
     }
 
-    // Calculate trial end (3 days from now)
-    const trialEnd = Math.floor(Date.now() / 1000) + (TRIAL_DAYS * 24 * 60 * 60);
+    // Calculate trial end (3 days from now) — skip trial if upgrading
+    const isUpgrade = existing?.plan_tier === 'starter' && tier === 'pro';
+    const trialEnd = isUpgrade
+      ? Math.floor(Date.now() / 1000) + 60 // charge almost immediately for upgrades
+      : Math.floor(Date.now() / 1000) + (TRIAL_DAYS * 24 * 60 * 60);
 
-    // Build subscription params — add offer_id only if present
+    // Build subscription params
     const subParams: Record<string, unknown> = {
-      plan_id: PLAN_ID,
-      total_count: 120, // Max 10 years of monthly billing
+      plan_id: planId,
+      total_count: 120,
       quantity: 1,
       customer_notify: 1,
-      start_at: trialEnd, // First charge happens after trial
+      start_at: trialEnd,
       notes: {
         user_id: user.id,
         user_email: user.email || '',
+        plan_tier: tier,
         ...(couponCode ? { coupon_code: couponCode } : {}),
       },
     };
@@ -101,15 +126,15 @@ export async function POST(req: Request) {
     // Create Razorpay subscription
     const subscription = await getRazorpay().subscriptions.create(subParams as unknown as Parameters<ReturnType<typeof getRazorpay>['subscriptions']['create']>[0]);
 
-    // Store subscription in Supabase (remember which coupon was applied,
-    // but don't record redemption yet — that happens on verify)
+    // Store subscription in Supabase
     const trialEndsAt = new Date(trialEnd * 1000).toISOString();
     await supabase.from('subscriptions').upsert({
       user_id: user.id,
       razorpay_subscription_id: subscription.id,
-      plan_id: PLAN_ID,
-      status: 'trialing',
-      trial_ends_at: trialEndsAt,
+      plan_id: planId,
+      plan_tier: tier,
+      status: isUpgrade ? 'active' : 'trialing',
+      trial_ends_at: isUpgrade ? existing?.trial_ends_at : trialEndsAt,
       created_at: new Date().toISOString(),
       ...(couponId ? { applied_coupon_id: couponId, applied_coupon_code: couponCode } : {}),
     }, { onConflict: 'user_id' });
@@ -119,6 +144,7 @@ export async function POST(req: Request) {
       key_id: process.env.RAZORPAY_KEY_ID,
       trial_ends_at: trialEndsAt,
       offer_id: offerId,
+      plan_tier: tier,
     });
   } catch (err) {
     console.error('Create subscription error:', err);

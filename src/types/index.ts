@@ -251,13 +251,49 @@ export interface ShadowGoal {
 
 // Subscription types
 export type SubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'cancelled' | 'expired' | 'none';
+export type PlanTier = 'starter' | 'pro';
 
 export interface SubscriptionInfo {
   status: SubscriptionStatus;
+  plan_tier: PlanTier;
   razorpay_subscription_id?: string;
   plan_id?: string;
   trial_ends_at?: string;    // ISO date
   current_period_end?: string; // ISO date
   cancelled_at?: string;
   created_at?: string;
+}
+
+// Coaching types (Pro tier)
+export type CoachingIntensity = 'light' | 'balanced' | 'intense';
+
+export type NudgeType =
+  | 'morning_kickoff'
+  | 'midday_checkin'
+  | 'evening_wrapup'
+  | 'streak_saver'
+  | 'idle_detection'
+  | 'goal_milestone'
+  | 'weekly_recap'
+  | 'pace_warning'
+  | 'task_planning_prompt'
+  | 'bad_day_check'
+  | 'welcome'
+  | 'plan_tomorrow';
+
+export interface CoachPreferences {
+  coaching_intensity: CoachingIntensity;
+  coaching_quiet_start: number; // hour 0-23, default 22
+  coaching_quiet_end: number;   // hour 0-23, default 7
+  coaching_paused_until?: string; // ISO date or null
+}
+
+export interface CoachLogEntry {
+  id: string;
+  user_id: string;
+  nudge_type: NudgeType;
+  message_sent: string;
+  delivered: boolean;
+  context_json?: Record<string, unknown>;
+  created_at: string;
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { createClient } from '@/lib/supabase/server';
+import { sendProWelcome } from '@/lib/coach-welcome';
 
 /**
  * POST /api/subscription/verify
@@ -15,11 +16,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const body = await request.json();
     const {
       razorpay_payment_id,
       razorpay_subscription_id,
       razorpay_signature,
-    } = await request.json();
+      plan_tier,
+    } = body;
 
     if (!razorpay_payment_id || !razorpay_subscription_id || !razorpay_signature) {
       return NextResponse.json({ error: 'Missing payment details' }, { status: 400 });
@@ -95,7 +98,15 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ success: true, status: 'trialing' });
+    // If this is a Pro tier subscription, send the welcome message
+    if (plan_tier === 'pro') {
+      // Fire and forget — don't block the verify response
+      sendProWelcome(user.id).catch((err) =>
+        console.error('[Coach] Welcome message failed:', err),
+      );
+    }
+
+    return NextResponse.json({ success: true, status: 'trialing', plan_tier: plan_tier || 'starter' });
   } catch (err) {
     console.error('Verify subscription error:', err);
     return NextResponse.json(
