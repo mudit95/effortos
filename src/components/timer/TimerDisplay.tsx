@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useTimer } from '@/hooks/useTimer';
@@ -26,6 +26,30 @@ export function TimerDisplay({ compact = false, onEnterFocus }: TimerDisplayProp
   } = useTimer();
 
   const activeGoal = useStore(s => s.activeGoal);
+  const dashboardMode = useStore(s => s.dashboardMode);
+  const activeDailyTaskId = useStore(s => s.activeDailyTaskId);
+  const dailyTasks = useStore(s => s.dailyTasks);
+
+  const activeDailyTask = useMemo(
+    () =>
+      dashboardMode === 'daily' && activeDailyTaskId
+        ? dailyTasks.find(t => t.id === activeDailyTaskId)
+        : undefined,
+    [dashboardMode, dailyTasks, activeDailyTaskId]
+  );
+
+  // Session label — per-task in daily mode, per-goal otherwise
+  const sessionLabel = useMemo(() => {
+    if (dashboardMode === 'daily' && activeDailyTask) {
+      const done = activeDailyTask.pomodoros_done || 0;
+      const target = activeDailyTask.pomodoros_target || 1;
+      return `Pomodoro ${done + 1} of ${target}`;
+    }
+    if (activeGoal) {
+      return `Session ${activeGoal.sessions_completed + 1} of ${activeGoal.estimated_sessions_current}`;
+    }
+    return null;
+  }, [dashboardMode, activeDailyTask, activeGoal]);
 
   const progress = isBreak
     ? 1 - (timeRemaining / (5 * 60))
@@ -148,10 +172,10 @@ export function TimerDisplay({ compact = false, onEnterFocus }: TimerDisplayProp
       </div>
 
       {/* Session info */}
-      {!compact && activeGoal && (
+      {!compact && sessionLabel && (
         <div className="mt-4 text-center">
           <p className="text-xs text-white/30">
-            Session {activeGoal.sessions_completed + 1} of {activeGoal.estimated_sessions_current}
+            {sessionLabel}
           </p>
         </div>
       )}

@@ -4,11 +4,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useTimer } from '@/hooks/useTimer';
+import { useWakeLock } from '@/hooks/useWakeLock';
 import { useStore } from '@/store/useStore';
 import { formatDuration } from '@/lib/utils';
 import { X, Play, Pause, RotateCcw, SkipForward, Keyboard } from 'lucide-react';
 import { PiPButton } from './PiPButton';
 import { AmbientSoundToggle } from './AmbientSoundToggle';
+import { warmUpAudio } from '@/lib/sounds';
 
 // How long the "Press Space / Escape" intro banner stays visible before
 // auto-dismissing. Tuned by feel: long enough to read once, short enough
@@ -47,9 +49,25 @@ export function FocusMode() {
     [dashboardMode, dailyTasks, activeDailyTaskId]
   );
 
+  // Find the next task in the queue (for break screen)
+  const nextDailyTask = useMemo(() => {
+    if (dashboardMode !== 'daily' || !activeDailyTaskId) return undefined;
+    const incomplete = dailyTasks.filter(t => !t.completed && t.id !== activeDailyTaskId);
+    return incomplete[0];
+  }, [dashboardMode, dailyTasks, activeDailyTaskId]);
+
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showHint, setShowHint] = useState(true);
+
+  // Keep screen awake whenever we're in focus mode and the timer is
+  // actively running or on a break (not idle/paused).
+  const keepAwake = timerState === 'running' || timerState === 'break';
+  useWakeLock(keepAwake);
+
+  // Warm up the Web Audio API on mount. The user clicked into focus mode,
+  // so we have a user-gesture context to unlock AudioContext.
+  useEffect(() => { warmUpAudio(); }, []);
 
   // Auto-dismiss the bottom hint banner — even in focus mode, ephemeral
   // guidance shouldn't linger and fight for attention.
@@ -99,6 +117,7 @@ export function FocusMode() {
         if (timerState === 'idle') startTimer();
         else if (timerState === 'running') pauseTimer();
         else if (timerState === 'paused') resumeTimer();
+        else if (timerState === 'break') skipBreak();
       }
       if (e.key === '?') setShowShortcuts(s => !s);
     };
@@ -123,12 +142,31 @@ export function FocusMode() {
   const isPaused = timerState === 'paused';
   const isRunning = timerState === 'running';
 
-  // "What's next" label. During focus: next up is the short break
-  // (counting down this session). During break: next up is focus
-  // resuming (counting down the break).
-  const nextPhaseLabel = isBreak
-    ? `Focus resumes in ${formatDuration(timeRemaining)}`
-    : `Short break in ${formatDuration(timeRemaining)}`;
+  // --- Session counter logic ---
+  // In daily mode, show per-task progress (pomodoros done / target) instead
+  // of the long-term goal's sessions_completed / estimated_sessions_current
+  // which confusingly pulls numbers from multi-month goals.
+  const sessionLabel = useMemo(() => {
+    if (dashboardMode === 'daily' && activeDailyTask) {
+      const done = activeDailyTask.pomodoros_done || 0;
+      const target = activeDailyTask.pomodoros_target || 1;
+      return `Pomodoro ${done + 1} of ${target}`;
+    }
+    if (activeGoal) {
+      return `Session ${activeGoal.sessions_completed + 1} of ${activeGoal.estimated_sessions_current}`;
+    }
+    return null;
+  }, [dashboardMode, activeDailyTask, activeGoal]);
+
+  // Completion percentage — use task-level for daily mode
+  const completionPct = useMemo(() => {
+    if (dashboardMode === 'daily' && activeDailyTask) {
+      const done = activeDailyTask.pomodoros_done || 0;
+      const target = activeDailyTask.pomodoros_target || 1;
+      return Math.min(100, Math.round((done / target) * 100));
+    }
+    return dashboardStats?.completion_percentage ?? null;
+  }, [dashboardMode, activeDailyTask, dashboardStats]);
 
   if (!activeGoal) return null;
 
@@ -148,9 +186,7 @@ export function FocusMode() {
         <X className="w-5 h-5" />
       </button>
 
-      {/* Ambient sound (sits just left of the exit button). The toggle
-          button is now ~64px square (p-4 + 32px icon), so we widen the
-          right offset to keep clear of the 36px exit button. */}
+      {/* Ambient sound (sits just left of the exit button). */}
       <div className="absolute top-2 right-16 sm:top-4 sm:right-24 z-10">
         <AmbientSoundToggle />
       </div>
@@ -176,7 +212,7 @@ export function FocusMode() {
             <p className="text-white/60 font-medium mb-2">Keyboard shortcuts</p>
             <div className="flex items-center gap-3 text-white/40">
               <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-white/60 font-mono text-[10px]">Space</kbd>
-              <span>Play / Pause</span>
+              <span>{isBreak ? 'Skip break' : 'Play / Pause'}</span>
             </div>
             <div className="flex items-center gap-3 text-white/40">
               <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-white/60 font-mono text-[10px]">Esc</kbd>
@@ -190,30 +226,30 @@ export function FocusMode() {
         )}
       </AnimatePresence>
 
-      {/* Break banner */}
+      {/* ── BREAK SCREEN ── */}
       <AnimatePresence>
         {isBreak && (
           <motion.div
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="absolute top-0 left-0 right-0 bg-green-500/10 border-b border-green-500/20 py-3 text-center"
+            className="absolute top-0 left-0 right-0 bg-green-500/10 border-b border-green-500/20 py-3 px-4"
           >
-            <p className="text-sm text-green-400 font-medium">
-              You earned this break. Stretch, breathe, recharge.
-            </p>
-            <p className="text-[10px] text-green-400/50 mt-0.5">
-              Next session starts automatically when the timer ends
-            </p>
+            <div className="max-w-xl mx-auto text-center">
+              <p className="text-sm text-green-400 font-medium">
+                Break time. Stretch, breathe, recharge.
+              </p>
+              {nextDailyTask && (
+                <p className="text-[11px] text-green-400/60 mt-1">
+                  Up next: <span className="text-green-300/80 font-medium">{nextDailyTask.title}</span>
+                </p>
+              )}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Auto-dismissing intro hint (only during focus).
-          Anchored to the BOTTOM of the viewport so it can never collide
-          with the flex-centered title/ring block — which, on shorter or
-          wider viewports, can sit close enough to `top-20` that the two
-          elements stack on top of each other. */}
+      {/* Auto-dismissing intro hint (only during focus). */}
       <AnimatePresence>
         {showHint && !isBreak && (
           <motion.div
@@ -233,14 +269,25 @@ export function FocusMode() {
         )}
       </AnimatePresence>
 
-      {/* Title block — the anchor of the view */}
+      {/* Title block */}
       <motion.div
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
         className="max-w-xl text-center mb-6 sm:mb-8 px-4"
       >
-        {activeDailyTask ? (
+        {isBreak ? (
+          <>
+            <h1 className="text-2xl sm:text-3xl font-semibold text-green-400/90 tracking-tight">
+              Break
+            </h1>
+            {activeDailyTask && (
+              <p className="mt-2 text-sm text-white/35 truncate">
+                {activeDailyTask.title} — paused
+              </p>
+            )}
+          </>
+        ) : activeDailyTask ? (
           <>
             <h1 className="text-2xl sm:text-3xl font-semibold text-white/90 tracking-tight leading-tight break-words">
               {activeDailyTask.title}
@@ -263,8 +310,6 @@ export function FocusMode() {
           height="100%"
           viewBox={`0 0 ${ringSize} ${ringSize}`}
           className="transform -rotate-90"
-          // Subtle breathing: 0.92 → 1 → 0.92 over 4s while actively running.
-          // Paused/idle/break use a static opacity.
           animate={
             isRunning
               ? { opacity: [0.92, 1, 0.92] }
@@ -308,7 +353,7 @@ export function FocusMode() {
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <span
             className={`text-xs uppercase tracking-[0.3em] mb-2 transition-colors ${
-              isPaused ? 'text-white/45' : 'text-white/20'
+              isPaused ? 'text-white/45' : isBreak ? 'text-green-400/60' : 'text-white/20'
             }`}
           >
             {isPaused ? 'Paused' : isBreak ? 'Break' : 'Focus'}
@@ -333,7 +378,7 @@ export function FocusMode() {
           </Button>
         )}
 
-        {timerState === 'running' && (
+        {timerState === 'running' && !isBreak && (
           <>
             <Button
               variant="secondary"
@@ -367,8 +412,6 @@ export function FocusMode() {
             >
               <RotateCcw className="w-5 h-5" />
             </Button>
-            {/* Resume uses the muted 'secondary' variant to visually signal
-                the paused state — no glow, no pulsing colour. */}
             <Button
               variant="secondary"
               size="lg"
@@ -381,37 +424,39 @@ export function FocusMode() {
           </>
         )}
 
-        {timerState === 'break' && (
+        {(timerState === 'break' || (timerState === 'running' && isBreak)) && (
           <Button
             variant="outline"
             size="lg"
             onClick={skipBreak}
-            className="gap-2 px-8 sm:px-10 h-12 sm:h-14 text-base"
+            className="gap-2 px-8 sm:px-10 h-12 sm:h-14 text-base border-green-500/20 text-green-300 hover:border-green-400/40 hover:bg-green-500/10"
           >
             <SkipForward className="w-5 h-5" />
-            Skip Break
+            Start Next Session
           </Button>
         )}
       </div>
 
       {/* Session counter + next-phase preview + PiP */}
       <div className="mt-6 sm:mt-8 text-center">
-        <p className="text-xs text-white/20">
-          Session {activeGoal.sessions_completed + 1} of {activeGoal.estimated_sessions_current}
-          {dashboardStats &&
-          dashboardStats.completion_percentage >= 50 &&
-          dashboardStats.completion_percentage < 100
-            ? ' — past the halfway mark!'
-            : dashboardStats && dashboardStats.completion_percentage >= 90
-              ? ' — almost there!'
-              : ''}
-        </p>
+        {sessionLabel && (
+          <p className="text-xs text-white/20">
+            {sessionLabel}
+            {completionPct !== null && completionPct >= 50 && completionPct < 90
+              ? ' — past the halfway mark!'
+              : completionPct !== null && completionPct >= 90 && completionPct < 100
+                ? ' — almost there!'
+                : ''}
+          </p>
+        )}
         <p className="text-[11px] text-white/25 mt-1 tabular-nums">
-          {nextPhaseLabel}
+          {isBreak
+            ? `Focus resumes in ${formatDuration(timeRemaining)}`
+            : `Short break in ${formatDuration(timeRemaining)}`}
         </p>
-        {dashboardStats && (
+        {completionPct !== null && (
           <p className="text-xs text-white/10 mt-1">
-            {dashboardStats.completion_percentage}% complete
+            {completionPct}% complete
           </p>
         )}
         <div className="flex justify-center mt-3 w-full max-w-xs mx-auto">

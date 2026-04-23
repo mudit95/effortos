@@ -437,6 +437,41 @@ export function AmbientSoundToggle() {
     if (gainRef.current) gainRef.current.gain.value = volume;
   }, [volume]);
 
+  // Listen for ambient-sound-pause / ambient-sound-resume custom events.
+  // The timer dispatches these when transitioning to/from break so that
+  // ambient audio auto-stops during breaks and restarts for focus.
+  useEffect(() => {
+    const onPause = () => {
+      const p = playingRef.current;
+      if (!p) return;
+      if (p.kind === 'media') {
+        try { p.audio.pause(); } catch {}
+      } else if (p.kind === 'buffer') {
+        // Buffer sources can't be paused, so we mute the gain
+        if (gainRef.current) {
+          gainRef.current.gain.setValueAtTime(0, ctxRef.current?.currentTime ?? 0);
+        }
+      }
+    };
+    const onResume = () => {
+      const p = playingRef.current;
+      if (!p) return;
+      if (p.kind === 'media') {
+        try { p.audio.play(); } catch {}
+      } else if (p.kind === 'buffer') {
+        if (gainRef.current) {
+          gainRef.current.gain.setValueAtTime(volume, ctxRef.current?.currentTime ?? 0);
+        }
+      }
+    };
+    window.addEventListener('ambient-sound-pause', onPause);
+    window.addEventListener('ambient-sound-resume', onResume);
+    return () => {
+      window.removeEventListener('ambient-sound-pause', onPause);
+      window.removeEventListener('ambient-sound-resume', onResume);
+    };
+  }, [volume]);
+
   // Close popover on outside click / Escape
   useEffect(() => {
     if (!open) return;

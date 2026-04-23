@@ -2,8 +2,8 @@ import { requireAdmin } from '@/lib/admin';
 
 export const dynamic = 'force-dynamic';
 
-// Assumed price in INR per active subscription for MRR. Adjust as needed.
-const PRICE_INR = 499;
+const STARTER_PRICE_INR = 499;
+const PRO_PRICE_INR = 999;
 
 export default async function AdminMetricsPage() {
   const check = await requireAdmin();
@@ -25,6 +25,10 @@ export default async function AdminMetricsPage() {
     { count: expired },
     { count: cancelled },
     { data: dauRows },
+    { data: activeSubs },
+    { count: proUsers },
+    { count: coachNudges24h },
+    { count: coachNudgesTotal },
   ] = await Promise.all([
     supabase.from('profiles').select('*', { count: 'exact', head: true }),
     supabase.from('profiles').select('*', { count: 'exact', head: true }).gte('created_at', start24h.toISOString()),
@@ -39,13 +43,39 @@ export default async function AdminMetricsPage() {
       .select('user_id, created_at')
       .gte('created_at', start24h.toISOString())
       .limit(5000),
+    // Fetch active subs with plan_tier for MRR calculation
+    supabase
+      .from('subscriptions')
+      .select('plan_tier')
+      .eq('status', 'active'),
+    // Pro-tier users (active or trialing)
+    supabase
+      .from('subscriptions')
+      .select('*', { count: 'exact', head: true })
+      .eq('plan_tier', 'pro')
+      .in('status', ['active', 'trialing']),
+    // Coach nudges in last 24h
+    supabase
+      .from('coach_log')
+      .select('*', { count: 'exact', head: true })
+      .gte('created_at', start24h.toISOString()),
+    // Coach nudges total
+    supabase
+      .from('coach_log')
+      .select('*', { count: 'exact', head: true }),
   ]);
 
   const dau = new Set((dauRows ?? []).map((r: { user_id: string }) => r.user_id)).size;
   const trialToPaidConversion = (trialing ?? 0) + (active ?? 0) > 0
     ? Math.round(((active ?? 0) / ((trialing ?? 0) + (active ?? 0))) * 100)
     : 0;
-  const mrr = (active ?? 0) * PRICE_INR;
+
+  // Tier-aware MRR
+  const starterCount = (activeSubs ?? []).filter((s: { plan_tier: string }) => s.plan_tier !== 'pro').length;
+  const proCount = (activeSubs ?? []).filter((s: { plan_tier: string }) => s.plan_tier === 'pro').length;
+  const mrrStarter = starterCount * STARTER_PRICE_INR;
+  const mrrPro = proCount * PRO_PRICE_INR;
+  const mrrTotal = mrrStarter + mrrPro;
 
   const cards = [
     { label: 'Total users', value: totalUsers ?? 0 },
@@ -57,8 +87,13 @@ export default async function AdminMetricsPage() {
     { label: 'Paid (active)', value: active ?? 0 },
     { label: 'Expired', value: expired ?? 0 },
     { label: 'Cancelled', value: cancelled ?? 0 },
-    { label: 'Trial → Paid %', value: `${trialToPaidConversion}%` },
-    { label: 'MRR estimate', value: `₹${mrr.toLocaleString('en-IN')}` },
+    { label: 'Trial \u2192 Paid %', value: `${trialToPaidConversion}%` },
+    { label: 'Pro subscribers', value: proUsers ?? 0 },
+    { label: 'MRR (Starter)', value: `\u20B9${mrrStarter.toLocaleString('en-IN')}` },
+    { label: 'MRR (Pro)', value: `\u20B9${mrrPro.toLocaleString('en-IN')}` },
+    { label: 'MRR (Total)', value: `\u20B9${mrrTotal.toLocaleString('en-IN')}` },
+    { label: 'Coach nudges (24h)', value: coachNudges24h ?? 0 },
+    { label: 'Coach nudges (total)', value: coachNudgesTotal ?? 0 },
   ];
 
   return (
@@ -66,7 +101,7 @@ export default async function AdminMetricsPage() {
       <div>
         <h2 className="text-2xl font-semibold">Metrics</h2>
         <p className="text-sm text-white/50 mt-1">
-          Signups, DAU (users who ran at least one session in last 24h), conversion, and MRR.
+          Signups, DAU, conversion, tier-split MRR, and AI coach stats.
         </p>
       </div>
 
@@ -80,7 +115,7 @@ export default async function AdminMetricsPage() {
       </div>
 
       <p className="text-[11px] text-white/30">
-        MRR uses a flat ₹{PRICE_INR} / active subscription. Update PRICE_INR in <code>src/app/admin/metrics/page.tsx</code> if your pricing differs.
+        MRR: Starter = {starterCount} &times; &nbsp;\u20B9{STARTER_PRICE_INR} &nbsp;|&nbsp; Pro = {proCount} &times; &nbsp;\u20B9{PRO_PRICE_INR}
       </p>
     </div>
   );

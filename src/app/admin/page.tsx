@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { requireAdmin } from '@/lib/admin';
-import { Users, Ticket, BarChart3, FileText, Mail } from 'lucide-react';
+import { Users, Ticket, BarChart3, FileText, Mail, Sparkles, MessageCircle } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,24 +15,34 @@ export default async function AdminOverviewPage() {
     { count: activeCoupons },
     { count: trialUsers },
     { count: paidUsers },
+    { count: proUsers },
+    { count: coachNudges },
   ] = await Promise.all([
     supabase.from('profiles').select('*', { count: 'exact', head: true }),
     supabase.from('coupons').select('*', { count: 'exact', head: true }).eq('active', true),
     supabase.from('subscriptions').select('*', { count: 'exact', head: true }).eq('status', 'trialing'),
     supabase.from('subscriptions').select('*', { count: 'exact', head: true }).eq('status', 'active'),
+    supabase
+      .from('subscriptions')
+      .select('*', { count: 'exact', head: true })
+      .eq('plan_tier', 'pro')
+      .in('status', ['active', 'trialing']),
+    supabase.from('coach_log').select('*', { count: 'exact', head: true }),
   ]);
 
   const stats = [
     { label: 'Total users', value: userCount ?? 0 },
     { label: 'Trialing', value: trialUsers ?? 0 },
     { label: 'Paid', value: paidUsers ?? 0 },
+    { label: 'Pro users', value: proUsers ?? 0 },
     { label: 'Active coupons', value: activeCoupons ?? 0 },
+    { label: 'Coach nudges sent', value: coachNudges ?? 0 },
   ];
 
   const cards = [
-    { href: '/admin/users', label: 'Users', desc: 'Extend trials, grant premium, view activity.', icon: Users },
+    { href: '/admin/users', label: 'Users', desc: 'Extend trials, grant premium, manage tiers.', icon: Users },
     { href: '/admin/coupons', label: 'Coupons', desc: 'Create, disable, and inspect redemptions.', icon: Ticket },
-    { href: '/admin/metrics', label: 'Metrics', desc: 'Signups, DAU, MRR, conversion.', icon: BarChart3 },
+    { href: '/admin/metrics', label: 'Metrics', desc: 'Signups, DAU, tier-split MRR, coach stats.', icon: BarChart3 },
     { href: '/admin/content', label: 'Content', desc: 'Edit landing copy, paywall text and more.', icon: FileText },
     { href: '/admin/email', label: 'Email', desc: 'Send emails, view log, manage cron emails.', icon: Mail },
   ];
@@ -44,7 +54,7 @@ export default async function AdminOverviewPage() {
         <p className="text-sm text-white/50 mt-1">Quick glance at system health and tools.</p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         {stats.map(s => (
           <div key={s.label} className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
             <p className="text-xs text-white/40 uppercase tracking-wider">{s.label}</p>

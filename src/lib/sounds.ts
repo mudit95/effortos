@@ -9,10 +9,35 @@ function getAudioContext(): AudioContext {
   if (!audioContext || audioContext.state === 'closed') {
     audioContext = new AudioContext();
   }
+  // Force-resume suspended contexts. Browsers suspend AudioContext when
+  // it was created outside a user gesture. The resume() call here is
+  // wrapped in a try/catch because some browsers throw if the context
+  // is in an unexpected state.
   if (audioContext.state === 'suspended') {
-    audioContext.resume();
+    audioContext.resume().catch(() => {});
   }
   return audioContext;
+}
+
+/**
+ * Warm up the AudioContext on any user interaction so that later
+ * programmatic calls to playSound() (e.g., from a timer complete
+ * callback) don't get blocked by the browser's autoplay policy.
+ *
+ * Call once at app startup. Attaches lightweight one-shot listeners
+ * that create the context on the first click/keydown/touch.
+ */
+export function warmUpAudio() {
+  if (typeof window === 'undefined') return;
+  const warm = () => {
+    getAudioContext();
+    window.removeEventListener('click', warm);
+    window.removeEventListener('keydown', warm);
+    window.removeEventListener('touchstart', warm);
+  };
+  window.addEventListener('click', warm, { once: true });
+  window.addEventListener('keydown', warm, { once: true });
+  window.addEventListener('touchstart', warm, { once: true });
 }
 
 function playNote(

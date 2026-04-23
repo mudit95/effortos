@@ -1130,13 +1130,21 @@ export const useStore = create<AppState>((set, get) => ({
 
     // Fire AI session debrief in the background (non-blocking)
     if (activeGoal) {
-      const taskTitle = activeDailyTaskId
-        ? get().dailyTasks.find(t => t.id === activeDailyTaskId)?.title
+      const dailyTask = activeDailyTaskId
+        ? get().dailyTasks.find(t => t.id === activeDailyTaskId)
         : undefined;
+      // In daily mode, pass per-task pomodoro counts instead of long-term
+      // goal sessions (which can be 100+ and confuse the AI debrief).
+      const sessionNum = dashboardMode === 'daily' && dailyTask
+        ? (dailyTask.pomodoros_done || 0)
+        : activeGoal.sessions_completed;
+      const sessionTotal = dashboardMode === 'daily' && dailyTask
+        ? dailyTask.pomodoros_target
+        : activeGoal.estimated_sessions_current;
       get().requestSessionDebrief(
-        activeGoal.sessions_completed,
-        activeGoal.estimated_sessions_current,
-        taskTitle,
+        sessionNum,
+        sessionTotal,
+        dailyTask?.title,
       );
     }
 

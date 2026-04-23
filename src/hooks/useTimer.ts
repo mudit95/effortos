@@ -4,6 +4,13 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useStore } from '@/store/useStore';
 import { playSound } from '@/lib/sounds';
 
+/** Pause/resume ambient audio during break/focus transitions. */
+function dispatchAmbientEvent(type: 'pause' | 'resume') {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(`ambient-sound-${type}`));
+  }
+}
+
 export function useTimer() {
   const workerRef = useRef<Worker | null>(null);
   const fallbackRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -36,6 +43,9 @@ export function useTimer() {
             if (state.user?.settings?.sound_enabled !== false) {
               playSound('break_complete');
             }
+            // Resume ambient audio — isBreak going false triggers the
+            // effect above, but we also dispatch explicitly for safety.
+            dispatchAmbientEvent('resume');
             useStore.setState({
               timerState: 'idle',
               timeRemaining: 25 * 60,
@@ -56,6 +66,19 @@ export function useTimer() {
       if (fallbackRef.current) clearInterval(fallbackRef.current);
     };
   }, []);
+
+  // Auto-pause ambient sound during break, resume when focus resumes
+  const prevBreakRef = useRef(false);
+  useEffect(() => {
+    if (isBreak && !prevBreakRef.current) {
+      // Entering break — pause ambient audio
+      dispatchAmbientEvent('pause');
+    } else if (!isBreak && prevBreakRef.current) {
+      // Leaving break — resume ambient audio
+      dispatchAmbientEvent('resume');
+    }
+    prevBreakRef.current = isBreak;
+  }, [isBreak]);
 
   // Sync timer state with worker
   useEffect(() => {

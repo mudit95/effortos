@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Plus, Shield } from 'lucide-react';
+import { Search, Plus, Shield, Sparkles, MessageCircle } from 'lucide-react';
 
 interface UserRow {
   id: string;
@@ -11,8 +11,10 @@ interface UserRow {
   is_admin: boolean;
   created_at: string;
   status?: string | null;
+  plan_tier?: string | null;
   trial_ends_at?: string | null;
   current_period_end?: string | null;
+  whatsapp_linked?: boolean;
 }
 
 function formatDate(iso?: string | null) {
@@ -29,6 +31,13 @@ function statusPill(status?: string | null) {
   };
   const cls = status ? map[status] ?? 'bg-white/10 text-white/70' : 'bg-white/10 text-white/50';
   return <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${cls}`}>{status ?? 'none'}</span>;
+}
+
+function tierPill(tier?: string | null) {
+  if (!tier || tier === 'starter') {
+    return <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-cyan-500/10 text-cyan-300">Starter</span>;
+  }
+  return <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-purple-500/15 text-purple-300">Pro</span>;
 }
 
 export function UsersTable({ rows }: { rows: UserRow[] }) {
@@ -71,10 +80,12 @@ export function UsersTable({ rows }: { rows: UserRow[] }) {
   }
 
   async function grantPremium(userId: string) {
-    const monthsStr = window.prompt('Grant how many months of premium?', '1');
+    const tierChoice = window.prompt('Grant premium as which tier? (starter / pro)', 'starter');
+    if (!tierChoice || !['starter', 'pro'].includes(tierChoice)) return;
+    const monthsStr = window.prompt('Grant how many months?', '1');
     const months = Number(monthsStr);
     if (!months || Number.isNaN(months)) return;
-    await call('/api/admin/users/grant-premium', { userId, months }, `grant-${userId}`);
+    await call('/api/admin/users/grant-premium', { userId, months, tier: tierChoice }, `grant-${userId}`);
   }
 
   async function toggleAdmin(userId: string, current: boolean) {
@@ -97,12 +108,13 @@ export function UsersTable({ rows }: { rows: UserRow[] }) {
         <p className="text-xs text-white/40 ml-auto">{filtered.length} of {rows.length}</p>
       </div>
 
-      <div className="border border-white/[0.06] rounded-xl overflow-hidden">
+      <div className="border border-white/[0.06] rounded-xl overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-white/[0.02] text-left text-[10px] text-white/40 uppercase tracking-wider">
               <th className="px-4 py-3 font-medium">User</th>
               <th className="px-4 py-3 font-medium">Status</th>
+              <th className="px-4 py-3 font-medium">Tier</th>
               <th className="px-4 py-3 font-medium">Trial ends</th>
               <th className="px-4 py-3 font-medium">Period ends</th>
               <th className="px-4 py-3 font-medium">Joined</th>
@@ -115,13 +127,17 @@ export function UsersTable({ rows }: { rows: UserRow[] }) {
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
                     <div>
-                      <p className="text-white">{u.name || '—'}</p>
+                      <p className="text-white flex items-center gap-1.5">
+                        {u.name || '—'}
+                        {u.is_admin && <Shield className="w-3.5 h-3.5 text-cyan-400" />}
+                        {u.whatsapp_linked && <MessageCircle className="w-3 h-3 text-green-400" />}
+                      </p>
                       <p className="text-xs text-white/40">{u.email}</p>
                     </div>
-                    {u.is_admin && <Shield className="w-3.5 h-3.5 text-cyan-400" />}
                   </div>
                 </td>
                 <td className="px-4 py-3">{statusPill(u.status)}</td>
+                <td className="px-4 py-3">{tierPill(u.plan_tier)}</td>
                 <td className="px-4 py-3 text-white/60">{formatDate(u.trial_ends_at)}</td>
                 <td className="px-4 py-3 text-white/60">{formatDate(u.current_period_end)}</td>
                 <td className="px-4 py-3 text-white/60">{formatDate(u.created_at)}</td>
@@ -158,7 +174,7 @@ export function UsersTable({ rows }: { rows: UserRow[] }) {
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-white/40">No users match.</td>
+                <td colSpan={7} className="px-4 py-8 text-center text-white/40">No users match.</td>
               </tr>
             )}
           </tbody>

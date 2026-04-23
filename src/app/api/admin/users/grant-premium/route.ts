@@ -5,10 +5,11 @@ export async function POST(req: Request) {
   const check = await requireAdmin();
   if (!check.ok) return NextResponse.json({ error: check.reason }, { status: check.reason === 'unauthenticated' ? 401 : 403 });
 
-  const { userId, months } = await req.json();
+  const { userId, months, tier } = await req.json();
   if (!userId || !months || Number.isNaN(Number(months))) {
     return NextResponse.json({ error: 'userId and months required' }, { status: 400 });
   }
+  const planTier = tier === 'pro' ? 'pro' : 'starter';
   const { supabase } = check;
 
   // compute new period end: extend from max(now, existing period_end)
@@ -31,13 +32,13 @@ export async function POST(req: Request) {
   if (existing) {
     const { error } = await supabase
       .from('subscriptions')
-      .update({ status: 'active', current_period_end: newPeriodEnd, cancelled_at: null })
+      .update({ status: 'active', current_period_end: newPeriodEnd, cancelled_at: null, plan_tier: planTier })
       .eq('id', existing.id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   } else {
     const { error } = await supabase
       .from('subscriptions')
-      .insert({ user_id: userId, status: 'active', current_period_end: newPeriodEnd });
+      .insert({ user_id: userId, status: 'active', current_period_end: newPeriodEnd, plan_tier: planTier });
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
