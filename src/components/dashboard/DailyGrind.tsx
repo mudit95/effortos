@@ -713,11 +713,8 @@ export function DailyGrind() {
 
             {isToday && (
               <button
-                onClick={() => {
-                  goToTomorrow();
-                  addToast('Switched to tomorrow — add tasks for your next day', 'info');
-                }}
-                className="flex items-center gap-1.5 text-xs text-white/20 hover:text-[var(--accent,#22d3ee)]/60 transition-colors"
+                onClick={() => useStore.getState().setShowPlanTomorrow(true)}
+                className="flex items-center gap-1.5 text-xs text-white/20 hover:text-purple-300/60 transition-colors"
               >
                 <Calendar className="w-3.5 h-3.5" />
                 Plan Tomorrow

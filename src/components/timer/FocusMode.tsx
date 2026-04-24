@@ -7,10 +7,12 @@ import { useTimer } from '@/hooks/useTimer';
 import { useWakeLock } from '@/hooks/useWakeLock';
 import { useStore } from '@/store/useStore';
 import { formatDuration } from '@/lib/utils';
-import { X, Play, Pause, RotateCcw, SkipForward, Keyboard } from 'lucide-react';
+import { X, Play, Pause, RotateCcw, SkipForward, Keyboard, Wind } from 'lucide-react';
 import { PiPButton } from './PiPButton';
 import { AmbientSoundToggle } from './AmbientSoundToggle';
+import { BreathingGuide } from './BreathingGuide';
 import { warmUpAudio } from '@/lib/sounds';
+import { QuickPomodoroPrompt } from './QuickPomodoroPrompt';
 
 // How long the "Press Space / Escape" intro banner stays visible before
 // auto-dismissing. Tuned by feel: long enough to read once, short enough
@@ -59,11 +61,17 @@ export function FocusMode() {
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showHint, setShowHint] = useState(true);
+  const [meditating, setMeditating] = useState(false);
 
   // Keep screen awake whenever we're in focus mode and the timer is
   // actively running or on a break (not idle/paused).
   const keepAwake = timerState === 'running' || timerState === 'break';
   useWakeLock(keepAwake);
+
+  // Reset meditation mode when break ends
+  useEffect(() => {
+    if (!isBreak) setMeditating(false);
+  }, [isBreak]);
 
   // Warm up the Web Audio API on mount. The user clicked into focus mode,
   // so we have a user-gesture context to unlock AudioContext.
@@ -303,7 +311,14 @@ export function FocusMode() {
         )}
       </motion.div>
 
-      {/* Giant timer ring */}
+      {/* Breathing meditation overlay — wraps around the timer ring */}
+      <AnimatePresence>
+        {meditating && isBreak && (
+          <BreathingGuide onClose={() => setMeditating(false)} />
+        )}
+      </AnimatePresence>
+
+      {/* Giant timer ring — stays visible even during meditation */}
       <div className="relative w-64 h-64 sm:w-80 sm:h-80">
         <motion.svg
           width="100%"
@@ -425,15 +440,26 @@ export function FocusMode() {
         )}
 
         {(timerState === 'break' || (timerState === 'running' && isBreak)) && (
-          <Button
-            variant="outline"
-            size="lg"
-            onClick={skipBreak}
-            className="gap-2 px-8 sm:px-10 h-12 sm:h-14 text-base border-green-500/20 text-green-300 hover:border-green-400/40 hover:bg-green-500/10"
-          >
-            <SkipForward className="w-5 h-5" />
-            Start Next Session
-          </Button>
+          <div className="flex flex-col items-center gap-3">
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={skipBreak}
+              className="gap-2 px-8 sm:px-10 h-12 sm:h-14 text-base border-green-500/20 text-green-300 hover:border-green-400/40 hover:bg-green-500/10"
+            >
+              <SkipForward className="w-5 h-5" />
+              Start Next Session
+            </Button>
+            {!meditating && (
+              <button
+                onClick={() => setMeditating(true)}
+                className="flex items-center gap-2 text-xs text-white/30 hover:text-green-300/70 transition-colors px-3 py-1.5 rounded-full border border-white/[0.06] hover:border-green-500/20 hover:bg-green-500/[0.05]"
+              >
+                <Wind className="w-3.5 h-3.5" />
+                Use this break to meditate
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -507,6 +533,9 @@ export function FocusMode() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Post-session signup prompt for guest quick pomodoros */}
+      <QuickPomodoroPrompt />
     </motion.div>
   );
 }

@@ -16,9 +16,11 @@ import { EditGoalModal } from './EditGoalModal';
 import { ManualSessionModal } from './ManualSessionModal';
 import { JournalModal } from './JournalModal';
 import { ShadowGoalsModal } from './ShadowGoalsModal';
+import { PlanTomorrowModal } from './PlanTomorrowModal';
 import { ModeToggle } from './ModeToggle';
 import { GoalSelector } from './GoalSelector';
 import { WelcomeCard } from './WelcomeCard';
+import { DailyBrief } from './DailyBrief';
 import { DailyGrind } from './DailyGrind';
 import { Reports } from './Reports';
 import { StreakCalendar } from './StreakCalendar';
@@ -141,6 +143,9 @@ export function Dashboard() {
       />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-4 sm:mt-6">
+        {/* Personalized daily brief — context-on-arrival */}
+        <DailyBrief />
+
         {/* Mode toggle — centered at top */}
         <div className="flex justify-center mb-6 sm:mb-8">
           <ModeToggle />
@@ -231,6 +236,7 @@ export function Dashboard() {
       <JournalModal />
       <ShadowGoalsModal />
       <PaywallModal />
+      <PlanTomorrowModal />
     </div>
   );
 }

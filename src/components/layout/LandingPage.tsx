@@ -882,16 +882,23 @@ export function LandingPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.35, duration: 0.6, ease }}
-            className="flex flex-col sm:flex-row gap-3 justify-center"
+            className="flex flex-col items-center gap-3"
           >
-            <Button variant="glow" size="lg" onClick={() => setView('auth')} className="gap-2 px-8 h-13 text-base">
-              Start Free Trial <ArrowRight className="w-5 h-5" />
-            </Button>
-            <Button variant="outline" size="lg" onClick={() => {
-              document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' });
-            }} className="gap-2 px-6 h-13 text-base">
-              Explore Features
-            </Button>
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              <Button
+                variant="glow"
+                size="lg"
+                onClick={() => useStore.getState().startQuickPomodoro()}
+                className="gap-2 px-8 h-13 text-base"
+              >
+                <Play className="w-5 h-5 fill-current" />
+                Try a quick pomodoro
+              </Button>
+              <Button variant="outline" size="lg" onClick={() => setView('auth')} className="gap-2 px-6 h-13 text-base">
+                Sign up free <ArrowRight className="w-5 h-5" />
+              </Button>
+            </div>
+            <p className="text-[11px] text-white/20 mt-1">No signup needed — just click and focus</p>
           </motion.div>
 
           {/* Trust badges */}

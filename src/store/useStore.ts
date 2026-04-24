@@ -26,10 +26,27 @@ import {
   type WeeklyInsightResponse,
 } from '@/lib/coachClient';
 
-/** Fire-and-forget Supabase write. Logs errors but never blocks. */
-function cloudSync(fn: () => Promise<unknown>): void {
+import { enqueueOffline, initOfflineSync } from '@/lib/offline-queue';
+
+/** Fire-and-forget Supabase write. Logs errors but never blocks.
+ *  If the call fails while offline, optionally queues it for replay. */
+function cloudSync(
+  fn: () => Promise<unknown>,
+  offlineFallback?: { url: string; method: 'POST' | 'PUT' | 'PATCH'; body: Record<string, unknown> },
+): void {
   if (!isSupabaseConfigured()) return;
-  fn().catch(err => console.warn('Cloud sync failed:', err));
+  fn().catch(err => {
+    console.warn('Cloud sync failed:', err);
+    // If we're offline and have a fallback route, queue it
+    if (offlineFallback && typeof navigator !== 'undefined' && !navigator.onLine) {
+      enqueueOffline(offlineFallback).catch(() => {});
+    }
+  });
+}
+
+// Initialize offline sync on module load (flushes queue when online)
+if (typeof window !== 'undefined') {
+  initOfflineSync();
 }
 
 interface AppState {
@@ -108,6 +125,9 @@ interface AppState {
   // Date currently open in the JournalModal; null when the modal is closed.
   journalModalDate: string | null;
 
+  // Plan Tomorrow modal
+  showPlanTomorrow: boolean;
+
   // Shadow goals (someday shelf)
   // Loaded at init, kept in sync via add/update/delete/promote actions.
   shadowGoals: ShadowGoal[];
@@ -163,6 +183,11 @@ interface AppState {
   updateGoalProgress: (goalId: string) => void;
   completeGoal: (goalId: string) => void;
 
+  // Quick pomodoro — no auth, no goal, just a timer
+  startQuickPomodoro: () => void;
+  quickPomodoroComplete: boolean; // true after a quick pomodoro finishes (shows signup prompt)
+  dismissQuickPomodoroPrompt: () => void;
+
   startTimer: () => void;
   pauseTimer: () => void;
   resumeTimer: () => void;
@@ -216,6 +241,7 @@ interface AppState {
 
   // Shadow goal actions
   setShowShadowGoals: (show: boolean) => void;
+  setShowPlanTomorrow: (show: boolean) => void;
   addShadowGoal: (title: string, note?: string) => void;
   updateShadowGoal: (id: string, patch: { title?: string; note?: string }) => void;
   removeShadowGoal: (id: string) => void;
@@ -295,6 +321,7 @@ export const useStore = create<AppState>((set, get) => ({
   dailyGrindLayout: 'list',
   journalEntries: [],
   journalModalDate: null,
+  showPlanTomorrow: false,
   shadowGoals: [],
   showShadowGoals: false,
   pendingShadowGoalId: null,
@@ -312,6 +339,7 @@ export const useStore = create<AppState>((set, get) => ({
   onboardingStep: 0,
   onboardingData: {},
   currentView: 'landing',
+  quickPomodoroComplete: false,
 
   initializeApp: async () => {
     // If user explicitly logged out (currentView === 'landing' and not loading), skip re-init
@@ -966,6 +994,52 @@ export const useStore = create<AppState>((set, get) => ({
     }));
   },
 
+  // Quick pomodoro — works without auth. Creates a minimal guest state
+  // so FocusMode can render. After completion, shows signup prompt.
+  startQuickPomodoro: () => {
+    const focusDuration = 25 * 60;
+    // Create a minimal guest user + placeholder goal so the existing
+    // timer and focus mode machinery work without code changes.
+    const guestUser = get().user || {
+      id: '__guest__',
+      email: null,
+      name: null,
+      is_admin: false,
+      created_at: new Date().toISOString(),
+      settings: { focus_duration: focusDuration, break_duration: 5 * 60, sound_enabled: true, theme: 'dark' },
+    };
+    const quickGoal = get().activeGoal || {
+      id: '__quick__',
+      user_id: '__guest__',
+      title: 'Quick Focus Session',
+      description: '',
+      status: 'active' as const,
+      sessions_completed: 0,
+      estimated_sessions_initial: 1,
+      estimated_sessions_current: 1,
+      recommended_sessions_per_day: 1,
+      confidence_score: 1,
+      milestones: [],
+      created_at: new Date().toISOString(),
+    };
+
+    // Stash a local session id (no cloud sync for guest)
+    const sessionId = crypto.randomUUID();
+
+    set({
+      user: guestUser as AppState['user'],
+      activeGoal: quickGoal as AppState['activeGoal'],
+      timerState: 'running',
+      timeRemaining: focusDuration,
+      currentSessionId: sessionId,
+      isBreak: false,
+      currentView: 'focus',
+      quickPomodoroComplete: false,
+    });
+  },
+
+  dismissQuickPomodoroPrompt: () => set({ quickPomodoroComplete: false }),
+
   startTimer: () => {
     const { activeGoal, user, dashboardMode } = get();
     if (!user) return;
@@ -1066,6 +1140,21 @@ export const useStore = create<AppState>((set, get) => ({
     const focusDuration = user?.settings?.focus_duration || 25 * 60;
     const breakDuration = user?.settings?.break_duration || 5 * 60;
 
+    // Guest quick-pomodoro — skip all persistence, show signup prompt
+    if (user?.id === '__guest__') {
+      if (user?.settings?.sound_enabled !== false) {
+        playSound('pomodoro_complete');
+      }
+      set({
+        timerState: 'idle',
+        timeRemaining: focusDuration,
+        isBreak: false,
+        currentSessionId: null,
+        quickPomodoroComplete: true,
+      });
+      return;
+    }
+
     if (currentSessionId) {
       storage.completeSession(currentSessionId, focusDuration);
 
@@ -1074,7 +1163,10 @@ export const useStore = create<AppState>((set, get) => ({
       }
 
       // Write-through: complete session atomically in Supabase
-      cloudSync(() => api.completeSession(currentSessionId, focusDuration));
+      cloudSync(
+        () => api.completeSession(currentSessionId, focusDuration),
+        { url: '/api/sessions/complete', method: 'POST', body: { sessionId: currentSessionId, duration: focusDuration } },
+      );
     }
 
     // If in daily grind mode with an active task, increment its pomodoro count
@@ -1105,10 +1197,13 @@ export const useStore = create<AppState>((set, get) => ({
           pomodoros_done: updatedTask.pomodoros_done,
           completed: updatedTask.completed,
         });
-        cloudSync(() => api.updateDailyTask(activeDailyTaskId, {
-          pomodoros_done: updatedTask.pomodoros_done,
-          completed: updatedTask.completed,
-        }));
+        cloudSync(
+          () => api.updateDailyTask(activeDailyTaskId, {
+            pomodoros_done: updatedTask.pomodoros_done,
+            completed: updatedTask.completed,
+          }),
+          { url: '/api/daily-tasks/update', method: 'POST', body: { taskId: activeDailyTaskId, pomodoros_done: updatedTask.pomodoros_done, completed: updatedTask.completed } },
+        );
       }
 
       // If this daily task is linked to a long-term goal, increment that goal's progress too
@@ -1639,6 +1734,7 @@ export const useStore = create<AppState>((set, get) => ({
   // ─── Shadow goals ────────────────────────────────────────────────
 
   setShowShadowGoals: (show) => set({ showShadowGoals: show }),
+  setShowPlanTomorrow: (show) => set({ showPlanTomorrow: show }),
 
   addShadowGoal: (title, note = '') => {
     const trimmed = title.trim();

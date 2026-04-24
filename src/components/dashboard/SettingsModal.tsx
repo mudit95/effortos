@@ -8,6 +8,7 @@ import { X, Bell, Volume2, Clock, Palette, Check, CreditCard, AlertTriangle, Mai
 import { createClient } from '@/lib/supabase/client';
 import * as storage from '@/lib/storage';
 import { DISPLAY_PRICE_PER_MONTH } from '@/lib/pricing';
+import { PactsSection } from './PactsSection';
 
 const THEMES = [
   {
@@ -503,6 +504,11 @@ export function SettingsModal() {
 
               {/* AI Coach preferences (Pro tier) */}
               <CoachingPreferences />
+
+              {/* Accountability Pacts */}
+              <div className="pt-4 border-t border-white/[0.06]">
+                <PactsSection />
+              </div>
 
               {/* Your Data — export is safe and belongs above the destructive actions */}
               <div className="pt-4 border-t border-white/[0.06]">
