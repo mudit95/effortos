@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
 import { useTimer } from '@/hooks/useTimer';
-import { formatDuration } from '@/lib/utils';
+import { formatDuration, getLocalTodayKey, toLocalDateKey } from '@/lib/utils';
 import { TASK_TAGS, type TaskTagId, type DailyTask, type Goal } from '@/types';
 import {
   Plus, Trash2, Play, Pause, RotateCcw, SkipForward,
@@ -34,7 +34,7 @@ import { TimeBoxView } from './TimeBoxView';
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
 function getTodayKey(): string {
-  return new Date().toISOString().split('T')[0];
+  return getLocalTodayKey();
 }
 
 // Add `n` calendar days to a YYYY-MM-DD key using LOCAL time, so the result
@@ -54,10 +54,10 @@ function formatDateLabel(dateStr: string): string {
   const today = getTodayKey();
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowKey = tomorrow.toISOString().split('T')[0];
+  const tomorrowKey = toLocalDateKey(tomorrow);
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayKey = yesterday.toISOString().split('T')[0];
+  const yesterdayKey = toLocalDateKey(yesterday);
 
   if (dateStr === today) return 'Today';
   if (dateStr === tomorrowKey) return 'Tomorrow';
@@ -505,13 +505,13 @@ export function DailyGrind() {
   const goToPreviousDay = () => {
     const d = new Date(dailyViewDate + 'T12:00:00');
     d.setDate(d.getDate() - 1);
-    setDailyViewDate(d.toISOString().split('T')[0]);
+    setDailyViewDate(toLocalDateKey(d));
   };
 
   const goToNextDay = () => {
     const d = new Date(dailyViewDate + 'T12:00:00');
     d.setDate(d.getDate() + 1);
-    setDailyViewDate(d.toISOString().split('T')[0]);
+    setDailyViewDate(toLocalDateKey(d));
   };
 
   const goToToday = () => setDailyViewDate(getTodayKey());
@@ -519,7 +519,7 @@ export function DailyGrind() {
   const goToTomorrow = () => {
     const d = new Date();
     d.setDate(d.getDate() + 1);
-    setDailyViewDate(d.toISOString().split('T')[0]);
+    setDailyViewDate(toLocalDateKey(d));
   };
 
   const handleStartPomodoro = (taskId: string) => {

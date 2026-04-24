@@ -315,7 +315,7 @@ export const useStore = create<AppState>((set, get) => ({
   dailyTasks: [],
   repeatingTemplates: [],
   activeDailyTaskId: null,
-  dailyViewDate: new Date().toISOString().split('T')[0],
+  dailyViewDate: (() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`; })(),
   // Hydrated synchronously from localStorage in initializeApp; 'list' here is
   // just the sane default for first-render-before-hydration.
   dailyGrindLayout: 'list',

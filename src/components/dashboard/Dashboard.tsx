@@ -24,7 +24,7 @@ import { DailyBrief } from './DailyBrief';
 import { DailyGrind } from './DailyGrind';
 import { Reports } from './Reports';
 import { StreakCalendar } from './StreakCalendar';
-import { TimezoneClock } from './TimezoneClock';
+// TimezoneClock moved to SettingsModal
 import { AIMotivationCard } from './AICards';
 import { PaywallModal } from '@/components/subscription/PaywallModal';
 import { TrialBanner } from '@/components/subscription/TrialBanner';
@@ -422,7 +422,7 @@ function DashboardHeader({ user, onLogout, onSettings, onHistory, onMeditate }: 
           <span className="text-sm font-semibold text-white tracking-tight hidden sm:inline">EffortOS</span>
         </div>
         <div className="flex items-center gap-1">
-          <TimezoneClock />
+          <TierBadge />
           <button
             onClick={onMeditate}
             className="flex items-center gap-1.5 text-[11px] text-white/25 hover:text-green-300/70 transition-colors px-2 py-1 rounded-lg hover:bg-green-500/[0.06] ml-1"
@@ -459,5 +459,23 @@ function DashboardHeader({ user, onLogout, onSettings, onHistory, onMeditate }: 
         </div>
       </div>
     </header>
+  );
+}
+
+function TierBadge() {
+  const subscription = useStore(s => s.subscription);
+  const isActive = subscription.status === 'active' || subscription.status === 'trialing';
+  const isPro = isActive && subscription.plan_tier === 'pro';
+
+  if (!isActive) return null;
+
+  return (
+    <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full tracking-wider ${
+      isPro
+        ? 'bg-purple-500/15 text-purple-300 border border-purple-500/20'
+        : 'bg-cyan-500/10 text-cyan-400/60 border border-cyan-500/10'
+    }`}>
+      {isPro ? 'PRO' : 'STARTER'}
+    </span>
   );
 }

@@ -9,6 +9,7 @@ import { createClient } from '@/lib/supabase/client';
 import * as storage from '@/lib/storage';
 import { DISPLAY_PRICE_PER_MONTH } from '@/lib/pricing';
 import { PactsSection } from './PactsSection';
+import { TimezoneClock } from './TimezoneClock';
 
 const THEMES = [
   {
@@ -494,6 +495,15 @@ export function SettingsModal() {
                 ) : (
                   <p className="text-xs text-white/30">No active subscription</p>
                 )}
+              </div>
+
+              {/* Time & Location */}
+              <div className="pt-4 border-t border-white/[0.06]">
+                <div className="flex items-center gap-2 mb-2">
+                  <Globe className="w-4 h-4 text-cyan-400" />
+                  <h4 className="text-sm font-medium text-white/70">Time &amp; Location</h4>
+                </div>
+                <TimezoneClock />
               </div>
 
               {/* Email preferences */}

@@ -46,7 +46,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         </nav>
         <div className="p-2 border-t border-white/[0.06]">
           <Link
-            href="/dashboard"
+            href="/"
             className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-white/50 hover:text-white/80 hover:bg-white/[0.04] transition-colors"
           >
             <LogOut className="w-4 h-4" />

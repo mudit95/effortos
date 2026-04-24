@@ -9,6 +9,7 @@ import {
   CheckCircle2, Circle, Moon, Sun,
 } from 'lucide-react';
 import { TASK_TAGS, type TaskTagId } from '@/types';
+import { getLocalTodayKey, toLocalDateKey } from '@/lib/utils';
 
 /**
  * "Plan Tomorrow" modal — an end-of-day ritual that lets users:
@@ -24,13 +25,13 @@ import { TASK_TAGS, type TaskTagId } from '@/types';
  */
 
 function getTodayKey(): string {
-  return new Date().toISOString().split('T')[0];
+  return getLocalTodayKey();
 }
 
 function getTomorrowKey(): string {
   const d = new Date();
   d.setDate(d.getDate() + 1);
-  return d.toISOString().split('T')[0];
+  return toLocalDateKey(d);
 }
 
 interface CarryTask {

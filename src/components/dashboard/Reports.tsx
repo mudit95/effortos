@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store/useStore';
 import * as storage from '@/lib/storage';
 import * as api from '@/lib/api';
-import { sessionsToHours, formatDate } from '@/lib/utils';
+import { sessionsToHours, formatDate, getLocalTodayKey } from '@/lib/utils';
 import { Session } from '@/types';
 import { TASK_TAGS, type TaskTagId, type DailyTask } from '@/types';
 import { HintBanner } from '@/components/ui/HintBanner';
@@ -26,7 +26,7 @@ function getTagInfo(tagId?: string) {
 
 /* ── Date helpers ──────────────────────────────────────────────────── */
 function getTodayKey(): string {
-  return new Date().toISOString().split('T')[0];
+  return getLocalTodayKey();
 }
 
 function getWeekStart(date: Date): Date {

@@ -1,7 +1,7 @@
 // Local Storage Persistence Layer
 
 import { Goal, Session, User, FeedbackEntry, DailySession, UserSettings, DEFAULT_SETTINGS, DailyTask, RepeatingTaskTemplate, TaskTagId, DashboardMode, JournalEntry, JournalMoodId, ShadowGoal, DailyGrindLayout } from '@/types';
-import { generateId } from './utils';
+import { generateId, getLocalTodayKey } from './utils';
 
 const STORAGE_KEYS = {
   USER: 'effortos_user',
@@ -272,7 +272,7 @@ export function setDailyGrindLayout(layout: DailyGrindLayout): void {
 
 // Daily Tasks
 function getTodayKey(): string {
-  return new Date().toISOString().split('T')[0];
+  return getLocalTodayKey();
 }
 
 export function getAllDailyTasks(): DailyTask[] {
