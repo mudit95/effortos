@@ -17,9 +17,12 @@ interface Pact {
   status: 'pending' | 'active' | 'declined' | 'ended';
   created_at: string;
   accepted_at: string | null;
-  partner_name?: string | null;
-  partner_active_days_7d?: number;
-  partner_sessions_7d?: number;
+  partner?: {
+    user_id: string;
+    name: string | null;
+    active_days_7d: number;
+    sessions_7d: number;
+  } | null;
 }
 
 export function PactsSection() {
@@ -226,7 +229,7 @@ export function PactsSection() {
         >
           <div className="flex items-center justify-between mb-2">
             <p className="text-sm font-medium text-white/80">
-              {pact.partner_name || pact.partner_email}
+              {pact.partner?.name || pact.partner_email}
             </p>
             <button
               onClick={() => endPact(pact.id)}
@@ -240,13 +243,13 @@ export function PactsSection() {
             <div className="flex items-center gap-1.5 text-white/50">
               <Calendar className="w-3 h-3 text-purple-400/60" />
               <span>
-                <strong className="text-white/70">{pact.partner_active_days_7d ?? '?'}</strong> active days (7d)
+                <strong className="text-white/70">{pact.partner?.active_days_7d ?? '?'}</strong> active days (7d)
               </span>
             </div>
             <div className="flex items-center gap-1.5 text-white/50">
               <Flame className="w-3 h-3 text-orange-400/60" />
               <span>
-                <strong className="text-white/70">{pact.partner_sessions_7d ?? '?'}</strong> sessions (7d)
+                <strong className="text-white/70">{pact.partner?.sessions_7d ?? '?'}</strong> sessions (7d)
               </span>
             </div>
           </div>
