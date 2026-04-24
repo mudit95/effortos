@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import crypto from 'crypto';
 
 /**
  * GET /api/pacts
@@ -62,10 +63,10 @@ export async function GET() {
       };
     });
 
-    return NextResponse.json(pactsWithStats);
+    return NextResponse.json({ pacts: pactsWithStats });
   } catch (err) {
     console.error('Pacts GET error:', err);
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
+    return NextResponse.json({ pacts: [], error: 'Internal error' }, { status: 200 });
   }
 }
 
@@ -102,19 +103,27 @@ export async function POST(req: Request) {
       .eq('email', trimmedEmail)
       .single();
 
+    // Generate invite code on the app side (avoids dependency on pgcrypto extension)
+    const inviteCode = crypto.randomBytes(12).toString('hex');
+
     const { data: pact, error } = await supabase
       .from('pacts')
       .insert({
         user_id: user.id,
         partner_email: trimmedEmail,
         partner_user_id: partnerProfile?.id ?? null,
+        invite_code: inviteCode,
       })
       .select()
       .single();
 
     if (error) {
-      console.error('Pact creation error:', error);
-      return NextResponse.json({ error: 'Failed to create pact' }, { status: 500 });
+      console.error('Pact creation error:', JSON.stringify(error));
+      // If the table doesn't exist, give a clear message
+      if (error.code === '42P01') {
+        return NextResponse.json({ error: 'Pacts feature not yet set up. Run migration 018_pacts_and_task_scheduling.sql in your Supabase SQL editor.' }, { status: 500 });
+      }
+      return NextResponse.json({ error: error.message || 'Failed to create pact' }, { status: 500 });
     }
 
     return NextResponse.json(pact, { status: 201 });

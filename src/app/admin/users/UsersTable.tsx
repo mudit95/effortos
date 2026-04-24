@@ -80,7 +80,7 @@ export function UsersTable({ rows }: { rows: UserRow[] }) {
   }
 
   async function grantPremium(userId: string) {
-    const tierChoice = window.prompt('Grant premium as which tier? (starter / pro)', 'starter');
+    const tierChoice = window.prompt('Grant premium as which tier? (starter / pro)', 'pro');
     if (!tierChoice || !['starter', 'pro'].includes(tierChoice)) return;
     const monthsStr = window.prompt('Grant how many months?', '1');
     const months = Number(monthsStr);

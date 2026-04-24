@@ -61,6 +61,25 @@ export function AppShell() {
     };
   }, [initializeApp]);
 
+  // Re-fetch subscription status when the tab regains focus — catches
+  // admin-granted upgrades, Razorpay webhook confirmations, etc. without
+  // requiring a full page reload.
+  useEffect(() => {
+    const onFocus = () => {
+      const state = useStore.getState();
+      if (state.isAuthenticated && state.user) {
+        state.fetchSubscriptionStatus();
+      }
+    };
+    window.addEventListener('focus', onFocus);
+    // Also poll every 5 minutes in case the tab stays focused
+    const interval = setInterval(onFocus, 5 * 60 * 1000);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      clearInterval(interval);
+    };
+  }, []);
+
   useEffect(() => {
     if (currentView === 'dashboard') {
       const modeLabels: Record<string, string> = {
