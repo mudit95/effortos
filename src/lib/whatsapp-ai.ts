@@ -12,6 +12,7 @@ export type WAIntent =
   | { type: 'help' }
   | { type: 'pause_coaching' }
   | { type: 'plan_tomorrow' }
+  | { type: 'add_journal' }
   | { type: 'off_topic' }
   | { type: 'unknown'; raw: string };
 

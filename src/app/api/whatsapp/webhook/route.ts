@@ -40,6 +40,11 @@ const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT = 20;
 const RATE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
+// In-memory map for multi-step conversations (e.g., "awaiting journal entry").
+// Key: phone number, Value: { type, userId, expiresAt }
+const pendingFlowMap = new Map<string, { type: 'journal'; userId: string; expiresAt: number }>();
+const PENDING_TTL_MS = 10 * 60 * 1000; // 10 min timeout
+
 function checkRateLimit(userId: string): boolean {
   const now = Date.now();
   const entry = rateLimitMap.get(userId);
@@ -120,6 +125,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: 'ok' });
     }
 
+    // ── 1b. Check for pending multi-step flow (e.g., journal entry) ──
+    const pendingFlow = pendingFlowMap.get(from);
+    if (pendingFlow && Date.now() < pendingFlow.expiresAt) {
+      pendingFlowMap.delete(from);
+      if (pendingFlow.type === 'journal') {
+        await handleSaveJournalEntry(supabase, pendingFlow.userId, from, text);
+        return NextResponse.json({ status: 'ok' });
+      }
+    } else if (pendingFlow) {
+      // Expired — clean up
+      pendingFlowMap.delete(from);
+    }
+
     // ── 2. Handle button replies directly (no AI cost) ──
     if (buttonReplyId) {
       await handleButtonReply(supabase, profile.id, from, buttonReplyId);
@@ -149,6 +167,13 @@ export async function POST(req: NextRequest) {
       /tomorrow.?s?\s*(plan|tasks)/i.test(lowerText)
     ) {
       intent = { type: 'plan_tomorrow' };
+    }
+    // Journal entry
+    else if (
+      /journal/i.test(lowerText) &&
+      /(add|write|log|new|create|entry|today)/i.test(lowerText)
+    ) {
+      intent = { type: 'add_journal' };
     }
     // Help / greeting
     else if (/^(help|\/help|hi|hello|hey|\/start|menu|commands)$/i.test(lowerText)) {
@@ -234,6 +259,9 @@ async function executeIntent(
       break;
     case 'plan_tomorrow':
       await handlePlanTomorrow(supabase, profile.id, phone, profile.name);
+      break;
+    case 'add_journal':
+      await handleAddJournalPrompt(profile.id, phone, profile.name);
       break;
     case 'help':
       await sendHelpMessage(phone, profile.name);
@@ -489,6 +517,81 @@ async function handleCheckProgress(
   await sendTextMessage(phone, msg);
 }
 
+// ── Journal entry (multi-step flow) ──
+// Step 1: User says "add journal entry" → we prompt and set pending state.
+// Step 2: User sends the actual entry → handleSaveJournalEntry saves it.
+async function handleAddJournalPrompt(userId: string, phone: string, name: string) {
+  // Set pending flow so the NEXT message from this user is saved as a journal entry
+  pendingFlowMap.set(phone, {
+    type: 'journal',
+    userId,
+    expiresAt: Date.now() + PENDING_TTL_MS,
+  });
+
+  await sendTextMessage(
+    phone,
+    `📓 Ready to add your journal entry for today, ${name || 'friend'}.\n\nPlease send your journal entry now — I'll save it as-is. You have 10 minutes.`,
+  );
+}
+
+async function handleSaveJournalEntry(
+  supabase: SupabaseClient,
+  userId: string,
+  phone: string,
+  journalText: string,
+) {
+  try {
+    const tz = await getUserTimezone(supabase, userId);
+    const todayKey = todayKeyInTz(tz);
+
+    // Check if an entry already exists for today
+    const { data: existing } = await supabase
+      .from('journal_entries')
+      .select('id, content')
+      .eq('user_id', userId)
+      .eq('date', todayKey)
+      .maybeSingle();
+
+    if (existing) {
+      // Append to existing entry with a separator
+      const updated = existing.content
+        ? `${existing.content}\n\n---\n\n${journalText}`
+        : journalText;
+
+      const { error } = await supabase
+        .from('journal_entries')
+        .update({ content: updated })
+        .eq('id', existing.id);
+
+      if (error) throw error;
+
+      await sendTextMessage(
+        phone,
+        `📓 Appended to today's journal entry. You now have ${updated.split('\n').length} lines total.`,
+      );
+    } else {
+      // Create new entry
+      const { error } = await supabase
+        .from('journal_entries')
+        .insert({
+          user_id: userId,
+          date: todayKey,
+          content: journalText,
+        });
+
+      if (error) throw error;
+
+      await sendTextMessage(
+        phone,
+        `📓 Journal entry saved for today. Keep reflecting — it adds up!`,
+      );
+    }
+  } catch (err) {
+    console.error('[WhatsApp] Journal save error:', err);
+    await sendTextMessage(phone, '❌ Failed to save your journal entry. Please try again.');
+  }
+}
+
 async function sendHelpMessage(phone: string, name: string) {
   await sendTextMessage(
     phone,
@@ -497,6 +600,7 @@ async function sendHelpMessage(phone: string, name: string) {
     `📋 *See today's tasks*\n"What's my plan?" or "Show tasks"\n\n` +
     `✅ *Complete a task*\n"Done with React" or "Finished the blog post"\n\n` +
     `📊 *Check progress*\n"How am I doing?" or "Stats"\n\n` +
+    `📓 *Journal*\n"Add journal entry for today"\n\n` +
     `📅 *Plan tomorrow*\n"Plan tomorrow"\n\n` +
     `🤫 *Pause coaching*\n"Shh" — pauses AI coach for 24h\n\n` +
     `Just type naturally — I'll figure it out! 🧠`,

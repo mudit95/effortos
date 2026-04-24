@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store/useStore';
 import { Button } from '@/components/ui/button';
@@ -30,10 +30,11 @@ import { PaywallModal } from '@/components/subscription/PaywallModal';
 import { TrialBanner } from '@/components/subscription/TrialBanner';
 import { PremiumGate } from '@/components/subscription/PremiumGate';
 import { TimerDisplay } from '@/components/timer/TimerDisplay';
+import { MeditationScreen } from '@/components/timer/MeditationScreen';
 import {
   Target, LogOut, Plus,
   Sparkles, Settings, BookOpen, Edit3,
-  PlusCircle, Shield, List
+  PlusCircle, Shield, List, Wind
 } from 'lucide-react';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
@@ -51,6 +52,8 @@ export function Dashboard() {
     requestNotificationPermission,
     subscription, subscriptionLoading, setShowPaywall,
   } = useStore();
+
+  const [showMeditation, setShowMeditation] = useState(false);
 
   // Check subscription — show paywall if expired
   const isExpired = !subscriptionLoading && subscription.status === 'expired';
@@ -80,7 +83,7 @@ export function Dashboard() {
   if (showNoGoal) {
     return (
       <div className="min-h-screen flex flex-col">
-        <DashboardHeader user={user} onLogout={logout} onSettings={() => setShowSettings(true)} onHistory={() => setShowGoalHistory(true)} />
+        <DashboardHeader user={user} onLogout={logout} onSettings={() => setShowSettings(true)} onHistory={() => setShowGoalHistory(true)} onMeditate={() => setShowMeditation(true)} />
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-4 sm:mt-6 w-full">
           <div className="flex justify-center mb-6">
             <ModeToggle />
@@ -140,6 +143,7 @@ export function Dashboard() {
         onLogout={logout}
         onSettings={() => setShowSettings(true)}
         onHistory={() => setShowGoalHistory(true)}
+        onMeditate={() => setShowMeditation(true)}
       />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-4 sm:mt-6">
@@ -237,6 +241,11 @@ export function Dashboard() {
       <ShadowGoalsModal />
       <PaywallModal />
       <PlanTomorrowModal />
+      <AnimatePresence>
+        {showMeditation && (
+          <MeditationScreen onClose={() => setShowMeditation(false)} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -396,11 +405,12 @@ function LongTermStreakCalendar({
 }
 
 // Header component
-function DashboardHeader({ user, onLogout, onSettings, onHistory }: {
+function DashboardHeader({ user, onLogout, onSettings, onHistory, onMeditate }: {
   user: { name: string };
   onLogout: () => void;
   onSettings: () => void;
   onHistory: () => void;
+  onMeditate: () => void;
 }) {
   return (
     <header className="sticky top-0 z-40 bg-[var(--background,#0B0F14)]/80 backdrop-blur-xl border-b border-white/[0.04]">
@@ -413,6 +423,14 @@ function DashboardHeader({ user, onLogout, onSettings, onHistory }: {
         </div>
         <div className="flex items-center gap-1">
           <TimezoneClock />
+          <button
+            onClick={onMeditate}
+            className="flex items-center gap-1.5 text-[11px] text-white/25 hover:text-green-300/70 transition-colors px-2 py-1 rounded-lg hover:bg-green-500/[0.06] ml-1"
+            aria-label="Meditate"
+          >
+            <Wind className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Meditate</span>
+          </button>
           <div className="w-px h-4 bg-white/[0.06] mx-1 hidden sm:block" />
           <Button
             variant="ghost"
