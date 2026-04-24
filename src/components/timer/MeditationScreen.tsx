@@ -164,49 +164,54 @@ export function MeditationScreen({ onClose }: { onClose: () => void }) {
           {/* Breathing waves — only during running */}
           {state === 'running' && (
             <>
+              {/* Outermost wave — large, bold, clearly visible */}
+              <motion.div
+                className="absolute rounded-full"
+                style={{
+                  width: '130%',
+                  height: '130%',
+                  background: 'radial-gradient(circle, rgba(34,197,94,0.20) 0%, rgba(34,197,94,0.08) 50%, transparent 75%)',
+                  border: '2.5px solid rgba(34,197,94,0.30)',
+                  boxShadow: '0 0 60px rgba(34,197,94,0.12), inset 0 0 40px rgba(34,197,94,0.06)',
+                }}
+                animate={{
+                  scale: phase === 'inhale' ? 1.18 : 0.82,
+                  opacity: phase === 'inhale' ? 1 : 0.5,
+                }}
+                transition={{
+                  duration: phase === 'inhale' ? INHALE_MS / 1000 : EXHALE_MS / 1000,
+                  ease: 'easeInOut',
+                }}
+              />
+              {/* Middle ring */}
               <motion.div
                 className="absolute rounded-full"
                 style={{
                   width: '115%',
                   height: '115%',
-                  background: 'radial-gradient(circle, rgba(34,197,94,0.10) 0%, rgba(34,197,94,0.04) 50%, transparent 70%)',
-                  border: '2px solid rgba(34,197,94,0.12)',
+                  border: '1.5px solid rgba(34,197,94,0.22)',
+                  background: 'radial-gradient(circle, rgba(34,197,94,0.08) 0%, transparent 60%)',
                 }}
                 animate={{
-                  scale: phase === 'inhale' ? 1.15 : 0.85,
-                  opacity: phase === 'inhale' ? 0.8 : 0.4,
+                  scale: phase === 'inhale' ? 1.10 : 0.90,
+                  opacity: phase === 'inhale' ? 0.8 : 0.3,
                 }}
                 transition={{
                   duration: phase === 'inhale' ? INHALE_MS / 1000 : EXHALE_MS / 1000,
                   ease: 'easeInOut',
+                  delay: 0.15,
                 }}
               />
+              {/* Inner glow */}
               <motion.div
                 className="absolute rounded-full"
                 style={{
-                  width: '105%',
-                  height: '105%',
-                  border: '1px solid rgba(34,197,94,0.08)',
+                  width: '100%',
+                  height: '100%',
+                  background: 'radial-gradient(circle, rgba(34,197,94,0.12) 0%, transparent 55%)',
                 }}
                 animate={{
-                  scale: phase === 'inhale' ? 1.08 : 0.92,
-                  opacity: phase === 'inhale' ? 0.5 : 0.2,
-                }}
-                transition={{
-                  duration: phase === 'inhale' ? INHALE_MS / 1000 : EXHALE_MS / 1000,
-                  ease: 'easeInOut',
-                  delay: 0.2,
-                }}
-              />
-              <motion.div
-                className="absolute rounded-full"
-                style={{
-                  width: '95%',
-                  height: '95%',
-                  background: 'radial-gradient(circle, rgba(34,197,94,0.06) 0%, transparent 60%)',
-                }}
-                animate={{
-                  scale: phase === 'inhale' ? 1.05 : 0.95,
+                  scale: phase === 'inhale' ? 1.06 : 0.94,
                 }}
                 transition={{
                   duration: phase === 'inhale' ? INHALE_MS / 1000 : EXHALE_MS / 1000,

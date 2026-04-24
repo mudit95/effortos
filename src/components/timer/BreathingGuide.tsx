@@ -46,18 +46,19 @@ export function BreathingGuide({ onClose }: { onClose?: () => void }) {
         exit={{ opacity: 0 }}
         className="fixed inset-0 z-40 flex items-center justify-center"
       >
-        {/* Outer breathing wave — 320px base, scales 0.85–1.15 */}
+        {/* Outer breathing wave — bold and clearly visible */}
         <motion.div
           className="rounded-full"
           style={{
-            width: 340,
-            height: 340,
-            background: 'radial-gradient(circle, rgba(34,197,94,0.10) 0%, rgba(34,197,94,0.04) 50%, transparent 70%)',
-            border: '2px solid rgba(34,197,94,0.15)',
+            width: 380,
+            height: 380,
+            background: 'radial-gradient(circle, rgba(34,197,94,0.22) 0%, rgba(34,197,94,0.08) 50%, transparent 75%)',
+            border: '2.5px solid rgba(34,197,94,0.30)',
+            boxShadow: '0 0 60px rgba(34,197,94,0.12), inset 0 0 40px rgba(34,197,94,0.06)',
           }}
           animate={{
-            scale: phase === 'inhale' ? 1.15 : 0.85,
-            opacity: phase === 'inhale' ? 0.9 : 0.5,
+            scale: phase === 'inhale' ? 1.18 : 0.82,
+            opacity: phase === 'inhale' ? 1 : 0.5,
           }}
           transition={{
             duration: phase === 'inhale' ? INHALE_MS / 1000 : EXHALE_MS / 1000,
@@ -65,22 +66,23 @@ export function BreathingGuide({ onClose }: { onClose?: () => void }) {
           }}
         />
 
-        {/* Middle ring — offset timing for organic feel */}
+        {/* Middle ring */}
         <motion.div
           className="absolute rounded-full"
           style={{
-            width: 290,
-            height: 290,
-            border: '1px solid rgba(34,197,94,0.10)',
+            width: 320,
+            height: 320,
+            border: '1.5px solid rgba(34,197,94,0.22)',
+            background: 'radial-gradient(circle, rgba(34,197,94,0.08) 0%, transparent 60%)',
           }}
           animate={{
-            scale: phase === 'inhale' ? 1.08 : 0.92,
-            opacity: phase === 'inhale' ? 0.6 : 0.3,
+            scale: phase === 'inhale' ? 1.10 : 0.90,
+            opacity: phase === 'inhale' ? 0.8 : 0.3,
           }}
           transition={{
             duration: phase === 'inhale' ? INHALE_MS / 1000 : EXHALE_MS / 1000,
             ease: 'easeInOut',
-            delay: 0.2,
+            delay: 0.15,
           }}
         />
 
@@ -88,12 +90,12 @@ export function BreathingGuide({ onClose }: { onClose?: () => void }) {
         <motion.div
           className="absolute rounded-full"
           style={{
-            width: 240,
-            height: 240,
-            background: 'radial-gradient(circle, rgba(34,197,94,0.08) 0%, transparent 60%)',
+            width: 260,
+            height: 260,
+            background: 'radial-gradient(circle, rgba(34,197,94,0.14) 0%, transparent 55%)',
           }}
           animate={{
-            scale: phase === 'inhale' ? 1.05 : 0.95,
+            scale: phase === 'inhale' ? 1.06 : 0.94,
           }}
           transition={{
             duration: phase === 'inhale' ? INHALE_MS / 1000 : EXHALE_MS / 1000,
