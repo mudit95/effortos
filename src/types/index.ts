@@ -279,7 +279,10 @@ export type NudgeType =
   | 'task_planning_prompt'
   | 'bad_day_check'
   | 'welcome'
-  | 'plan_tomorrow';
+  | 'plan_tomorrow'
+  | 'eod_summary'
+  | 'streak_protection'
+  | 'weekly_reflection';
 
 export interface CoachPreferences {
   coaching_intensity: CoachingIntensity;

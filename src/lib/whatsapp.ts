@@ -152,6 +152,36 @@ export async function sendButtonMessage(
 }
 
 /**
+ * Download a media file from WhatsApp (voice note, image, etc.).
+ * Returns the raw buffer. Uses two-step: get media URL, then download.
+ */
+export async function downloadWhatsAppMedia(mediaId: string): Promise<Buffer | null> {
+  const token = process.env.WHATSAPP_TOKEN;
+  if (!token) return null;
+
+  try {
+    // Step 1: Get the download URL
+    const metaRes = await fetch(`https://graph.facebook.com/${API_VERSION}/${mediaId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!metaRes.ok) return null;
+    const metaData = await metaRes.json() as { url?: string };
+    if (!metaData.url) return null;
+
+    // Step 2: Download the actual file
+    const fileRes = await fetch(metaData.url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!fileRes.ok) return null;
+    const arrayBuf = await fileRes.arrayBuffer();
+    return Buffer.from(arrayBuf);
+  } catch (err) {
+    console.error('[WhatsApp] Media download failed:', err);
+    return null;
+  }
+}
+
+/**
  * Parse the incoming webhook payload and extract the first user message.
  * Returns null if the payload isn't a user message (e.g. status update).
  */
@@ -160,6 +190,7 @@ export function extractIncomingMessage(body: Record<string, unknown>): {
   text: string;
   messageId: string;
   buttonReplyId?: string;
+  audioId?: string;
 } | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -184,6 +215,12 @@ export function extractIncomingMessage(body: Record<string, unknown>): {
     // Text message
     if (msg.type === 'text' && msg.text?.body) {
       return { from, text: msg.text.body, messageId };
+    }
+
+    // Audio / voice note
+    if ((msg.type === 'audio' || msg.type === 'voice') && (msg.audio?.id || msg.voice?.id)) {
+      const audioId = msg.audio?.id || msg.voice?.id;
+      return { from, text: '', messageId, audioId };
     }
 
     return null;

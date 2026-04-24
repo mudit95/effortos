@@ -108,6 +108,29 @@ Today they completed ${ctx.completedTasks}/${ctx.totalTasks} tasks.
 ${ctx.activeGoal ? `Active goal: "${ctx.activeGoal.title}" at ${ctx.activeGoal.pct}%.` : ''}
 Ask them to list tomorrow's tasks. Remind them of the format: "task name X pomodoros".
 Tone: brief, helpful, forward-looking.`,
+
+  eod_summary: (ctx) =>
+    `End-of-day summary for ${ctx.name}.
+Final score: ${ctx.completedTasks}/${ctx.totalTasks} tasks done, ${ctx.totalPomsDone}/${ctx.totalPomsTarget} pomodoros.
+${ctx.incompleteTasks.length > 0 ? `Still open: ${ctx.incompleteTasks.join(', ')}.` : 'Everything done!'}
+Streak: ${ctx.currentStreak} days.
+${ctx.activeGoal ? `Goal "${ctx.activeGoal.title}": ${ctx.activeGoal.pct}%.` : ''}
+Give a brief summary of the day. If there are incomplete tasks, mention they can reply "carry all" to move them to tomorrow. If everything's done, celebrate.
+Tone: warm, brief, end-of-day feel. 3-4 lines max.`,
+
+  streak_protection: (ctx) =>
+    `STREAK ALERT for ${ctx.name}: They have a ${ctx.currentStreak}-day streak but ZERO sessions today.
+It's 7 PM — the day is almost over.
+${ctx.totalTasks > 0 ? `They have ${ctx.totalTasks - ctx.completedTasks} unfinished tasks.` : 'No tasks planned today.'}
+Tone: urgent but kind. Make it clear one quick pomodoro saves the streak. Don't guilt trip — just state the fact and encourage.
+Keep it to 2 lines max. This is a notification, not a conversation.`,
+
+  weekly_reflection: (ctx) =>
+    `It's Sunday evening for ${ctx.name}. Send a weekly reflection prompt.
+This week: streak is ${ctx.currentStreak} days.
+${ctx.activeGoal ? `Goal "${ctx.activeGoal.title}": ${ctx.activeGoal.pct}%.` : ''}
+Ask them to share a quick reflection — what went well, what they'd change. Tell them to reply and you'll save it to their journal.
+Tone: reflective, calm, Sunday evening vibe. 3 lines max.`,
 };
 
 function getDayName(day: number): string {
@@ -191,5 +214,13 @@ function getFallbackMessage(nudgeType: NudgeType, ctx: UserContext): string {
       return `🎉 Welcome to EffortOS Pro, ${ctx.name}! I'll check in with you throughout the day to keep you on track. Text "shh" anytime to pause coaching for 24h.`;
     case 'plan_tomorrow':
       return `📝 Let's plan tomorrow! Just text me your tasks like: "Review docs 2 pomodoros, team meeting prep, design mockups 3 poms"`;
+    case 'eod_summary':
+      return ctx.incompleteTasks.length > 0
+        ? `🌙 Day done: ${ctx.completedTasks}/${ctx.totalTasks} tasks, ${ctx.totalPomsDone} pomodoros. ${ctx.incompleteTasks.length} still open — reply "carry all" to move them to tomorrow.`
+        : `🌙 ${ctx.name}, clean sweep! ${ctx.totalTasks} tasks all done. ${ctx.currentStreak}-day streak. Rest up!`;
+    case 'streak_protection':
+      return `🔥 Heads up — your ${ctx.currentStreak}-day streak is at risk. No sessions today. Even one quick pomodoro saves it!`;
+    case 'weekly_reflection':
+      return `📓 Sunday reflection: What went well this week? What would you change? Reply with your thoughts and I'll save them to your journal.`;
   }
 }

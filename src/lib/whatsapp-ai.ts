@@ -9,6 +9,9 @@ export type WAIntent =
   | { type: 'list_tasks' }
   | { type: 'complete_task'; query: string }
   | { type: 'check_progress' }
+  | { type: 'edit_task'; query: string; newPomodoros?: number; newTitle?: string }
+  | { type: 'delete_task'; query: string }
+  | { type: 'time_today' }
   | { type: 'help' }
   | { type: 'pause_coaching' }
   | { type: 'plan_tomorrow' }

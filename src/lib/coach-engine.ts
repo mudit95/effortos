@@ -17,8 +17,10 @@ const SCHEDULED_NUDGES: Record<string, { hour: number; intensities: CoachingInte
   morning_kickoff:      { hour: 8,  intensities: ['light', 'balanced', 'intense'] },
   task_planning_prompt: { hour: 9,  intensities: ['balanced', 'intense'] },
   midday_checkin:       { hour: 13, intensities: ['balanced', 'intense'] },
+  streak_protection:    { hour: 19, intensities: ['light', 'balanced', 'intense'] },
   streak_saver:         { hour: 18, intensities: ['light', 'balanced', 'intense'] },
   evening_wrapup:       { hour: 20, intensities: ['light', 'balanced', 'intense'] },
+  eod_summary:          { hour: 21, intensities: ['light', 'balanced', 'intense'] },
 };
 
 // Weekly recap fires on Sunday at 19:00 for all intensities
@@ -133,10 +135,17 @@ export async function evaluateNudges(
 
   // ── Determine which nudge to send ──
 
-  // 1. Weekly recap (Sunday 7 PM)
+  // 1a. Weekly recap (Sunday 7 PM)
   if (localDayOfWeek === WEEKLY_RECAP_DAY && localHour === WEEKLY_RECAP_HOUR) {
     if (await notSentToday(supabase, user.id, 'weekly_recap', todayKey)) {
       return { nudge_type: 'weekly_recap', context: ctx };
+    }
+  }
+
+  // 1b. Weekly reflection prompt (Sunday 8 PM) — asks user to journal
+  if (localDayOfWeek === WEEKLY_RECAP_DAY && localHour === 20) {
+    if (await notSentToday(supabase, user.id, 'weekly_reflection', todayKey)) {
+      return { nudge_type: 'weekly_reflection', context: ctx };
     }
   }
 
@@ -157,9 +166,17 @@ export async function evaluateNudges(
       // Only fire if there's a streak to save AND no session today
       if (ctx.currentStreak < 2 || ctx.hadSessionToday) continue;
     }
+    if (nudgeType === 'streak_protection') {
+      // Only fire if streak >= 3 and NO sessions today — urgent warning
+      if (ctx.currentStreak < 3 || ctx.hadSessionToday) continue;
+    }
     if (nudgeType === 'task_planning_prompt') {
       // Only fire if user has no tasks for today
       if (ctx.totalTasks > 0) continue;
+    }
+    if (nudgeType === 'eod_summary') {
+      // Only fire if user had tasks today (otherwise nothing to summarize)
+      if (ctx.totalTasks === 0) continue;
     }
 
     if (await notSentToday(supabase, user.id, nudgeType as NudgeType, todayKey)) {
