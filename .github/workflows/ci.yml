@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    name: Build, type-check, lint, test
+    runs-on: ubuntu-latest
+
+    # Cancel in-flight runs on the same ref when a new commit lands.
+    concurrency:
+      group: ci-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: effortos/package-lock.json
+
+      - name: Install deps
+        working-directory: effortos
+        run: npm ci
+
+      - name: Type-check
+        working-directory: effortos
+        run: npx tsc --noEmit
+
+      - name: Lint
+        working-directory: effortos
+        run: npm run lint
+
+      - name: Unit tests
+        working-directory: effortos
+        run: npm test
+        env:
+          # Tests should never need real keys; we set placeholders so any
+          # accidental import of the env at module scope doesn't crash.
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder
+          SUPABASE_SERVICE_ROLE_KEY: placeholder
+          RAZORPAY_KEY_ID: placeholder
+          RAZORPAY_KEY_SECRET: placeholder
+          RAZORPAY_WEBHOOK_SECRET: placeholder
+          ANTHROPIC_API_KEY: placeholder
+          RESEND_API_KEY: placeholder
+          CRON_SECRET: placeholder
+
+      - name: Next.js production build
+        working-directory: effortos
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder
+          SUPABASE_SERVICE_ROLE_KEY: placeholder
+          RAZORPAY_KEY_ID: placeholder
+          RAZORPAY_KEY_SECRET: placeholder
+          RAZORPAY_WEBHOOK_SECRET: placeholder
+          ANTHROPIC_API_KEY: placeholder
+          RESEND_API_KEY: placeholder
+          CRON_SECRET: placeholder
+          # Skip Sentry uploads on CI builds.
+          SENTRY_DSN: ''
+          NEXT_TELEMETRY_DISABLED: '1'

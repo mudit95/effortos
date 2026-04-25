@@ -3,6 +3,12 @@ import crypto from 'crypto';
 import { createClient as createAdminClient, type SupabaseClient } from '@supabase/supabase-js';
 import { paymentFailedEmail } from '@/lib/email-templates';
 import { sendEmail } from '@/lib/email';
+import {
+  CURRENCY,
+  ALL_PLAN_AMOUNTS_PAISE,
+  STARTER_PLAN_ID,
+  PRO_PLAN_ID,
+} from '@/lib/razorpay';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -61,12 +67,47 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const eventId = event.id || `${event.event}:${event.created_at}:${event.payload?.subscription?.entity?.id ?? 'unknown'}`;
+  // We require event.id to be present and unique. Razorpay always provides it
+  // in production; rejecting missing IDs avoids a fragile fallback-key collision
+  // mode where two distinct events could collapse to the same idempotency row.
+  if (!event.id) {
+    console.error('[razorpay-webhook] Missing event.id in payload');
+    return NextResponse.json({ error: 'Missing event id' }, { status: 400 });
+  }
+  const eventId = event.id;
   const eventType = event.event;
   const subEntity = event.payload?.subscription?.entity;
   const paymentEntity = event.payload?.payment?.entity;
   const subscriptionId = subEntity?.id;
   const paymentId = paymentEntity?.id;
+
+  // ── Currency + amount assertion on payment events ──────────────
+  // Defense against misconfigured plans, currency drift, or compromised
+  // dashboard state. We only assert on events that carry a payment entity;
+  // pure subscription state events (cancelled, completed) have no amount.
+  if (paymentEntity && (paymentEntity.amount != null || paymentEntity.currency)) {
+    const expectedCurrency = CURRENCY;
+    if (paymentEntity.currency && paymentEntity.currency !== expectedCurrency) {
+      console.error(
+        '[razorpay-webhook] Currency mismatch',
+        { received: paymentEntity.currency, expected: expectedCurrency, eventId },
+      );
+      return NextResponse.json(
+        { error: 'Currency mismatch — refusing to process' },
+        { status: 400 },
+      );
+    }
+    if (paymentEntity.amount != null && !isExpectedPlanAmount(paymentEntity.amount)) {
+      console.error(
+        '[razorpay-webhook] Amount does not match any known plan',
+        { amount: paymentEntity.amount, eventId },
+      );
+      return NextResponse.json(
+        { error: 'Unexpected amount — refusing to process' },
+        { status: 400 },
+      );
+    }
+  }
 
   // ── 3. Admin Supabase client ───────────────────────────────────
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -246,10 +287,31 @@ async function handleEvent({
     }
 
     default:
-      // Unhandled event — we logged it in webhook_events; no state change.
+      // Unhandled event — log at WARN so ops can see new event types Razorpay
+      // adds before we explicitly handle them. The event is still recorded in
+      // webhook_events for replay/inspection.
+      console.warn(
+        '[razorpay-webhook] Unhandled event type',
+        { eventType, subscriptionId },
+      );
       return;
   }
 }
+
+/**
+ * Returns true if `amountPaise` matches any known plan price (or zero, which
+ * Razorpay can send for the auth charge during a free trial).
+ */
+function isExpectedPlanAmount(amountPaise: number): boolean {
+  if (amountPaise === 0) return true; // trial auth charges
+  return ALL_PLAN_AMOUNTS_PAISE.has(amountPaise);
+}
+
+// Reference plan IDs so the webhook fails type-check if these constants
+// disappear from razorpay.ts (they're consulted by the verify endpoint
+// and must stay in sync with the plan amounts above).
+void STARTER_PLAN_ID;
+void PRO_PLAN_ID;
 
 // ── Payment-failed notification ───────────────────────────────────
 
@@ -357,6 +419,13 @@ type RazorpayEvent = {
   created_at?: number;
   payload?: {
     subscription?: { entity?: SubEntity };
-    payment?: { entity?: { id?: string; status?: string; amount?: number; currency?: string } };
+    payment?: {
+      entity?: {
+        id?: string;
+        status?: string;
+        amount?: number;
+        currency?: string;
+      };
+    };
   };
 };

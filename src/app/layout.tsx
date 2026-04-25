@@ -2,8 +2,8 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "EffortOS — AI-Powered Effort Tracking",
-  description: "Know exactly how long things take. AI-powered adaptive effort tracking with Pomodoro sessions.",
+  title: "EffortOS — The quiet OS for the work that matters",
+  description: "In a world engineered to fragment your attention, EffortOS is the quiet operating system that holds the line. Tell it your goal — it estimates the work, paces your sessions, and recalibrates as you go.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,

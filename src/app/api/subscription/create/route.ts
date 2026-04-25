@@ -73,13 +73,14 @@ export async function POST(req: Request) {
       }
     }
 
-    // Check if user already has an active subscription
+    // Check if user already has an active subscription. .maybeSingle() — a
+    // missing row is the common case (no subscription yet) and shouldn't throw.
     const { data: existing } = await supabase
       .from('subscriptions')
       .select('*')
       .eq('user_id', user.id)
       .in('status', ['trialing', 'active'])
-      .single();
+      .maybeSingle();
 
     if (existing) {
       // If they're upgrading from starter to pro, allow it
@@ -126,7 +127,12 @@ export async function POST(req: Request) {
     // Create Razorpay subscription
     const subscription = await getRazorpay().subscriptions.create(subParams as unknown as Parameters<ReturnType<typeof getRazorpay>['subscriptions']['create']>[0]);
 
-    // Store subscription in Supabase
+    // Store subscription in Supabase. Race-safety: between the existence
+    // check above and this upsert, a concurrent request from the same user
+    // (e.g. a double-click) could have created its own Razorpay subscription
+    // and won the upsert. After upserting we read back the row; if the
+    // razorpay_subscription_id doesn't match the one we just created, the
+    // other request won — cancel ours at Razorpay and return its row.
     const trialEndsAt = new Date(trialEnd * 1000).toISOString();
     await supabase.from('subscriptions').upsert({
       user_id: user.id,
@@ -138,6 +144,30 @@ export async function POST(req: Request) {
       created_at: new Date().toISOString(),
       ...(couponId ? { applied_coupon_id: couponId, applied_coupon_code: couponCode } : {}),
     }, { onConflict: 'user_id' });
+
+    const { data: settled } = await supabase
+      .from('subscriptions')
+      .select('razorpay_subscription_id, plan_tier, status, trial_ends_at')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (settled && settled.razorpay_subscription_id !== subscription.id) {
+      // Lost the race. Cancel the orphaned Razorpay subscription so we
+      // don't leave duplicates on the Razorpay side.
+      try {
+        await getRazorpay().subscriptions.cancel(subscription.id);
+      } catch (e) {
+        console.warn('[Subscription] Failed to cancel orphan after race:', e);
+      }
+      return NextResponse.json({
+        subscription_id: settled.razorpay_subscription_id,
+        key_id: process.env.RAZORPAY_KEY_ID,
+        trial_ends_at: settled.trial_ends_at,
+        offer_id: null,
+        plan_tier: settled.plan_tier,
+        deduplicated: true,
+      });
+    }
 
     return NextResponse.json({
       subscription_id: subscription.id,

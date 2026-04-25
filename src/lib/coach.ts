@@ -9,6 +9,60 @@
 
 import type { Goal, DailyTask, Session, FeedbackEntry } from '@/types';
 
+// ─── Cost & abuse bounds ────────────────────────────────────────────
+//
+// These caps protect us from two failure modes:
+//   1. Cost: a power user with thousands of sessions can balloon the
+//      input-token bill on every coach call.
+//   2. Prompt injection: arbitrary user text (goal titles, notes) is
+//      bracketed by fences so a malicious title can't easily escape
+//      the prompt envelope.
+//
+// Tune these only if you've measured the impact on output quality.
+const MAX_GOALS = 20;
+const MAX_RECENT_SESSIONS = 50;
+const MAX_EXISTING_TASKS = 30;
+const MAX_FEEDBACK_HISTORY = 20;
+const MAX_TITLE_LEN = 200;
+const MAX_NOTES_LEN = 500;
+
+/** Trim free-form user text and strip control characters. */
+function safeText(input: string | undefined | null, max: number): string {
+  if (!input) return '';
+  // Strip control chars except newline/tab; trim length.
+  // eslint-disable-next-line no-control-regex
+  return String(input).replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, '').slice(0, max);
+}
+
+function boundContext(context: CoachContext): CoachContext {
+  return {
+    ...context,
+    userName: safeText(context.userName, 80) || 'there',
+    goals: context.goals.slice(0, MAX_GOALS).map(g => ({
+      ...g,
+      title: safeText(g.title, MAX_TITLE_LEN) || 'Untitled goal',
+    })),
+    recentSessions: context.recentSessions.slice(0, MAX_RECENT_SESSIONS).map(s => ({
+      ...s,
+      goalTitle: s.goalTitle ? safeText(s.goalTitle, MAX_TITLE_LEN) : undefined,
+      taskTitle: s.taskTitle ? safeText(s.taskTitle, MAX_TITLE_LEN) : undefined,
+      notes: s.notes ? safeText(s.notes, MAX_NOTES_LEN) : undefined,
+    })),
+    todaysTasks: context.todaysTasks.slice(0, MAX_EXISTING_TASKS).map(t => ({
+      ...t,
+      title: safeText(t.title, MAX_TITLE_LEN) || 'Untitled task',
+    })),
+    feedbackHistory: context.feedbackHistory.slice(-MAX_FEEDBACK_HISTORY),
+  };
+}
+
+function boundTaskList(tasks: TaskSummary[]): TaskSummary[] {
+  return tasks.slice(0, MAX_EXISTING_TASKS).map(t => ({
+    ...t,
+    title: safeText(t.title, MAX_TITLE_LEN) || 'Untitled task',
+  }));
+}
+
 // ─── Types ───────────────────────────────────────────────────────────
 
 export interface CoachContext {
@@ -99,7 +153,10 @@ Formatting rules:
 - Numbers and metrics should be specific ("12 sessions in 5 days" not "several sessions").`;
 
 export function buildPlanMyDayPrompt(req: PlanMyDayRequest): { system: string; user: string } {
-  const { context, targetDate, existingTasks, intake } = req;
+  // Cap inputs and sanitize free-form text. See "Cost & abuse bounds" above.
+  const context = boundContext(req.context);
+  const existingTasks = boundTaskList(req.existingTasks);
+  const { targetDate, intake } = req;
   const activeGoals = context.goals.filter(g => g.status === 'active');
   const focusMin = Math.round(context.focusDuration / 60);
   const focusSeconds = context.focusDuration;
@@ -187,7 +244,14 @@ Lifetime sessions: ${context.totalLifetimeSessions}`,
 }
 
 export function buildSessionDebriefPrompt(req: SessionDebriefRequest): { system: string; user: string } {
-  const { context, justCompleted } = req;
+  // Cap and sanitize per coach bounds.
+  const context = boundContext(req.context);
+  const justCompleted = {
+    ...req.justCompleted,
+    goalTitle: req.justCompleted.goalTitle ? safeText(req.justCompleted.goalTitle, MAX_TITLE_LEN) : undefined,
+    taskTitle: req.justCompleted.taskTitle ? safeText(req.justCompleted.taskTitle, MAX_TITLE_LEN) : undefined,
+    notes: req.justCompleted.notes ? safeText(req.justCompleted.notes, MAX_NOTES_LEN) : undefined,
+  };
   const focusMin = Math.round(context.focusDuration / 60);
 
   // Calculate patterns from recent sessions
@@ -244,7 +308,16 @@ User context:
 }
 
 export function buildWeeklyInsightPrompt(req: WeeklyInsightRequest): { system: string; user: string } {
-  const { context, weekSessions, weekTasks, previousWeekSessions } = req;
+  // Cap and sanitize per coach bounds.
+  const context = boundContext(req.context);
+  const weekSessions = req.weekSessions.slice(0, MAX_RECENT_SESSIONS).map(s => ({
+    ...s,
+    goalTitle: s.goalTitle ? safeText(s.goalTitle, MAX_TITLE_LEN) : undefined,
+    taskTitle: s.taskTitle ? safeText(s.taskTitle, MAX_TITLE_LEN) : undefined,
+    notes: s.notes ? safeText(s.notes, MAX_NOTES_LEN) : undefined,
+  }));
+  const weekTasks = boundTaskList(req.weekTasks);
+  const { previousWeekSessions } = req;
   const focusMin = Math.round(context.focusDuration / 60);
   const totalMinutes = weekSessions.reduce((sum, s) => sum + s.duration, 0) / 60;
   const totalSessions = weekSessions.length;

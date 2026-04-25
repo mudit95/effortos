@@ -51,24 +51,32 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
     }
 
-    // Update subscription status — verified, trial is active
+    // Validate plan_tier — accept only known values, default to 'starter'.
+    const normalizedPlanTier: 'starter' | 'pro' =
+      plan_tier === 'pro' ? 'pro' : 'starter';
+
+    // Update subscription status — verified, trial is active. Always write
+    // plan_tier so downstream gating (cron coach, paywall) can rely on it.
     await supabase
       .from('subscriptions')
       .update({
         status: 'trialing',
+        plan_tier: normalizedPlanTier,
         razorpay_payment_id,
         verified_at: new Date().toISOString(),
       })
       .eq('user_id', user.id)
       .eq('razorpay_subscription_id', razorpay_subscription_id);
 
-    // If a coupon was applied at subscribe time, record the redemption now
+    // If a coupon was applied at subscribe time, record the redemption now.
+    // .maybeSingle() because a verify replay (idempotency) could leave us
+    // querying a row that's already been processed; treat missing as no-op.
     const { data: sub } = await supabase
       .from('subscriptions')
       .select('applied_coupon_id')
       .eq('user_id', user.id)
       .eq('razorpay_subscription_id', razorpay_subscription_id)
-      .single();
+      .maybeSingle();
 
     if (sub?.applied_coupon_id) {
       const { data: alreadyRedeemed } = await supabase
@@ -83,12 +91,13 @@ export async function POST(request: Request) {
           coupon_id: sub.applied_coupon_id,
           user_id: user.id,
         });
-        // Increment redemption_count atomically via RPC-style fetch-then-update
+        // Increment redemption_count via fetch-then-update.
+        // Use maybeSingle() for the same reason as above.
         const { data: coupon } = await supabase
           .from('coupons')
           .select('redemption_count')
           .eq('id', sub.applied_coupon_id)
-          .single();
+          .maybeSingle();
         if (coupon) {
           await supabase
             .from('coupons')
@@ -99,14 +108,18 @@ export async function POST(request: Request) {
     }
 
     // If this is a Pro tier subscription, send the welcome message
-    if (plan_tier === 'pro') {
+    if (normalizedPlanTier === 'pro') {
       // Fire and forget — don't block the verify response
       sendProWelcome(user.id).catch((err) =>
         console.error('[Coach] Welcome message failed:', err),
       );
     }
 
-    return NextResponse.json({ success: true, status: 'trialing', plan_tier: plan_tier || 'starter' });
+    return NextResponse.json({
+      success: true,
+      status: 'trialing',
+      plan_tier: normalizedPlanTier,
+    });
   } catch (err) {
     console.error('Verify subscription error:', err);
     return NextResponse.json(
