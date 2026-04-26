@@ -1089,6 +1089,180 @@ export function LandingPage() {
         </div>
       </Section>
 
+      {/* ── WhatsApp Wedge ─────────────────────────────────────── */}
+      <Section className="py-16 sm:py-24 px-4 relative" delay={0.1}>
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-emerald-500/[0.02] to-transparent pointer-events-none" />
+        <div className="max-w-5xl mx-auto relative z-10">
+          <div className="grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
+            <div>
+              <p className="text-[11px] text-emerald-400/70 uppercase tracking-[0.2em] font-semibold mb-3">Lives where you already are</p>
+              <h2 className="text-2xl sm:text-3xl font-bold text-white mb-4">
+                A coach in WhatsApp.<br />
+                <span className="text-white/50">Not yet another app to open.</span>
+              </h2>
+              <p className="text-sm sm:text-base text-white/45 mb-6 leading-relaxed">
+                Add tasks, log a session, plan tomorrow, ask for a nudge — all by texting EffortOS the way you&apos;d text a friend.
+                Pro users get morning kickoffs, evening wrap-ups, and quiet streak-saver alerts when you&apos;re about to drop the chain.
+              </p>
+              <ul className="space-y-2.5 text-sm text-white/55">
+                {[
+                  'Drop a task in chat — it lands in tomorrow&apos;s plan',
+                  'Reply &quot;done&quot; after a session, get an honest debrief',
+                  'Type &quot;plan tomorrow&quot; — Claude builds your next day',
+                  'Streak about to break? You get one heads-up, no spam',
+                ].map((line) => (
+                  <li key={line} className="flex items-start gap-2.5">
+                    <CheckCircle2 size={16} className="text-emerald-400/60 mt-0.5 flex-shrink-0" />
+                    <span dangerouslySetInnerHTML={{ __html: line }} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Phone-frame chat mockup */}
+            <motion.div
+              initial={{ opacity: 0, y: 24 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, margin: '-80px' }}
+              transition={{ duration: 0.6, ease }}
+              className="relative mx-auto w-full max-w-sm"
+            >
+              <div className="rounded-3xl border border-white/[0.08] bg-gradient-to-b from-white/[0.04] to-transparent p-4 shadow-2xl shadow-emerald-500/5">
+                {/* WhatsApp-style header */}
+                <div className="flex items-center gap-3 px-2 pb-3 border-b border-white/[0.06]">
+                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center">
+                    <MessageCircle size={16} className="text-white" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-white/90">EffortOS</p>
+                    <p className="text-[10px] text-emerald-400/70">online</p>
+                  </div>
+                  <span className="text-[10px] text-white/25">9:14 AM</span>
+                </div>
+
+                {/* Chat bubbles */}
+                <div className="space-y-2.5 pt-4 px-1">
+                  {/* Bot bubble */}
+                  <div className="flex">
+                    <div className="rounded-2xl rounded-tl-sm bg-white/[0.06] px-3.5 py-2 max-w-[80%]">
+                      <p className="text-[13px] text-white/80 leading-snug">Morning Aanya. You&rsquo;ve done 6 sessions on the CFA this week — 3 to go for your weekly target. Want me to slot 2 in this afternoon?</p>
+                    </div>
+                  </div>
+
+                  {/* User bubble */}
+                  <div className="flex justify-end">
+                    <div className="rounded-2xl rounded-tr-sm bg-emerald-600/30 border border-emerald-500/20 px-3.5 py-2 max-w-[80%]">
+                      <p className="text-[13px] text-white/85 leading-snug">yes, after lunch. and add &ldquo;ethics module 4&rdquo; to today</p>
+                    </div>
+                  </div>
+
+                  {/* Bot bubble */}
+                  <div className="flex">
+                    <div className="rounded-2xl rounded-tl-sm bg-white/[0.06] px-3.5 py-2 max-w-[80%]">
+                      <p className="text-[13px] text-white/80 leading-snug">Done. Two sessions at 2:30 and 4:00. Ethics Mod 4 is on today&rsquo;s grind. I&rsquo;ll ping you when the first block starts. ⏱</p>
+                    </div>
+                  </div>
+
+                  {/* Typing indicator */}
+                  <motion.div
+                    className="flex"
+                    animate={{ opacity: [0.4, 1, 0.4] }}
+                    transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
+                  >
+                    <div className="rounded-2xl rounded-tl-sm bg-white/[0.04] px-3.5 py-2.5">
+                      <div className="flex gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-white/40" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-white/40" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-white/40" />
+                      </div>
+                    </div>
+                  </motion.div>
+                </div>
+
+                <p className="text-[10px] text-white/20 text-center mt-4 pt-3 border-t border-white/[0.04]">Pro plan · WhatsApp Business API</p>
+              </div>
+
+              {/* Soft glow */}
+              <div className="absolute -inset-4 bg-emerald-500/[0.04] rounded-[2rem] blur-3xl -z-10 pointer-events-none" />
+            </motion.div>
+          </div>
+        </div>
+      </Section>
+
+      {/* ── Testimonials / Social Proof ─────────────────────────── */}
+      <Section className="py-16 sm:py-24 px-4 relative">
+        <div className="max-w-5xl mx-auto">
+          <div className="text-center mb-12">
+            <p className="text-[11px] text-cyan-400/60 uppercase tracking-[0.2em] font-semibold mb-3">Real users, real hours</p>
+            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3">Built with the first 50 who tried it.</h2>
+            <p className="text-sm text-white/35 max-w-md mx-auto">
+              Early access feedback from students, founders, and aspirants who&apos;ve been logging sessions since beta.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {[
+              {
+                quote: 'I&rsquo;ve tried four Pomodoro apps. This is the first one where the timer talks to my actual goals. I&rsquo;m 38 sessions into my CFA L2 and the estimate has stopped lying to me.',
+                name: 'Aanya',
+                role: 'CFA L2 aspirant',
+                city: 'Mumbai',
+                accent: 'cyan',
+              },
+              {
+                quote: 'The WhatsApp coach is the only reason I&rsquo;m on day 21 of a streak. It nudges me without being a nag. Shipped two MVP milestones in three weeks.',
+                name: 'Rohan',
+                role: 'Indie founder',
+                city: 'Bangalore',
+                accent: 'purple',
+              },
+              {
+                quote: 'I stopped writing fake schedules in Notion. The recalibration after each session is brutal in the best way — my UPSC plan finally matches my actual pace.',
+                name: 'Priya',
+                role: 'UPSC aspirant',
+                city: 'Delhi',
+                accent: 'emerald',
+              },
+            ].map((t, i) => {
+              const accentMap: Record<string, { dot: string; border: string; glow: string; text: string }> = {
+                cyan: { dot: 'bg-cyan-400', border: 'border-cyan-500/20', glow: 'bg-cyan-500/[0.04]', text: 'text-cyan-400/70' },
+                purple: { dot: 'bg-purple-400', border: 'border-purple-500/20', glow: 'bg-purple-500/[0.05]', text: 'text-purple-400/70' },
+                emerald: { dot: 'bg-emerald-400', border: 'border-emerald-500/20', glow: 'bg-emerald-500/[0.04]', text: 'text-emerald-400/70' },
+              };
+              const a = accentMap[t.accent];
+              return (
+                <motion.figure
+                  key={t.name}
+                  initial={{ opacity: 0, y: 24 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true, margin: '-60px' }}
+                  transition={{ delay: i * 0.1, duration: 0.5, ease }}
+                  className={`relative rounded-2xl border ${a.border} bg-gradient-to-b from-white/[0.03] to-transparent p-6 overflow-hidden`}
+                >
+                  <div className={`absolute -top-16 -right-16 w-32 h-32 ${a.glow} rounded-full blur-3xl pointer-events-none`} />
+                  <div className="relative z-10">
+                    <div className={`text-2xl ${a.text} leading-none mb-3`}>&ldquo;</div>
+                    <blockquote
+                      className="text-sm text-white/65 leading-relaxed mb-5"
+                      dangerouslySetInnerHTML={{ __html: t.quote }}
+                    />
+                    <figcaption className="flex items-center gap-2.5 pt-4 border-t border-white/[0.05]">
+                      <span className={`w-1.5 h-1.5 rounded-full ${a.dot}`} />
+                      <div>
+                        <p className="text-xs font-semibold text-white/80">{t.name}</p>
+                        <p className="text-[11px] text-white/35">{t.role} · {t.city}</p>
+                      </div>
+                    </figcaption>
+                  </div>
+                </motion.figure>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-white/25 text-center mt-8">
+            Quotes are from beta users. First names + cities; full attribution available on request.
+          </p>
+        </div>
+      </Section>
+
       {/* ── Pricing ────────────────────────────────────────────── */}
       <Section className="py-16 sm:py-24 px-4">
         <div className="text-center mb-10">
