@@ -14,7 +14,42 @@ import {
   setLastListType,
   getLastListType,
   checkWhatsappRateLimit,
+  incrementMessageCountAndGet,
 } from '@/lib/whatsapp-state';
+
+// ── Outbound message wrapper ──────────────────────────────────────────────
+// Every reply the bot sends should, for the user's first 50 outbound
+// messages, end with a tiny footer reminding them they can type "help" for
+// the master command list. After the 50th message we drop the footer —
+// they've seen it plenty by then.
+//
+// Special cases:
+//   - The help message itself never gets the footer (it IS the command
+//     list — the footer would be redundant and visually noisy).
+//   - The unrecognised-number greeting skips the footer too: that user has
+//     no profile yet and the message itself is the next-step instruction.
+//   - When Redis is unavailable, incrementMessageCountAndGet returns
+//     Infinity so the footer silently drops (preferable to spamming it on
+//     every message in degraded mode).
+//
+// Counter is keyed by phone, not by user_id — we want to know how many
+// times THIS WhatsApp number has heard from us, regardless of which
+// EffortOS user is on the other end.
+const HELP_FOOTER_THRESHOLD = 50;
+const HELP_FOOTER = "\n\n_Send *help* for the full command list._";
+
+async function sendBotReply(
+  phone: string,
+  body: string,
+  opts: { suppressFooter?: boolean } = {},
+): Promise<boolean> {
+  const count = await incrementMessageCountAndGet(phone);
+  const finalBody =
+    !opts.suppressFooter && count <= HELP_FOOTER_THRESHOLD
+      ? body + HELP_FOOTER
+      : body;
+  return sendTextMessage(phone, finalBody);
+}
 
 // ── Text normalization helpers ────────────────────────────────────────────
 // Mobile keyboards (especially iOS) auto-substitute curly quotes and em-dashes
@@ -1027,29 +1062,45 @@ async function handleDeleteOtherTodo(
 }
 
 async function sendHelpMessage(phone: string, name: string) {
+  // WhatsApp markdown only supports *bold*, _italic_, ~strike~, and code.
+  // Heavy box-drawing characters (━━━) used to render as ragged rows on
+  // mobile, so this version uses simple bold headers with emoji and a
+  // blank line between sections. Examples are wrapped in italics so they
+  // visually separate from the surrounding command labels without needing
+  // mid-line bold tricks.
   await sendTextMessage(
     phone,
-    `👋 Hey ${name}! Here's the cheat sheet.\n\n` +
-    `━━━ 📝 *DAILY TASKS* (focused work) ━━━\n` +
-    `*Add:* "Study React 2 poms, review PRs, write spec 3 poms"\n` +
-    `*See:* "tasks" or "what's my plan"\n` +
-    `*Done:* reply with the *number* (e.g. "1") — or "done React"\n` +
-    `*Edit:* "change React to 3 poms"  •  "rename React to Vue"\n` +
-    `*Delete:* "delete React"\n\n` +
-    `━━━ 🗒 *ERRANDS* (side list, no timer) ━━━\n` +
-    `*Add:* "remind me to grab groceries"  •  "errand: pick Susan up at 4 — 30 min"\n` +
-    `*See:* "my errands" or "side list"\n` +
-    `*Done:* reply with the *number* — or "got the groceries"\n` +
-    `*Drop:* "drop the dentist errand"\n\n` +
-    `━━━ 📊 *STATUS* ━━━\n` +
-    `"progress" / "how am I doing"  •  "time today"  •  "streak"\n\n` +
-    `━━━ 📅 *PLANNING* ━━━\n` +
-    `"plan tomorrow"  •  "carry all" (move incomplete to tomorrow)\n` +
-    `"add journal entry"\n\n` +
-    `━━━ ⚙️ *OTHER* ━━━\n` +
-    `🎤 Voice notes work — just send one, I'll transcribe.\n` +
-    `🤫 "shh" pauses coaching nudges for 24h.\n\n` +
-    `💡 *Tip:* whenever you see a numbered list, just reply with the number to mark it done.`,
+    `👋 Hey ${name}! Here's the cheat sheet.\n` +
+    `\n` +
+    `*📝 Daily Tasks* — focused work\n` +
+    `• Add — _Study React 2 poms, review PRs_\n` +
+    `• See list — _tasks_\n` +
+    `• Mark done — reply with the *number* or _done React_\n` +
+    `• Edit — _change React to 3 poms_\n` +
+    `• Rename — _rename React to Vue_\n` +
+    `• Delete — _delete React_\n` +
+    `\n` +
+    `*🗒 Errands* — side list, no timer\n` +
+    `• Add — _remind me to grab groceries_\n` +
+    `• See list — _my errands_\n` +
+    `• Mark done — reply with the *number* or _got the groceries_\n` +
+    `• Drop — _drop the dentist errand_\n` +
+    `\n` +
+    `*📊 Status*\n` +
+    `• _progress_ — how am I doing today\n` +
+    `• _time today_ — focus minutes so far\n` +
+    `• _streak_ — current daily streak\n` +
+    `\n` +
+    `*📅 Planning*\n` +
+    `• _plan tomorrow_ — start tomorrow's list\n` +
+    `• _carry all_ — move today's incomplete to tomorrow\n` +
+    `• _add journal entry_\n` +
+    `\n` +
+    `*⚙️ Other*\n` +
+    `• 🎤 Voice notes work — send one, I'll transcribe\n` +
+    `• 🤫 _shh_ — pause coaching nudges for 24h\n` +
+    `\n` +
+    `💡 Tip: whenever you see a numbered list, reply with the number to mark it done.`,
   );
 }
 
@@ -1411,6 +1462,20 @@ async function handleTimeToday(
 }
 
 // ── Carry all incomplete tasks forward (EOD button handler) ──
+//
+// Moves (NOT copies) incomplete tasks from today to tomorrow. Two bugs
+// this function used to have:
+//
+//   1. Tasks appeared in BOTH today and tomorrow because we INSERTed new
+//      rows for tomorrow but never deleted/updated today's rows.
+//   2. The new tomorrow row carried the FULL original `pomodoros_target`,
+//      so a task with target 3 / done 1 came over as 3 again — the user
+//      effectively re-did the work they'd already finished.
+//
+// Fix: UPDATE the existing rows in place. date → tomorrow, target →
+// remaining work (max(1, target - done)), done → 0. The task keeps its
+// id and any session links; today's view stops showing the row because
+// it's no longer dated today; tomorrow's view shows only the work left.
 async function handleCarryAllForward(
   supabase: SupabaseClient,
   userId: string,
@@ -1426,7 +1491,7 @@ async function handleCarryAllForward(
 
   const { data: incomplete } = await supabase
     .from('daily_tasks')
-    .select('title, pomodoros_target, tag')
+    .select('id, pomodoros_target, pomodoros_done')
     .eq('user_id', userId)
     .eq('date', todayKey)
     .eq('completed', false);
@@ -1436,22 +1501,28 @@ async function handleCarryAllForward(
     return;
   }
 
-  const now = new Date();
-  const baseSortOrder = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+  // Per-row update so each task gets its own remaining-work calculation.
+  // Postgres can't express GREATEST(1, target - done) in a single bulk
+  // UPDATE through the supabase-js builder, so we issue N small updates
+  // in parallel. N is bounded by the user's daily-task count (typically
+  // <20) so this is a single round-trip's worth of work.
+  await Promise.all(
+    incomplete.map((t: { id: string; pomodoros_target: number; pomodoros_done: number }) => {
+      const target = t.pomodoros_target || 1;
+      const done = t.pomodoros_done || 0;
+      const remaining = Math.max(1, target - done);
+      return supabase
+        .from('daily_tasks')
+        .update({
+          date: tomorrowKey,
+          pomodoros_target: remaining,
+          pomodoros_done: 0,
+          scheduled_from: todayKey,
+        })
+        .eq('id', t.id);
+    }),
+  );
 
-  const rows = incomplete.map((t: { title: string; pomodoros_target: number; tag: string }, i: number) => ({
-    user_id: userId,
-    title: t.title,
-    pomodoros_target: t.pomodoros_target,
-    pomodoros_done: 0,
-    completed: false,
-    date: tomorrowKey,
-    tag: t.tag || 'job',
-    sort_order: baseSortOrder + i,
-    scheduled_from: todayKey,
-  }));
-
-  await supabase.from('daily_tasks').insert(rows);
   await sendTextMessage(
     phone,
     `📅 Carried ${incomplete.length} task${incomplete.length !== 1 ? 's' : ''} to tomorrow. Fresh start incoming!`,

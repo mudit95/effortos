@@ -7,7 +7,16 @@
  *   WHATSAPP_VERIFY_TOKEN   – Arbitrary secret you choose for webhook verification
  */
 
+import { incrementMessageCountAndGet } from './whatsapp-state';
+
 const API_VERSION = 'v21.0';
+
+// The "Send 'help' for the full command list." footer is appended to the
+// first HELP_HINT_LIMIT outbound messages each user receives. After that,
+// the hint drops — by then the user knows the command exists. Counter is
+// per-phone and lives in Redis so it survives Vercel cold starts.
+const HELP_HINT_LIMIT = 50;
+const HELP_HINT_FOOTER = '\n\n_Send "help" for the full command list._';
 
 function getBaseUrl(phoneId: string) {
   return `https://graph.facebook.com/${API_VERSION}/${phoneId}/messages`;
@@ -73,7 +82,22 @@ export async function sendTextMessage(to: string, body: string): Promise<boolean
     return false;
   }
 
-  const chunks = splitForWhatsApp(body);
+  // Append the help hint to the user's first HELP_HINT_LIMIT outbound
+  // messages so they learn that "help" exists. After 50 messages the
+  // hint drops away and replies are clean. Failure to read the counter
+  // (Redis down, etc.) silently skips the hint — better than spamming
+  // it on every message in degraded mode.
+  let finalBody = body;
+  try {
+    const count = await incrementMessageCountAndGet(to);
+    if (count <= HELP_HINT_LIMIT) {
+      finalBody = body + HELP_HINT_FOOTER;
+    }
+  } catch (err) {
+    console.error('[WhatsApp] Help-hint counter lookup failed:', err);
+  }
+
+  const chunks = splitForWhatsApp(finalBody);
   const url = getBaseUrl(phoneId);
 
   for (let i = 0; i < chunks.length; i++) {

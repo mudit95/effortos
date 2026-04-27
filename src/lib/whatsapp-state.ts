@@ -58,7 +58,13 @@ const k = {
   taskList: (phone: string) => `wa:tasks:${phone}`,
   errandList: (phone: string) => `wa:errands:${phone}`,
   lastListType: (phone: string) => `wa:lastlist:${phone}`,
+  msgCount: (phone: string) => `wa:msgcount:${phone}`,
 };
+
+// Effectively-permanent TTL for the outbound message counter. Re-set on
+// every increment so it never expires while the user is active. One year
+// is long enough that practically nobody sees it lapse.
+const MSG_COUNT_TTL_SEC = 60 * 60 * 24 * 365;
 
 // ── Pending multi-step flow ───────────────────────────────────────
 
@@ -202,6 +208,43 @@ export async function getLastListType(phone: string): Promise<ListType | null> {
   const val = await r.get<string>(k.lastListType(phone));
   if (val === 'tasks' || val === 'errands') return val;
   return null;
+}
+
+// ── Outbound message counter (drives the "first-50" help hint) ──
+//
+// Every reply we send to the user increments this counter. The first 50
+// outbound messages append a "Send 'help' for the full command list."
+// footer; after 50, the hint drops away — the user is presumed to have
+// internalised the command set by then.
+//
+// Counter is per-phone (not per-userId) so it works even before we've
+// linked the phone to a profile (e.g., onboarding replies).
+
+/**
+ * Atomically increment the outbound message counter for a phone and return
+ * the new value. Used by sendTextMessage to decide whether to append the
+ * help-hint footer.
+ *
+ * Failure mode: when Redis is unavailable, returns Infinity so the caller
+ * skips the footer. Better to silently omit a friendly hint than to risk
+ * spamming it on every single message in degraded mode.
+ */
+export async function incrementMessageCountAndGet(phone: string): Promise<number> {
+  const r = getRedis();
+  if (!r) {
+    warnOnce();
+    return Infinity;
+  }
+  try {
+    const newCount = await r.incr(k.msgCount(phone));
+    // Refresh TTL on every increment so the counter never silently resets
+    // and puts the user back into "first 50" mode mid-relationship.
+    await r.expire(k.msgCount(phone), MSG_COUNT_TTL_SEC);
+    return newCount;
+  } catch (err) {
+    console.error('[wa-state] msgCount incr failed:', err);
+    return Infinity;
+  }
 }
 
 // ── AI rate limit ────────────────────────────────────────────────
