@@ -216,6 +216,9 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (!profile) {
+      // Pre-link greeting: skip the help-footer wrapper because (a) we can't
+      // promise that "help" will work for an unlinked number, and (b) the
+      // body is already a step-by-step nudge to the next action.
       await sendTextMessage(
         from,
         `👋 Hey! I don't recognize this number yet.\n\nTo link your WhatsApp to EffortOS:\n1. Open EffortOS → Settings\n2. Add your WhatsApp number\n3. Send me a message again!\n\nNeed an account? Sign up at effortos-zeta.vercel.app`,
@@ -261,7 +264,7 @@ export async function POST(req: NextRequest) {
         : await getTaskList(from);
 
       if (!ids || ids.length === 0) {
-        await sendTextMessage(
+        await sendBotReply(
           from,
           `🤔 I don't have a recent list to match "${listPos}" against. Send *"tasks"* or *"my errands"* first, then reply with a number.`,
         );
@@ -271,7 +274,7 @@ export async function POST(req: NextRequest) {
       const idx = listPos - 1;
       if (idx >= ids.length) {
         const label = lastList === 'errands' ? 'errand' : 'task';
-        await sendTextMessage(
+        await sendBotReply(
           from,
           `🤔 You only have ${ids.length} ${label}${ids.length === 1 ? '' : 's'} on the list — pick a number from 1 to ${ids.length}.`,
         );
@@ -296,7 +299,7 @@ export async function POST(req: NextRequest) {
     // Backed by Upstash sliding-window — survives across Vercel instances and
     // can't be circumvented by spreading load over warm containers.
     if (!(await checkWhatsappRateLimit(profile.id))) {
-      await sendTextMessage(
+      await sendBotReply(
         from,
         '⏳ You\'ve sent a lot of messages this hour. Take a break and try again in a bit!\n\nTip: You can manage tasks directly in the EffortOS app too.',
       );
@@ -338,10 +341,28 @@ export async function POST(req: NextRequest) {
     ) {
       intent = { type: 'time_today' };
     }
-    // Delete task — "delete X", "remove X"
-    else if (/^(delete|remove)\s+(.+)/i.test(lowerText)) {
-      const match = lowerText.match(/^(?:delete|remove)\s+(.+)/i);
+    // Delete task — "delete X", "remove X", "drop the X task", "scratch X"
+    else if (/^(delete|remove|scratch|cancel|drop)\s+(?:the\s+)?(.+?)(?:\s+task)?$/i.test(lowerText)) {
+      const match = lowerText.match(/^(?:delete|remove|scratch|cancel|drop)\s+(?:the\s+)?(.+?)(?:\s+task)?$/i);
       intent = { type: 'delete_task', query: match?.[1]?.trim() || '' };
+    }
+    // Move single task to tomorrow — "move X to tomorrow", "push X to
+    // tomorrow", "defer X", "do X tomorrow instead". Distinct from "carry
+    // all" which moves every incomplete task at once.
+    else if (
+      /^(move|push|defer|postpone)\s+(.+?)\s+(?:to\s+)?tomorrow$/i.test(lowerText) ||
+      /^do\s+(.+?)\s+tomorrow(?:\s+instead)?$/i.test(lowerText)
+    ) {
+      const m = lowerText.match(/^(?:move|push|defer|postpone)\s+(.+?)\s+(?:to\s+)?tomorrow$/i)
+        || lowerText.match(/^do\s+(.+?)\s+tomorrow(?:\s+instead)?$/i);
+      const q = m?.[1]?.trim() || '';
+      if (q && q !== 'all' && q !== 'everything') {
+        intent = { type: 'move_task', query: q };
+      } else {
+        // "move all to tomorrow" / "do everything tomorrow" → carry-all path
+        await handleCarryAllForward(supabase, profile.id, from);
+        return NextResponse.json({ status: 'ok' });
+      }
     }
     // Edit task pomodoros — "change X to 3 pomodoros"
     else if (/change\s+(.+?)\s+to\s+(\d+)\s*pom/i.test(lowerText)) {
@@ -424,11 +445,35 @@ export async function POST(req: NextRequest) {
     ) {
       intent = { type: 'check_progress' };
     }
-    // Complete task — "done with X", "finished X", "completed X"
-    else if (/^(done|finished|completed|complete)\s*(with\s+)?(.+)/i.test(lowerText)) {
-      const match = lowerText.match(/^(?:done|finished|completed|complete)\s*(?:with\s+)?(.+)/i);
-      if (match) {
-        intent = { type: 'complete_task', query: match[1].trim() };
+    // Complete task — covers a wider net of phrasings:
+    //   "done with X" / "finished X" / "completed X" / "complete X"
+    //   "X is done" / "X done" / "I'm done with X"
+    //   "wrapped up X" / "knocked out X" / "crushed X" / "nailed X"
+    //   "mark X as complete" / "mark X complete" / "mark X done"
+    // We strip "with", "the", and trailing "as done" / "as complete" / "task".
+    else if (
+      /^(done|finished|completed|complete)\b/i.test(lowerText) ||
+      /^i.?m\s+done\s+(with\s+)?/i.test(lowerText) ||
+      /^(wrapped\s+up|knocked\s+out|crushed|nailed)\s+/i.test(lowerText) ||
+      /^mark\s+.+?\s+(as\s+)?(done|complete|completed|finished)\b/i.test(lowerText) ||
+      /^.{1,60}\s+(is\s+done|done)$/i.test(lowerText)
+    ) {
+      let q = '';
+      let m: RegExpMatchArray | null;
+      if ((m = lowerText.match(/^(?:done|finished|completed|complete)\s+(?:with\s+)?(.+?)(?:\s+(?:as\s+)?(?:done|complete|completed|finished))?$/i))) {
+        q = m[1];
+      } else if ((m = lowerText.match(/^i.?m\s+done\s+(?:with\s+)?(.+?)$/i))) {
+        q = m[1];
+      } else if ((m = lowerText.match(/^(?:wrapped\s+up|knocked\s+out|crushed|nailed)\s+(.+?)$/i))) {
+        q = m[1];
+      } else if ((m = lowerText.match(/^mark\s+(.+?)\s+(?:as\s+)?(?:done|complete|completed|finished)$/i))) {
+        q = m[1];
+      } else if ((m = lowerText.match(/^(.+?)\s+(?:is\s+)?done$/i))) {
+        q = m[1];
+      }
+      q = q.replace(/^the\s+/i, '').replace(/\s+task$/i, '').trim();
+      if (q) {
+        intent = { type: 'complete_task', query: q };
       } else {
         intent = await parseWhatsAppMessage(text);
       }
@@ -498,6 +543,9 @@ async function executeIntent(
     case 'delete_task':
       await handleDeleteTask(supabase, profile.id, phone, intent.query);
       break;
+    case 'move_task':
+      await handleMoveTask(supabase, profile.id, phone, intent.query);
+      break;
     case 'time_today':
       await handleTimeToday(supabase, profile.id, phone, profile.name);
       break;
@@ -541,7 +589,7 @@ async function executeIntent(
       const helpText = intent.type === 'off_topic'
         ? `🎯 I'm your EffortOS task assistant — I only handle daily tasks, errands, and focus sessions.\n\nTry:\n• *Tasks:* "Study math 2 poms" / "tasks" / "done 1"\n• *Errands:* "remind me to grab groceries" / "my errands"\n• *Status:* "progress" / "time today"\n• *Help:* "help"`
         : `🤔 I'm not sure what you mean. Try:\n\n📝 *Tasks*\n• "Study math 2 poms and review notes"\n• "tasks" — see today's list\n• Reply with a number to mark done\n\n🗒 *Errands*\n• "remind me to grab groceries"\n• "my errands" — see side list\n\n📊 *Status*\n• "progress" / "time today"\n\nType *"help"* for the full menu.`;
-      await sendTextMessage(phone, helpText);
+      await sendBotReply(phone, helpText);
       break;
     }
   }
@@ -578,7 +626,7 @@ async function handleAddTasks(
 
   if (error) {
     console.error('[WhatsApp] Failed to insert tasks:', JSON.stringify(error));
-    await sendTextMessage(phone, '❌ Something went wrong adding your tasks. Try again?');
+    await sendBotReply(phone, '❌ Something went wrong adding your tasks. Try again?');
     return;
   }
   console.log('[WhatsApp] Insert success:', data?.length, 'tasks');
@@ -589,7 +637,7 @@ async function handleAddTasks(
 
   const totalPoms = tasks.reduce((s, t) => s + t.pomodoros, 0);
 
-  await sendTextMessage(
+  await sendBotReply(
     phone,
     `📝 Added ${tasks.length} task${tasks.length > 1 ? 's' : ''} for today:\n\n${summary}\n\n⏱ Total: ${totalPoms} pomodoros. Let's crush it! 💪`,
   );
@@ -612,7 +660,7 @@ async function handleListTasks(
     .order('sort_order', { ascending: true });
 
   if (!tasks || tasks.length === 0) {
-    await sendTextMessage(
+    await sendBotReply(
       phone,
       `📋 No tasks for today yet, ${name}.\n\nSend me your tasks like:\n"Study React 2 pomodoros, review PRs, write docs for 3 pomodoros"`,
     );
@@ -640,7 +688,7 @@ async function handleListTasks(
   const totalDone = tasks.reduce((s: number, t: { pomodoros_done: number }) => s + t.pomodoros_done, 0);
   const totalTarget = tasks.reduce((s: number, t: { pomodoros_target: number }) => s + t.pomodoros_target, 0);
 
-  await sendTextMessage(
+  await sendBotReply(
     phone,
     `📋 *Today's Tasks* (${done}/${tasks.length} complete)\n\n${lines.join('\n')}\n\n⏱ ${totalDone}/${totalTarget} pomodoros done` +
     (incompleteTasks.length > 0 ? `\n\n💡 _Reply with a number to mark it done_` : ''),
@@ -665,7 +713,7 @@ async function handleCompleteTask(
     .eq('completed', false);
 
   if (!tasks || tasks.length === 0) {
-    await sendTextMessage(phone, '🎉 All tasks are already complete! Great work!');
+    await sendBotReply(phone, '🎉 All tasks are already complete! Great work!');
     return;
   }
 
@@ -682,7 +730,7 @@ async function handleCompleteTask(
     const taskList = tasks
       .map((t: { title: string }, i: number) => `${i + 1}. ${t.title}`)
       .join('\n');
-    await sendTextMessage(
+    await sendBotReply(
       phone,
       `🤔 Couldn't find a task matching "${query}".\n\nYour open tasks:\n${taskList}\n\nTry the number, or "Done with [task name]".`,
     );
@@ -698,7 +746,7 @@ async function handleCompleteTask(
     })
     .eq('id', match.id);
 
-  await sendTextMessage(
+  await sendBotReply(
     phone,
     `✅ *${match.title}* marked as complete! Nice work! 🔥`,
   );
@@ -795,7 +843,7 @@ async function handleCheckProgress(
   ];
   msg += `\n${motivators[Math.floor(Math.random() * motivators.length)]}`;
 
-  await sendTextMessage(phone, msg);
+  await sendBotReply(phone, msg);
 }
 
 // ── Journal entry (multi-step flow) ──
@@ -806,7 +854,7 @@ async function handleAddJournalPrompt(userId: string, phone: string, name: strin
   // entry. TTL is enforced server-side by Redis (10 min) — no manual sweep.
   await setPendingFlow(phone, { type: 'journal', userId });
 
-  await sendTextMessage(
+  await sendBotReply(
     phone,
     `📓 Ready to add your journal entry for today, ${name || 'friend'}.\n\nPlease send your journal entry now — I'll save it as-is. You have 10 minutes.`,
   );
@@ -843,7 +891,7 @@ async function handleSaveJournalEntry(
 
       if (error) throw error;
 
-      await sendTextMessage(
+      await sendBotReply(
         phone,
         `📓 Appended to today's journal entry. You now have ${updated.split('\n').length} lines total.`,
       );
@@ -859,14 +907,14 @@ async function handleSaveJournalEntry(
 
       if (error) throw error;
 
-      await sendTextMessage(
+      await sendBotReply(
         phone,
         `📓 Journal entry saved for today. Keep reflecting — it adds up!`,
       );
     }
   } catch (err) {
     console.error('[WhatsApp] Journal save error:', err);
-    await sendTextMessage(phone, '❌ Failed to save your journal entry. Please try again.');
+    await sendBotReply(phone, '❌ Failed to save your journal entry. Please try again.');
   }
 }
 
@@ -893,7 +941,7 @@ async function handleAddOtherTodos(
   todos: Array<{ title: string; estimated_minutes?: number | null }>,
 ) {
   if (!todos || todos.length === 0) {
-    await sendTextMessage(phone, '🤔 What errands should I add? Try: "remind me to grab groceries and call mom".');
+    await sendBotReply(phone, '🤔 What errands should I add? Try: "remind me to grab groceries and call mom".');
     return;
   }
 
@@ -912,14 +960,14 @@ async function handleAddOtherTodos(
   }).filter(r => r.title.length > 0);
 
   if (rows.length === 0) {
-    await sendTextMessage(phone, '🤔 Couldn\'t parse any errands from that. Try: "remind me to grab groceries".');
+    await sendBotReply(phone, '🤔 Couldn\'t parse any errands from that. Try: "remind me to grab groceries".');
     return;
   }
 
   const { error, data } = await supabase.from('other_todos').insert(rows).select('id, title, estimated_minutes');
   if (error) {
     console.error('[WhatsApp] Failed to insert other_todos:', JSON.stringify(error));
-    await sendTextMessage(phone, '❌ Something went wrong saving that. Try again?');
+    await sendBotReply(phone, '❌ Something went wrong saving that. Try again?');
     return;
   }
 
@@ -928,7 +976,7 @@ async function handleAddOtherTodos(
     return `  • ${r.title}${time ? ` — ${time}` : ''}`;
   }).join('\n');
 
-  await sendTextMessage(
+  await sendBotReply(
     phone,
     `🗒 Added to your side list:\n\n${lines}\n\n_These won't start a Pomodoro — say "my errands" to see the full list._`,
   );
@@ -948,7 +996,7 @@ async function handleListOtherTodos(
     .order('sort_order', { ascending: false });
 
   if (!todos || todos.length === 0) {
-    await sendTextMessage(
+    await sendBotReply(
       phone,
       `🗒 Your side list is empty${name ? `, ${name}` : ''}.\n\nAdd errands like: "remind me to grab groceries" or "pick Susan up at 4pm — 30 min".`,
     );
@@ -974,7 +1022,7 @@ async function handleListOtherTodos(
   await setErrandList(phone, (todos as Array<{ id: string }>).map(t => t.id));
   await setLastListType(phone, 'errands');
 
-  await sendTextMessage(
+  await sendBotReply(
     phone,
     `🗒 *Your side list* (${todos.length} errand${todos.length === 1 ? '' : 's'})\n\n${lines}${totalLine}\n\n💡 _Reply with a number to mark one done, or say "got the groceries"._`,
   );
@@ -988,7 +1036,7 @@ async function handleCompleteOtherTodo(
 ) {
   const q = fuzzyTitleQuery(query || '');
   if (!q) {
-    await sendTextMessage(phone, '🤔 Which errand did you finish? Try: "got the groceries".');
+    await sendBotReply(phone, '🤔 Which errand did you finish? Try: "got the groceries".');
     return;
   }
 
@@ -999,7 +1047,7 @@ async function handleCompleteOtherTodo(
     .eq('completed', false);
 
   if (!todos || todos.length === 0) {
-    await sendTextMessage(phone, '🎉 No open errands to complete — your side list is clear!');
+    await sendBotReply(phone, '🎉 No open errands to complete — your side list is clear!');
     return;
   }
 
@@ -1009,7 +1057,7 @@ async function handleCompleteOtherTodo(
 
   if (!match) {
     const list = (todos as Array<{ title: string }>).map((t, i) => `${i + 1}. ${t.title}`).join('\n');
-    await sendTextMessage(
+    await sendBotReply(
       phone,
       `🤔 Couldn't find an errand matching "${query}".\n\nYour open errands:\n${list}\n\nTry the number, or be more specific.`,
     );
@@ -1021,7 +1069,7 @@ async function handleCompleteOtherTodo(
     .update({ completed: true, completed_at: new Date().toISOString() })
     .eq('id', match.id);
 
-  await sendTextMessage(phone, `✅ *${match.title}* — done. One less thing on the side list. 🙌`);
+  await sendBotReply(phone, `✅ *${match.title}* — done. One less thing on the side list. 🙌`);
 }
 
 async function handleDeleteOtherTodo(
@@ -1032,7 +1080,7 @@ async function handleDeleteOtherTodo(
 ) {
   const q = (query || '').trim().toLowerCase();
   if (!q) {
-    await sendTextMessage(phone, '🤔 Which errand should I drop? Try: "drop the dentist errand".');
+    await sendBotReply(phone, '🤔 Which errand should I drop? Try: "drop the dentist errand".');
     return;
   }
 
@@ -1043,7 +1091,7 @@ async function handleDeleteOtherTodo(
     .eq('completed', false);
 
   if (!todos || todos.length === 0) {
-    await sendTextMessage(phone, '🗒 Your side list is already empty.');
+    await sendBotReply(phone, '🗒 Your side list is already empty.');
     return;
   }
 
@@ -1053,12 +1101,12 @@ async function handleDeleteOtherTodo(
   );
 
   if (!match) {
-    await sendTextMessage(phone, `🤔 Couldn't find an errand matching "${query}".`);
+    await sendBotReply(phone, `🤔 Couldn't find an errand matching "${query}".`);
     return;
   }
 
   await supabase.from('other_todos').delete().eq('id', match.id);
-  await sendTextMessage(phone, `🗑 Dropped *${match.title}* from your side list.`);
+  await sendBotReply(phone, `🗑 Dropped *${match.title}* from your side list.`);
 }
 
 async function sendHelpMessage(phone: string, name: string) {
@@ -1068,39 +1116,44 @@ async function sendHelpMessage(phone: string, name: string) {
   // blank line between sections. Examples are wrapped in italics so they
   // visually separate from the surrounding command labels without needing
   // mid-line bold tricks.
-  await sendTextMessage(
+  // suppressFooter: the help message IS the master command list, so the
+  // footer reminding the user to "send help" would be doubly redundant.
+  await sendBotReply(
     phone,
     `👋 Hey ${name}! Here's the cheat sheet.\n` +
     `\n` +
     `*📝 Daily Tasks* — focused work\n` +
     `• Add — _Study React 2 poms, review PRs_\n` +
     `• See list — _tasks_\n` +
-    `• Mark done — reply with the *number* or _done React_\n` +
-    `• Edit — _change React to 3 poms_\n` +
+    `• Mark done — reply with the *number*, or _done React_\n` +
+    `• Edit poms — _change React to 3 poms_\n` +
     `• Rename — _rename React to Vue_\n` +
     `• Delete — _delete React_\n` +
+    `• Move one — _move React to tomorrow_\n` +
     `\n` +
     `*🗒 Errands* — side list, no timer\n` +
     `• Add — _remind me to grab groceries_\n` +
     `• See list — _my errands_\n` +
-    `• Mark done — reply with the *number* or _got the groceries_\n` +
+    `• Mark done — reply with the *number*, or _got the groceries_\n` +
     `• Drop — _drop the dentist errand_\n` +
     `\n` +
     `*📊 Status*\n` +
     `• _progress_ — how am I doing today\n` +
     `• _time today_ — focus minutes so far\n` +
-    `• _streak_ — current daily streak\n` +
     `\n` +
     `*📅 Planning*\n` +
     `• _plan tomorrow_ — start tomorrow's list\n` +
     `• _carry all_ — move today's incomplete to tomorrow\n` +
-    `• _add journal entry_\n` +
+    `• _add journal entry_ — type or send a voice note\n` +
+    `\n` +
+    `*🎤 Voice notes*\n` +
+    `Send a voice note any time. To save it as a journal entry, *start with "journal"* — e.g. "journal: today felt heavy because…".\n` +
     `\n` +
     `*⚙️ Other*\n` +
-    `• 🎤 Voice notes work — send one, I'll transcribe\n` +
     `• 🤫 _shh_ — pause coaching nudges for 24h\n` +
     `\n` +
     `💡 Tip: whenever you see a numbered list, reply with the number to mark it done.`,
+    { suppressFooter: true },
   );
 }
 
@@ -1120,11 +1173,11 @@ async function handlePauseCoaching(
 
   if (error) {
     console.error('[WhatsApp] Failed to pause coaching:', error);
-    await sendTextMessage(phone, '❌ Something went wrong. Try again?');
+    await sendBotReply(phone, '❌ Something went wrong. Try again?');
     return;
   }
 
-  await sendTextMessage(
+  await sendBotReply(
     phone,
     `🤫 Got it, ${name}. Coaching paused for 24 hours. I won't send any nudges until tomorrow.\n\nText me anytime to manage tasks — I'm still here for that!`,
   );
@@ -1177,7 +1230,7 @@ async function handlePlanTomorrow(
     context_json: { planning_for: 'tomorrow', initiated_by: 'user' },
   });
 
-  await sendTextMessage(phone, msg);
+  await sendBotReply(phone, msg);
 }
 
 async function handleButtonReply(
@@ -1194,7 +1247,7 @@ async function handleButtonReply(
       .update({ completed: true })
       .eq('id', taskId)
       .eq('user_id', userId);
-    await sendTextMessage(phone, '✅ Task marked complete! 🔥');
+    await sendBotReply(phone, '✅ Task marked complete! 🔥');
   }
   // EOD carry-forward button
   if (buttonId === 'carry_all') {
@@ -1211,16 +1264,16 @@ async function handleVoiceNote(
 ) {
   const openaiKey = process.env.OPENAI_API_KEY;
   if (!openaiKey) {
-    await sendTextMessage(phone, '🎤 Voice notes aren\'t enabled yet — please type your message instead.');
+    await sendBotReply(phone, '🎤 Voice notes aren\'t enabled yet — please type your message instead.');
     return;
   }
 
-  await sendTextMessage(phone, '🎤 Got your voice note — transcribing...');
+  await sendBotReply(phone, '🎤 Got your voice note — transcribing...');
 
   try {
     const audioBuffer = await downloadWhatsAppMedia(audioId);
     if (!audioBuffer) {
-      await sendTextMessage(phone, '❌ Couldn\'t download the voice note. Try again?');
+      await sendBotReply(phone, '❌ Couldn\'t download the voice note. Try again?');
       return;
     }
 
@@ -1240,23 +1293,47 @@ async function handleVoiceNote(
 
     if (!whisperRes.ok) {
       console.error('[WhatsApp] Whisper API error:', await whisperRes.text());
-      await sendTextMessage(phone, '❌ Couldn\'t transcribe the voice note. Try typing instead.');
+      await sendBotReply(phone, '❌ Couldn\'t transcribe the voice note. Try typing instead.');
       return;
     }
 
     const whisperData = await whisperRes.json() as { text?: string };
     const transcript = whisperData.text?.trim();
     if (!transcript) {
-      await sendTextMessage(phone, '🤔 I couldn\'t make out any words. Try again or type it out.');
+      await sendBotReply(phone, '🤔 I couldn\'t make out any words. Try again or type it out.');
       return;
     }
 
-    // Feed transcript through the normal AI parser
+    // ── Voice journal fast path ──────────────────────────────────────────
+    // Whisper transcripts almost always start with capitalised English; the
+    // user can trigger journal capture by leading the voice note with
+    // "journal", "journal entry", or "journal:". We strip that prefix and
+    // save the rest verbatim — same as the typed multi-step flow but
+    // collapsed into a single message because dictating a separate "add
+    // journal entry" then a follow-up note is awkward over voice.
+    // Note: avoid the `s` (dotAll) regex flag — tsconfig targets ES2017
+    // where it isn't supported. Use [\s\S] to match across newlines.
+    const journalPrefix = transcript.match(
+      /^(?:journal(?:\s+entry)?|log\s+journal|today.?s?\s+journal|reflection)[\s:,.\-—–]+([\s\S]+)/i,
+    );
+    if (journalPrefix && journalPrefix[1] && journalPrefix[1].trim().length > 0) {
+      const entry = journalPrefix[1].trim();
+      await handleSaveJournalEntry(supabase, profile.id, phone, entry);
+      return;
+    }
+    // Bare "journal" / "journal entry" with nothing after → start the
+    // standard prompt-and-wait flow, same as typing "add journal entry".
+    if (/^(?:journal(?:\s+entry)?|log\s+journal|reflection)[\s.!?]*$/i.test(transcript)) {
+      await handleAddJournalPrompt(profile.id, phone, profile.name);
+      return;
+    }
+
+    // Otherwise feed through the normal AI parser.
     const intent = await parseWhatsAppMessage(transcript);
     await executeIntent(supabase, profile, phone, intent);
   } catch (err) {
     console.error('[WhatsApp] Voice note processing error:', err);
-    await sendTextMessage(phone, '❌ Something went wrong processing your voice note.');
+    await sendBotReply(phone, '❌ Something went wrong processing your voice note.');
   }
 }
 
@@ -1275,11 +1352,11 @@ async function handleCompleteTaskById(
     .single();
 
   if (!task) {
-    await sendTextMessage(phone, '❌ Task not found.');
+    await sendBotReply(phone, '❌ Task not found.');
     return;
   }
   if (task.completed) {
-    await sendTextMessage(phone, `"${task.title}" is already done ✅`);
+    await sendBotReply(phone, `"${task.title}" is already done ✅`);
     return;
   }
 
@@ -1288,7 +1365,7 @@ async function handleCompleteTaskById(
     .update({ completed: true })
     .eq('id', taskId);
 
-  await sendTextMessage(phone, `✅ "${task.title}" — done! Nice work 🔥`);
+  await sendBotReply(phone, `✅ "${task.title}" — done! Nice work 🔥`);
 }
 
 // ── Complete errand by ID (for numbered replies against the side list) ──
@@ -1310,11 +1387,11 @@ async function handleCompleteOtherTodoById(
     .single();
 
   if (!todo) {
-    await sendTextMessage(phone, '❌ Errand not found.');
+    await sendBotReply(phone, '❌ Errand not found.');
     return;
   }
   if (todo.completed) {
-    await sendTextMessage(phone, `"${todo.title}" is already done ✅`);
+    await sendBotReply(phone, `"${todo.title}" is already done ✅`);
     return;
   }
 
@@ -1323,7 +1400,7 @@ async function handleCompleteOtherTodoById(
     .update({ completed: true, completed_at: new Date().toISOString() })
     .eq('id', todoId);
 
-  await sendTextMessage(phone, `✅ *${todo.title}* — done. One less thing on the side list. 🙌`);
+  await sendBotReply(phone, `✅ *${todo.title}* — done. One less thing on the side list. 🙌`);
 }
 
 // ── Edit task (change pomodoros or rename) ──
@@ -1346,7 +1423,7 @@ async function handleEditTask(
     .eq('completed', false);
 
   if (!tasks || tasks.length === 0) {
-    await sendTextMessage(phone, '📋 No tasks to edit today.');
+    await sendBotReply(phone, '📋 No tasks to edit today.');
     return;
   }
 
@@ -1355,7 +1432,7 @@ async function handleEditTask(
   const q = fuzzyTitleQuery(query);
   const match = tasks.find((t: { title: string }) => normalizeForMatch(t.title).includes(q));
   if (!match) {
-    await sendTextMessage(phone, `🤔 Couldn't find a task matching "${query}".`);
+    await sendBotReply(phone, `🤔 Couldn't find a task matching "${query}".`);
     return;
   }
 
@@ -1372,7 +1449,7 @@ async function handleEditTask(
   }
 
   if (Object.keys(updates).length === 0) {
-    await sendTextMessage(phone, '🤔 Not sure what to change. Try "change X to 3 pomodoros" or "rename X to Y".');
+    await sendBotReply(phone, '🤔 Not sure what to change. Try "change X to 3 pomodoros" or "rename X to Y".');
     return;
   }
 
@@ -1381,7 +1458,7 @@ async function handleEditTask(
     .update(updates)
     .eq('id', match.id);
 
-  await sendTextMessage(phone, `✏️ "${match.title}" updated: ${changes.join(', ')}`);
+  await sendBotReply(phone, `✏️ "${match.title}" updated: ${changes.join(', ')}`);
 }
 
 // ── Delete task ──
@@ -1401,19 +1478,83 @@ async function handleDeleteTask(
     .eq('date', todayKey);
 
   if (!tasks || tasks.length === 0) {
-    await sendTextMessage(phone, '📋 No tasks to delete.');
+    await sendBotReply(phone, '📋 No tasks to delete.');
     return;
   }
 
   const q = fuzzyTitleQuery(query);
   const match = tasks.find((t: { title: string }) => normalizeForMatch(t.title).includes(q));
   if (!match) {
-    await sendTextMessage(phone, `🤔 Couldn't find a task matching "${query}".`);
+    await sendBotReply(phone, `🤔 Couldn't find a task matching "${query}".`);
     return;
   }
 
   await supabase.from('daily_tasks').delete().eq('id', match.id);
-  await sendTextMessage(phone, `🗑 "${match.title}" deleted.`);
+  await sendBotReply(phone, `🗑 "${match.title}" deleted.`);
+}
+
+// ── Move a single task to tomorrow ──
+// Selective version of handleCarryAllForward. Same remaining-poms math —
+// if the user did 1 of 3 poms, only 2 carry over — but only touches one
+// task. Like carry_all, this is an UPDATE not an INSERT, so the row
+// disappears from today and reappears on tomorrow without duplication.
+async function handleMoveTask(
+  supabase: SupabaseClient,
+  userId: string,
+  phone: string,
+  query: string,
+) {
+  const tz = await getUserTimezone(supabase, userId);
+  const todayKey = todayKeyInTz(tz);
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowKey = dateKeyInTz(tz, tomorrow);
+
+  // Only consider today's INCOMPLETE tasks — moving a completed task to
+  // tomorrow makes no sense, and would erase today's completion record.
+  const { data: tasks } = await supabase
+    .from('daily_tasks')
+    .select('id, title, pomodoros_target, pomodoros_done')
+    .eq('user_id', userId)
+    .eq('date', todayKey)
+    .eq('completed', false);
+
+  if (!tasks || tasks.length === 0) {
+    await sendBotReply(phone, '📋 No incomplete tasks today to move.');
+    return;
+  }
+
+  const q = fuzzyTitleQuery(query);
+  const match = (tasks as Array<{ id: string; title: string; pomodoros_target: number; pomodoros_done: number }>).find(t =>
+    normalizeForMatch(t.title).includes(q),
+  );
+  if (!match) {
+    const list = tasks.map((t: { title: string }, i: number) => `${i + 1}. ${t.title}`).join('\n');
+    await sendBotReply(
+      phone,
+      `🤔 Couldn't find an incomplete task matching "${query}".\n\nYour open tasks:\n${list}`,
+    );
+    return;
+  }
+
+  const target = match.pomodoros_target || 1;
+  const done = match.pomodoros_done || 0;
+  const remaining = Math.max(1, target - done);
+
+  await supabase
+    .from('daily_tasks')
+    .update({
+      date: tomorrowKey,
+      pomodoros_target: remaining,
+      pomodoros_done: 0,
+      scheduled_from: todayKey,
+    })
+    .eq('id', match.id);
+
+  const carriedNote = done > 0
+    ? ` (${done} pom${done === 1 ? '' : 's'} done today, ${remaining} carrying over)`
+    : '';
+  await sendBotReply(phone, `📅 Moved *${match.title}* to tomorrow${carriedNote}.`);
 }
 
 // ── Time today — how much focused work ──
@@ -1451,7 +1592,7 @@ async function handleTimeToday(
 
   const timeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
 
-  await sendTextMessage(
+  await sendBotReply(
     phone,
     `⏱ *Today's Focus Time*\n\n` +
     `Sessions: ${sessionCount}\n` +
@@ -1497,7 +1638,7 @@ async function handleCarryAllForward(
     .eq('completed', false);
 
   if (!incomplete || incomplete.length === 0) {
-    await sendTextMessage(phone, '✅ Nothing to carry forward — all done!');
+    await sendBotReply(phone, '✅ Nothing to carry forward — all done!');
     return;
   }
 
@@ -1523,7 +1664,7 @@ async function handleCarryAllForward(
     }),
   );
 
-  await sendTextMessage(
+  await sendBotReply(
     phone,
     `📅 Carried ${incomplete.length} task${incomplete.length !== 1 ? 's' : ''} to tomorrow. Fresh start incoming!`,
   );
