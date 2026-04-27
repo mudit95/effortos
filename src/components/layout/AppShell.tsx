@@ -9,6 +9,7 @@ import { OnboardingFlow } from '@/components/onboarding/OnboardingFlow';
 import { Dashboard } from '@/components/dashboard/Dashboard';
 import { FocusMode } from '@/components/timer/FocusMode';
 import { PiPTimerOverlay } from '@/components/timer/PiPTimerOverlay';
+import { TimerEngine } from '@/components/timer/TimerEngine';
 import { PWAInstallPrompt } from '@/components/pwa/PWAInstallPrompt';
 import { ToastContainer } from '@/components/ui/toast';
 import { ConnectionBanner } from '@/components/layout/ConnectionBanner';
@@ -21,6 +22,11 @@ import { Sparkles } from 'lucide-react';
 export function AppShell() {
   const { currentView, isLoading, initializeApp } = useStore();
   const dashboardMode = useStore(s => s.dashboardMode);
+  // TimerEngine controls document.title while a session is active so the
+  // browser tab shows the live countdown. We listen on timerState here so
+  // that when the timer goes idle the view-based title is restored — the
+  // effect would otherwise not re-fire (its other deps haven't changed).
+  const timerState = useStore(s => s.timerState);
 
   // Register service worker for PWA
   useServiceWorker();
@@ -82,6 +88,9 @@ export function AppShell() {
   }, []);
 
   useEffect(() => {
+    // TimerEngine owns document.title during active sessions (running /
+    // paused / break). We only set the view title when the timer is idle.
+    if (timerState !== 'idle') return;
     if (currentView === 'dashboard') {
       const modeLabels: Record<string, string> = {
         daily: 'Daily Grind',
@@ -98,7 +107,7 @@ export function AppShell() {
       };
       document.title = titles[currentView] || 'EffortOS';
     }
-  }, [currentView, dashboardMode]);
+  }, [currentView, dashboardMode, timerState]);
 
   if (isLoading) {
     return <BootLoader />;
@@ -125,6 +134,11 @@ export function AppShell() {
           {currentView === 'focus' && <FocusMode />}
         </motion.div>
       </AnimatePresence>
+
+      {/* Singleton timer engine — owns the Web Worker, syncs ticks into the
+          store, and drives the live tab title. Mounted once here so every
+          consumer of useTimer() shares one engine instead of spawning four. */}
+      <TimerEngine />
 
       {/* PiP overlay — renders timer into floating PiP window when active */}
       <PiPTimerOverlay />

@@ -9,6 +9,7 @@ import { useStore } from '@/store/useStore';
 import { formatDuration } from '@/lib/utils';
 import { X, Play, Pause, RotateCcw, SkipForward, Keyboard, Wind } from 'lucide-react';
 import { PiPButton } from './PiPButton';
+import { usePiP } from '@/hooks/usePiP';
 import { AmbientSoundToggle } from './AmbientSoundToggle';
 import { BreathingGuide } from './BreathingGuide';
 import { warmUpAudio } from '@/lib/sounds';
@@ -58,10 +59,12 @@ export function FocusMode() {
     return incomplete[0];
   }, [dashboardMode, dailyTasks, activeDailyTaskId]);
 
-  const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showHint, setShowHint] = useState(true);
   const [meditating, setMeditating] = useState(false);
+
+  // PiP toggle — exposed both via the in-view button and the 'P' shortcut.
+  const { isPiPSupported, isPiPActive, openPiP, closePiP } = usePiP();
 
   // Keep screen awake whenever we're in focus mode and the timer is
   // actively running or on a break (not idle/paused).
@@ -91,25 +94,21 @@ export function FocusMode() {
     return () => clearTimeout(t);
   }, []);
 
+  // Closing focus mode is now pure navigation — the timer keeps running
+  // in the background (TimerEngine owns the worker at AppShell level).
+  // Users can pop back into focus mode any time, or stop the session
+  // with the explicit Reset/Pause buttons. Previously this fired a
+  // confirm dialog that called resetTimer() on confirm, which silently
+  // killed the session — and on idle/break it skipped the dialog and
+  // just navigated, leaving the worker ticking. Now the behaviour is
+  // consistent: closing focus mode never touches the timer.
   const handleExit = () => {
-    if (timerState === 'running' || timerState === 'paused') {
-      setShowExitConfirm(true);
-    } else {
-      setView('dashboard');
-    }
-  };
-
-  const confirmExit = () => {
-    resetTimer();
-    setShowExitConfirm(false);
     setView('dashboard');
   };
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (showExitConfirm) return;
-
       // Don't hijack typing in inputs (e.g., the volume slider or any
       // future text field inside the focus view).
       const target = e.target as HTMLElement | null;
@@ -128,11 +127,23 @@ export function FocusMode() {
         else if (timerState === 'break') skipBreak();
       }
       if (e.key === '?') setShowShortcuts(s => !s);
+      // 'P' toggles the floating Picture-in-Picture timer. The keypress
+      // counts as a user gesture, which the Document PiP API requires
+      // for window.documentPictureInPicture.requestWindow(). Use it
+      // before Cmd-Tab'ing away to keep the timer floating on top.
+      if ((e.key === 'p' || e.key === 'P') && isPiPSupported) {
+        e.preventDefault();
+        if (isPiPActive) {
+          closePiP();
+        } else {
+          openPiP();
+        }
+      }
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timerState, showExitConfirm]);
+  }, [timerState, isPiPActive, isPiPSupported]);
 
   const focusDuration = user?.settings?.focus_duration || 25 * 60;
   const breakDuration = user?.settings?.break_duration || 5 * 60;
@@ -226,6 +237,12 @@ export function FocusMode() {
               <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-white/60 font-mono text-[10px]">Esc</kbd>
               <span>Exit focus mode</span>
             </div>
+            {isPiPSupported && (
+              <div className="flex items-center gap-3 text-white/40">
+                <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-white/60 font-mono text-[10px]">P</kbd>
+                <span>{isPiPActive ? 'Close floating timer' : 'Pop out floating timer'}</span>
+              </div>
+            )}
             <div className="flex items-center gap-3 text-white/40">
               <kbd className="px-1.5 py-0.5 bg-white/10 rounded text-white/60 font-mono text-[10px]">?</kbd>
               <span>Toggle this help</span>
@@ -489,50 +506,6 @@ export function FocusMode() {
           <PiPButton />
         </div>
       </div>
-
-      {/* Exit confirmation modal */}
-      <AnimatePresence>
-        {showExitConfirm && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 z-20 flex items-center justify-center bg-black/70 backdrop-blur-sm"
-          >
-            <motion.div
-              initial={{ scale: 0.95, y: 10 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.95, y: 10 }}
-              className="bg-[#131820] border border-white/10 rounded-2xl p-6 max-w-xs mx-4 text-center shadow-2xl"
-            >
-              <h3 className="text-base font-semibold text-white mb-2">Step away?</h3>
-              <p className="text-sm text-white/40 mb-6">
-                You have {formatDuration(timeRemaining)} left in this session.
-                Leaving will discard this session&apos;s progress — consider pausing
-                instead if you plan to come back.
-              </p>
-              <div className="flex gap-3">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="flex-1"
-                  onClick={() => setShowExitConfirm(false)}
-                >
-                  Stay
-                </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  className="flex-1"
-                  onClick={confirmExit}
-                >
-                  Leave
-                </Button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Post-session signup prompt for guest quick pomodoros */}
       <QuickPomodoroPrompt />
