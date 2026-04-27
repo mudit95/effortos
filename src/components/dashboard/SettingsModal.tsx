@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
-import { X, Bell, Volume2, Clock, Palette, Check, CreditCard, AlertTriangle, Mail, Globe, MessageCircle, Download, Trash2 } from 'lucide-react';
+import { X, Bell, Clock, Palette, Check, CreditCard, AlertTriangle, Mail, Globe, MessageCircle, Download, Trash2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import * as storage from '@/lib/storage';
 import { DISPLAY_PRICE_PER_MONTH } from '@/lib/pricing';
@@ -233,7 +233,7 @@ export function SettingsModal() {
         user: { ...user, onboarding_completed: false },
       });
 
-    } catch (err) {
+    } catch (_err) {
       setResetError('Something went wrong. Please try again.');
     } finally {
       setResetLoading(false);

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
-import { extractIncomingMessage, sendTextMessage, sendButtonMessage, downloadWhatsAppMedia } from '@/lib/whatsapp';
+import { extractIncomingMessage, sendTextMessage, downloadWhatsAppMedia } from '@/lib/whatsapp';
 import { parseWhatsAppMessage, type WAIntent } from '@/lib/whatsapp-ai';
 import { getUserTimezone, todayKeyInTz, dateKeyInTz } from '@/lib/user-date';
 import {
@@ -1370,7 +1370,7 @@ async function handleTimeToday(
   supabase: SupabaseClient,
   userId: string,
   phone: string,
-  name: string,
+  _name: string,
 ) {
   const tz = await getUserTimezone(supabase, userId);
   const todayKey = todayKeyInTz(tz);

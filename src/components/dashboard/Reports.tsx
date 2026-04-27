@@ -1,16 +1,15 @@
 'use client';
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { useStore } from '@/store/useStore';
 import * as storage from '@/lib/storage';
 import * as api from '@/lib/api';
-import { sessionsToHours, formatDate, getLocalTodayKey } from '@/lib/utils';
-import { Session } from '@/types';
-import { TASK_TAGS, type TaskTagId, type DailyTask } from '@/types';
+import { getLocalTodayKey } from '@/lib/utils';
+import { TASK_TAGS, type DailyTask } from '@/types';
 import { HintBanner } from '@/components/ui/HintBanner';
 import {
-  BarChart3, Calendar, Clock, Flame, Target,
+  BarChart3, Clock, Flame, Target,
   ChevronLeft, ChevronRight, TrendingUp, CheckCircle2,
   Tag,
 } from 'lucide-react';
@@ -172,7 +171,6 @@ function aggregatePeriod(dates: string[], focusDuration: number, tasksByDate: Re
 function BarChart({
   data,
   maxVal,
-  labelKey,
   accentColor = 'var(--accent, #22d3ee)',
 }: {
   data: { label: string; value: number; isToday?: boolean }[];

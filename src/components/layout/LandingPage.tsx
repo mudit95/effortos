@@ -1,13 +1,13 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, useMotionValue, useTransform, animate, useInView, useScroll, useSpring, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
 import {
   Sparkles, ArrowRight, Brain, BarChart3, Target, Clock,
   ChevronDown, Zap, MessageCircle, Calendar, TrendingUp,
-  CheckCircle2, Play, Timer, RotateCcw, Award, Flame,
+  CheckCircle2, Play, Timer, RotateCcw, Flame,
   ListChecks, Bot, Mail, Shield, Pause,
 } from 'lucide-react';
 import Link from 'next/link';

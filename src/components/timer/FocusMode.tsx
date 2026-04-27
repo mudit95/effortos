@@ -331,7 +331,7 @@ export function FocusMode() {
       {/* Breathing meditation overlay — wraps around the timer ring */}
       <AnimatePresence>
         {meditating && isBreak && (
-          <BreathingGuide onClose={() => setMeditating(false)} />
+          <BreathingGuide />
         )}
       </AnimatePresence>
 

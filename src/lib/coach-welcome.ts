@@ -6,7 +6,6 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { sendTextMessage } from '@/lib/whatsapp';
 import { generateCoachMessage } from '@/lib/coach-ai';
 import type { UserContext } from '@/lib/coach-engine';
-import { todayKeyInTz } from '@/lib/user-date';
 
 export async function sendProWelcome(userId: string): Promise<void> {
   const supabase = createServiceClient();
@@ -24,7 +23,6 @@ export async function sendProWelcome(userId: string): Promise<void> {
   }
 
   const tz = profile.timezone || 'Asia/Kolkata';
-  const todayKey = todayKeyInTz(tz);
 
   // Check if already sent welcome
   const { count } = await supabase

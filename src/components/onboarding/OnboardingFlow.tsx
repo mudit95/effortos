@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { SelectGroup } from '@/components/ui/select-group';
 import { useStore } from '@/store/useStore';
-import { ArrowRight, ArrowLeft, Target, Brain, Clock, Sparkles, Heart, X } from 'lucide-react';
+import { ArrowRight, ArrowLeft, Sparkles, X } from 'lucide-react';
 
 const STEP_COUNT = 4;
 
@@ -76,13 +76,6 @@ export function OnboardingFlow() {
     setDirection(-1);
     setOnboardingStep(Math.max(0, step - 1));
   };
-
-  const stepIcons = [
-    <Target key="target" className="w-5 h-5" />,
-    <Heart key="heart" className="w-5 h-5" />,
-    <Brain key="brain" className="w-5 h-5" />,
-    <Clock key="clock" className="w-5 h-5" />,
-  ];
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">

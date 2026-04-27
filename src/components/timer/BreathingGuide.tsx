@@ -19,7 +19,11 @@ const CYCLE_MS = INHALE_MS + EXHALE_MS;
 
 type Phase = 'inhale' | 'exhale';
 
-export function BreathingGuide({ onClose }: { onClose?: () => void }) {
+export function BreathingGuide() {
+  // Initial state of 'inhale' is correct for first mount — the interval below
+  // recomputes phase from wall-clock within 100ms anyway. We don't reset
+  // phase synchronously inside the effect because react-hooks/set-state-in-effect
+  // forbids it (cascading-render risk).
   const [phase, setPhase] = useState<Phase>('inhale');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Initialise to 0 and stamp inside the effect — calling Date.now() during
@@ -29,7 +33,6 @@ export function BreathingGuide({ onClose }: { onClose?: () => void }) {
 
   useEffect(() => {
     startRef.current = Date.now();
-    setPhase('inhale');
 
     intervalRef.current = setInterval(() => {
       const elapsed = (Date.now() - startRef.current) % CYCLE_MS;

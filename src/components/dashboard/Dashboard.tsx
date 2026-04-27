@@ -4,8 +4,6 @@ import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store/useStore';
 import { Button } from '@/components/ui/button';
-import { EffortRing } from './EffortRing';
-import { MilestoneTracker } from './MilestoneTracker';
 import { GoalProgressBar } from './GoalProgressBar';
 import { FeedbackModal } from './FeedbackModal';
 import { SessionNotesModal } from './SessionNotesModal';
@@ -426,7 +424,7 @@ function LongTermStreakCalendar({
 }
 
 // Header component
-function DashboardHeader({ user, onLogout, onSettings, onHistory, onMeditate }: {
+function DashboardHeader({ onLogout, onSettings, onHistory, onMeditate }: {
   user: { name: string };
   onLogout: () => void;
   onSettings: () => void;

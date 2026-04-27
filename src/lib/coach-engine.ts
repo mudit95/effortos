@@ -205,7 +205,6 @@ export async function evaluateNudges(
     for (const threshold of milestoneThresholds) {
       if (pct >= threshold && pct < threshold + 5) {
         // Close to a threshold — check if we already celebrated this one
-        const milestoneKey = `goal_milestone_${threshold}`;
         const { count } = await supabase
           .from('coach_log')
           .select('id', { count: 'exact', head: true })

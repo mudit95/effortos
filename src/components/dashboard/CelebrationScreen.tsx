@@ -4,7 +4,7 @@ import React, { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
-import { Trophy, Clock, Target, Flame, ArrowRight, Sparkles } from 'lucide-react';
+import { Trophy, Clock, Target, Flame, ArrowRight } from 'lucide-react';
 import { sessionsToHours } from '@/lib/utils';
 
 const CONFETTI_COLORS = ['#22d3ee', '#3b82f6', '#22c55e', '#eab308', '#ef4444', '#a855f7'];
@@ -79,7 +79,6 @@ export function CelebrationScreen() {
   const showCelebration = useStore(s => s.showCelebration);
   const setShowCelebration = useStore(s => s.setShowCelebration);
   const activeGoal = useStore(s => s.activeGoal);
-  const setView = useStore(s => s.setView);
 
   // `Date.now()` is impure and cannot be called in render body OR in a
   // useMemo (React 19 rule: hooks must be idempotent). A useState lazy

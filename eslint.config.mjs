@@ -13,6 +13,23 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
   ]),
+  {
+    rules: {
+      // Allow intentionally-unused args/destructures by prefixing with `_`.
+      // Mirrors the convention recommended by typescript-eslint and matches
+      // common JS/TS practice. Without this, every `(_e: Event)` placeholder
+      // and every `{ _table }: { _table: string }` lint-warns.
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+          destructuredArrayIgnorePattern: "^_",
+        },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;

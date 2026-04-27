@@ -39,7 +39,7 @@ export function ConsistencyGrid({ dailySessions, className = '' }: ConsistencyGr
         </div>
         {/* Grid */}
         <div className="grid grid-cols-7 gap-1.5">
-          {last28.map((day, i) => (
+          {last28.map((day) => (
             <div
               key={day.date}
               className={cn(

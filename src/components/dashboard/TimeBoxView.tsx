@@ -201,7 +201,7 @@ const ACCENT_CLASSES: Record<AccentKey, { border: string; text: string; glow: st
 };
 
 function Column({
-  id,
+  id: _id,
   label,
   hint,
   tasks,

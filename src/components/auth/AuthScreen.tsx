@@ -63,7 +63,7 @@ export function AuthScreen() {
       if (data.session) {
         initializeApp();
       }
-    } catch (err) {
+    } catch (_err) {
       setError('Something went wrong. Please try again.');
     } finally {
       setLoading(false);
@@ -97,7 +97,7 @@ export function AuthScreen() {
       if (data.session) {
         initializeApp();
       }
-    } catch (err) {
+    } catch (_err) {
       setError('Something went wrong. Please try again.');
     } finally {
       setLoading(false);
@@ -134,7 +134,7 @@ export function AuthScreen() {
       }
 
       setResetSent(true);
-    } catch (err) {
+    } catch (_err) {
       setError('Failed to send reset link. Please try again.');
     } finally {
       setLoading(false);

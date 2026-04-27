@@ -3,7 +3,7 @@
 import { create } from 'zustand';
 import {
   User, Goal, Session, TimerState, OnboardingData,
-  DashboardStats, RecalibrationResult, Toast, UserSettings, DEFAULT_SETTINGS,
+  DashboardStats, RecalibrationResult, Toast, UserSettings,
   DashboardMode, DailyTask, DailySession, RepeatingTaskTemplate, TaskTagId,
   SubscriptionStatus, SubscriptionInfo, PlanTier, FeedbackEntry,
   JournalEntry, JournalMoodId,
@@ -14,7 +14,7 @@ import { estimateEffort, recalibrate, shouldTriggerFeedback, calculateTimeBias }
 import { getStreaks, sessionsToHours, generateId } from '@/lib/utils';
 import { playSound } from '@/lib/sounds';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
-import { resetProvider as resetDataLayerProvider, migrateLocalDataToCloud } from '@/lib/dataLayer';
+import { resetProvider as resetDataLayerProvider } from '@/lib/dataLayer';
 import * as api from '@/lib/api';
 import {
   buildCoachContext,
@@ -367,7 +367,7 @@ export const useStore = create<AppState>((set, get) => ({
       return;
     }
 
-    let isCloud = false;
+    let _isCloud = false;
 
     try {
     // Check Supabase session first (only if configured)
@@ -375,7 +375,7 @@ export const useStore = create<AppState>((set, get) => ({
       const supabase = createClient();
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        isCloud = true;
+        _isCloud = true;
 
         // Fetch profile from Supabase
         const { data: profile } = await supabase
@@ -1164,7 +1164,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   completeTimerSession: () => {
-    const { currentSessionId, activeGoal, user, dashboardMode, activeDailyTaskId, dailyViewDate } = get();
+    const { currentSessionId, activeGoal, user, dashboardMode, activeDailyTaskId } = get();
     const focusDuration = user?.settings?.focus_duration || 25 * 60;
     const breakDuration = user?.settings?.break_duration || 5 * 60;
 

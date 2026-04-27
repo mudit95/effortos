@@ -154,7 +154,6 @@ export function TimerEngine() {
         }, 1000);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timerState]);
 
   // ── Live tab title ───────────────────────────────────────────────

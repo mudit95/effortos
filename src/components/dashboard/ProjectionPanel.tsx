@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Card, CardTitle } from '@/components/ui/card';
 import { Goal, DashboardStats } from '@/types';
-import { formatRelativeDate, sessionsToHours } from '@/lib/utils';
+import { sessionsToHours } from '@/lib/utils';
 import { TrendingDown, TrendingUp, Minus, Calendar, Clock, Zap } from 'lucide-react';
 
 interface ProjectionPanelProps {

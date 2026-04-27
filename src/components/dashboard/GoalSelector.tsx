@@ -3,8 +3,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store/useStore';
-import { Button } from '@/components/ui/button';
-import { Target, Plus, Pause, Play, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, ChevronDown, ChevronUp } from 'lucide-react';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
@@ -12,7 +11,6 @@ export function GoalSelector() {
   const activeGoal = useStore(s => s.activeGoal);
   const goals = useStore(s => s.goals);
   const switchToGoal = useStore(s => s.switchToGoal);
-  const pauseGoal = useStore(s => s.pauseGoal);
 
   const [expanded, setExpanded] = useState(false);
 

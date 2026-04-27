@@ -1,7 +1,7 @@
 // Supabase API Data Layer
 // Mirrors storage.ts interface but reads/writes to Supabase instead of localStorage.
 
-import { Goal, Session, User, FeedbackEntry, DailySession, UserSettings, DEFAULT_SETTINGS, DailyTask, RepeatingTaskTemplate, TaskTagId, Milestone, DashboardMode, JournalEntry, JournalMoodId, ShadowGoal, TimeBlock } from '@/types';
+import { Goal, Session, User, FeedbackEntry, DailySession, UserSettings, DEFAULT_SETTINGS, DailyTask, RepeatingTaskTemplate, TaskTagId, Milestone, JournalEntry, JournalMoodId, ShadowGoal, TimeBlock } from '@/types';
 import { createClient } from './supabase/client';
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -248,7 +248,7 @@ export async function updateGoal(id: string, updates: Partial<Goal>): Promise<Go
   const supabase = getSupabase();
 
   // Separate embedded arrays from flat fields
-  const { milestones, feedback_bias_log, ...flatUpdates } = updates;
+  const { milestones: _milestones, feedback_bias_log: _feedback_bias_log, ...flatUpdates } = updates;
 
   // Remove fields that aren't columns
   const safeUpdates: Record<string, unknown> = {};

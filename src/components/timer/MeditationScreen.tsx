@@ -49,14 +49,16 @@ export function MeditationScreen({ onClose }: { onClose: () => void }) {
 
   useEffect(() => { warmUpAudio(); }, []);
 
-  // Breathing cycle
+  // Breathing cycle. We don't reset phase synchronously here because
+  // react-hooks/set-state-in-effect forbids it. The interval below
+  // recomputes phase from wall-clock within 100ms, so any stale phase
+  // value from a prior run self-corrects almost immediately.
   useEffect(() => {
     if (state !== 'running') {
       if (breathRef.current) clearInterval(breathRef.current);
       return;
     }
     breathStartRef.current = Date.now();
-    setPhase('inhale');
     breathRef.current = setInterval(() => {
       const elapsed = (Date.now() - breathStartRef.current) % CYCLE_MS;
       setPhase(elapsed < INHALE_MS ? 'inhale' : 'exhale');

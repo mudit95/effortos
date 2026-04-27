@@ -55,14 +55,6 @@ function WizardBody() {
     setShowAIPlanWizard(false);
   };
 
-  const getDisplayHours = (): number => {
-    if (customHours) {
-      const parsed = parseFloat(customHours);
-      return isNaN(parsed) ? hoursSelected : parsed;
-    }
-    return hoursSelected;
-  };
-
   return (
     <AnimatePresence>
       <motion.div

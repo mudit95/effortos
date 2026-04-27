@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import {
-  Users, Plus, X, Copy, Check, UserMinus,
+  Users, Plus, Copy, Check, UserMinus,
   Flame, Calendar, Loader2,
 } from 'lucide-react';
 

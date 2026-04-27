@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store/useStore';
-import { Sparkles, X, Flame, AlertCircle, TrendingUp, ChevronRight } from 'lucide-react';
+import { Sparkles, X, Flame, AlertCircle, TrendingUp } from 'lucide-react';
 
 /**
  * Personalized "Welcome back" card shown at the top of the dashboard
@@ -25,7 +25,6 @@ export function DailyBrief() {
   const activeGoal = useStore(s => s.activeGoal);
   const dashboardStats = useStore(s => s.dashboardStats);
   const dailyTasks = useStore(s => s.dailyTasks);
-  const dashboardMode = useStore(s => s.dashboardMode);
 
   const [dismissed, setDismissed] = useState(false);
   const [aiLine, setAiLine] = useState<string | null>(null);
@@ -44,13 +43,6 @@ export function DailyBrief() {
     try { sessionStorage.setItem(SESSION_KEY, 'true'); } catch {}
   };
 
-  // Compute yesterday's unfinished tasks
-  const yesterdayKey = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    return d.toISOString().split('T')[0];
-  }, []);
-
   // We only have today's tasks in the store by default.
   // For the brief, we compute insights from what we have.
   const todayTasks = dailyTasks;
@@ -63,7 +55,7 @@ export function DailyBrief() {
   // Goal pace
   const paceInfo = useMemo(() => {
     if (!activeGoal || !dashboardStats) return null;
-    const { sessions_completed, estimated_sessions_current } = activeGoal;
+    const { estimated_sessions_current } = activeGoal;
     const pct = dashboardStats.completion_percentage;
     if (estimated_sessions_current <= 0) return null;
 

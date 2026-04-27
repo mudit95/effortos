@@ -1,8 +1,8 @@
 // AI Effort Estimation Engine
 // Hybrid estimation: AI base estimate * adjustment factors
 
-import { EstimationInput, EstimationOutput, Milestone, RecalibrationResult, Goal, FeedbackEntry } from '@/types';
-import { generateId, clampBias } from './utils';
+import { EstimationInput, EstimationOutput, Milestone, RecalibrationResult, Goal } from '@/types';
+import { generateId } from './utils';
 
 // Goal complexity classification using keyword analysis
 interface GoalClassification {
@@ -95,7 +95,7 @@ export function calculateTimeBias(userEstimateHours: number | undefined, aiSessi
 }
 
 // Generate milestones based on total sessions
-function generateMilestones(totalSessions: number, goalTitle: string): Milestone[] {
+function generateMilestones(totalSessions: number, _goalTitle: string): Milestone[] {
   const milestones: Milestone[] = [];
   const milestoneCount = Math.min(5, Math.max(2, Math.floor(totalSessions / 10)));
   const interval = Math.floor(totalSessions / (milestoneCount + 1));
@@ -149,7 +149,6 @@ export function estimateEffort(input: EstimationInput): EstimationOutput {
     const daysAvailable = Math.max(1, Math.ceil((deadlineDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
     if (estimatedDays > daysAvailable) {
       // Need to increase daily sessions
-      const needed = Math.ceil(estimatedSessions / daysAvailable);
       estimatedDays = daysAvailable;
     }
   }

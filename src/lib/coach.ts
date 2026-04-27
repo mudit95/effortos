@@ -7,7 +7,7 @@
  * 3. Weekly Insights — periodic progress summaries
  */
 
-import type { Goal, DailyTask, Session, FeedbackEntry } from '@/types';
+import type { FeedbackEntry } from '@/types';
 
 // ─── Cost & abuse bounds ────────────────────────────────────────────
 //
@@ -30,7 +30,6 @@ const MAX_NOTES_LEN = 500;
 function safeText(input: string | undefined | null, max: number): string {
   if (!input) return '';
   // Strip control chars except newline/tab; trim length.
-  // eslint-disable-next-line no-control-regex
   return String(input).replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, '').slice(0, max);
 }
 
@@ -159,7 +158,6 @@ export function buildPlanMyDayPrompt(req: PlanMyDayRequest): { system: string; u
   const { targetDate, intake } = req;
   const activeGoals = context.goals.filter(g => g.status === 'active');
   const focusMin = Math.round(context.focusDuration / 60);
-  const focusSeconds = context.focusDuration;
 
   // Calculate max pomodoros from intake hours if provided
   const maxPomodoros = intake?.hoursAvailable
@@ -318,7 +316,6 @@ export function buildWeeklyInsightPrompt(req: WeeklyInsightRequest): { system: s
   }));
   const weekTasks = boundTaskList(req.weekTasks);
   const { previousWeekSessions } = req;
-  const focusMin = Math.round(context.focusDuration / 60);
   const totalMinutes = weekSessions.reduce((sum, s) => sum + s.duration, 0) / 60;
   const totalSessions = weekSessions.length;
 

@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Plus, Shield, Sparkles, MessageCircle } from 'lucide-react';
+import { Search, Plus, Shield, MessageCircle } from 'lucide-react';
 
 interface UserRow {
   id: string;

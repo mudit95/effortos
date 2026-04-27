@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
 import { Sparkles, ArrowRight, X, CheckCircle2 } from 'lucide-react';
@@ -14,8 +14,6 @@ import { Sparkles, ArrowRight, X, CheckCircle2 } from 'lucide-react';
  */
 export function QuickPomodoroPrompt() {
   const quickPomodoroComplete = useStore(s => s.quickPomodoroComplete);
-  const dismissQuickPomodoroPrompt = useStore(s => s.dismissQuickPomodoroPrompt);
-  const setView = useStore(s => s.setView);
 
   const handleSignUp = () => {
     // Reset guest state and go to auth

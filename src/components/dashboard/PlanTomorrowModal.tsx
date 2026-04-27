@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
 import {
-  X, ChevronRight, Plus, Trash2, ArrowRight,
+  X, Plus, Trash2, ArrowRight,
   CheckCircle2, Circle, Moon, Sun,
 } from 'lucide-react';
 import { TASK_TAGS, type TaskTagId } from '@/types';
@@ -62,7 +62,7 @@ export function PlanTomorrowModal() {
   const [newTag, setNewTag] = useState<TaskTagId | undefined>();
   const [newPomodoros, setNewPomodoros] = useState(1);
   const [saving, setSaving] = useState(false);
-  const [step, setStep] = useState<'review' | 'add' | 'confirm'>('review');
+  const [_step, setStep] = useState<'review' | 'add' | 'confirm'>('review');
 
   // Initialize carry tasks from today's incomplete tasks
   useEffect(() => {
@@ -120,7 +120,6 @@ export function PlanTomorrowModal() {
   const handleSave = async () => {
     setSaving(true);
     const tomorrow = getTomorrowKey();
-    const today = getTodayKey();
 
     try {
       // 1. Create carried-forward tasks for tomorrow

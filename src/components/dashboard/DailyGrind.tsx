@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
 import { useTimer } from '@/hooks/useTimer';
-import { formatDuration, getLocalTodayKey, toLocalDateKey } from '@/lib/utils';
+import { getLocalTodayKey, toLocalDateKey } from '@/lib/utils';
 import { TASK_TAGS, type TaskTagId, type DailyTask, type Goal } from '@/types';
 import {
   Plus, Trash2, Play, Pause, RotateCcw, SkipForward,
@@ -13,7 +13,6 @@ import {
   CheckCircle2, Clock, Flame, PlusCircle, X, Calendar, Sparkles,
   CalendarPlus, List, LayoutGrid, ListTodo,
 } from 'lucide-react';
-import * as storage from '@/lib/storage';
 import { PiPButton } from '@/components/timer/PiPButton';
 import { HintBanner } from '@/components/ui/HintBanner';
 import { CoachPlanPanel } from './CoachPlanPanel';
@@ -21,7 +20,6 @@ import { CoachDebriefCard } from './CoachDebriefCard';
 // MotivationMessage (the italic AI quote above the task list) was removed
 // during the density pass — AIMotivationCard in the right rail covers the
 // same job, so having both created a third pep talk on a single screen.
-import { GoalProgressBar } from './GoalProgressBar';
 import { AIPlanWizard } from './AIPlanWizard';
 import { StreakCalendar } from './StreakCalendar';
 // AIInsightCard lives on the long-term dashboard; the daily view only
@@ -409,8 +407,6 @@ export function DailyGrind() {
     updateDailyTaskDetails,
     setView,
     addToast,
-    refreshDailyTasks,
-    requestPlanMyDay,
     coachPlanLoading,
     activeGoal,
     dashboardStats,
@@ -533,12 +529,6 @@ export function DailyGrind() {
   };
 
   const goToToday = () => setDailyViewDate(getTodayKey());
-
-  const goToTomorrow = () => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    setDailyViewDate(toLocalDateKey(d));
-  };
 
   const handleStartPomodoro = (taskId: string) => {
     setActiveDailyTask(taskId);

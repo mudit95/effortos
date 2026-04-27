@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { requireAdmin } from '@/lib/admin';
-import { Users, Ticket, BarChart3, FileText, Mail, Sparkles, MessageCircle } from 'lucide-react';
+import { Users, Ticket, BarChart3, FileText, Mail } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
