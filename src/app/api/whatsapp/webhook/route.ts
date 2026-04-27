@@ -9,8 +9,66 @@ import {
   consumePendingFlow,
   setTaskList,
   getTaskList,
+  setErrandList,
+  getErrandList,
+  setLastListType,
+  getLastListType,
   checkWhatsappRateLimit,
 } from '@/lib/whatsapp-state';
+
+// ── Text normalization helpers ────────────────────────────────────────────
+// Mobile keyboards (especially iOS) auto-substitute curly quotes and em-dashes
+// for the ASCII originals. AI-generated task titles tend to use ASCII. This
+// mismatch alone broke fuzzy matching: "Ale's letter" (curly apostrophe in
+// the user's reply) didn't substring-match "Ale's letter" (ASCII apostrophe
+// in the stored title). Normalize both sides before any case-insensitive
+// includes() check.
+function normalizeForMatch(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'") // curly single quotes
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"') // curly double quotes
+    .replace(/[\u2013\u2014\u2015]/g, '-')        // en-dash, em-dash, horizontal bar
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Strip a leading list-position prefix from a fuzzy-match query. Users often
+// reproduce the number from the list they were just shown — "done with 6. Ale's
+// letter" shouldn't fail just because "6. " isn't part of the stored title.
+// Falls back to the full normalized string if stripping leaves nothing.
+function fuzzyTitleQuery(query: string): string {
+  const q = normalizeForMatch(query);
+  const stripped = q.replace(/^#?\d{1,3}\s*[.):\-]?\s+/, '').trim();
+  return stripped.length > 0 ? stripped : q;
+}
+
+// Extract a list-position number from a wide variety of phrasings the user
+// might use after we've shown them a numbered list. Returns null if the
+// message doesn't look like a numbered reply at all. Patterns covered:
+//   "1", "1.", "#1", "✓ 1", "✅ 1"
+//   "1 done", "1 complete", "1 finished"
+//   "done 1", "done with 1", "complete 1", "completed 1", "finished 1"
+//   "mark 1", "mark 1 done", "mark 1 as done"
+// Anything fancier ("done with task 1", "done with 6. Ale's letter") falls
+// through to the text-based fuzzy matcher — fuzzyTitleQuery will strip the
+// leading "6." so the substring check still finds the right task.
+function extractListPosition(input: string): number | null {
+  // Strip trailing punctuation and leading checkmark glyphs first.
+  const s = input
+    .trim()
+    .replace(/[\u2705\u2713\u2714]/g, '') // ✅ ✓ ✔
+    .replace(/[.!?]+$/, '')
+    .trim();
+  if (!s) return null;
+  // Pattern A: number first, optional verb after.
+  let m = s.match(/^#?\s*(\d{1,3})\s*(?:done|complete|completed|finished)?$/i);
+  if (m) return parseInt(m[1], 10);
+  // Pattern B: verb first, then number, optional trailing modifier.
+  m = s.match(/^(?:done|complete|completed|finished|mark)\s+(?:with\s+)?#?(\d{1,3})(?:\s+(?:done|as\s+done|complete|completed|finished))?$/i);
+  if (m) return parseInt(m[1], 10);
+  return null;
+}
 
 // ── Webhook signature verification ──
 // Meta signs every webhook POST with X-Hub-Signature-256 using your app secret.
@@ -148,21 +206,49 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: 'ok' });
     }
 
-    // ── 1d. Handle numbered task completion (user replies "1", "2", etc.) ──
+    // ── 1d. Handle numbered task/errand completion ──
+    // The user replies with a position number (and maybe a verb) referring
+    // to whichever list we showed them most recently. extractListPosition
+    // accepts the messy real-world variants ("1", "Done 1", "Done with 1",
+    // "Mark 6 as done", "✓ 1", etc.) — see helper above for the full list.
+    //
+    // Disambiguation: getLastListType tells us whether the most recent list
+    // was tasks or errands, so "3" resolves correctly without confusing
+    // task #3 with errand #3. If we have no recent list at all, we tell the
+    // user how to get one rather than silently passing through to the AI
+    // parser (which would almost certainly classify "3" as off-topic).
     const trimmedText = text.trim();
-    if (/^\d+$/.test(trimmedText)) {
-      const taskIds = await getTaskList(from);
-      if (taskIds && taskIds.length > 0) {
-        const idx = parseInt(trimmedText, 10) - 1;
-        if (idx >= 0 && idx < taskIds.length) {
-          // Best-effort clear; we don't await it because the user might want
-          // to send another number reply for a second task within the TTL.
-          // Actually they DO often reply with multiple numbers in succession,
-          // so leaving the list in place lets that work — TTL will clean up.
-          await handleCompleteTaskById(supabase, profile.id, from, taskIds[idx]);
-          return NextResponse.json({ status: 'ok' });
-        }
+    const listPos = extractListPosition(trimmedText);
+    if (listPos !== null && listPos > 0) {
+      const lastList = await getLastListType(from);
+      const ids = lastList === 'errands'
+        ? await getErrandList(from)
+        : await getTaskList(from);
+
+      if (!ids || ids.length === 0) {
+        await sendTextMessage(
+          from,
+          `🤔 I don't have a recent list to match "${listPos}" against. Send *"tasks"* or *"my errands"* first, then reply with a number.`,
+        );
+        return NextResponse.json({ status: 'ok' });
       }
+
+      const idx = listPos - 1;
+      if (idx >= ids.length) {
+        const label = lastList === 'errands' ? 'errand' : 'task';
+        await sendTextMessage(
+          from,
+          `🤔 You only have ${ids.length} ${label}${ids.length === 1 ? '' : 's'} on the list — pick a number from 1 to ${ids.length}.`,
+        );
+        return NextResponse.json({ status: 'ok' });
+      }
+
+      if (lastList === 'errands') {
+        await handleCompleteOtherTodoById(supabase, profile.id, from, ids[idx]);
+      } else {
+        await handleCompleteTaskById(supabase, profile.id, from, ids[idx]);
+      }
+      return NextResponse.json({ status: 'ok' });
     }
 
     // ── 2. Handle button replies directly (no AI cost) ──
@@ -244,11 +330,54 @@ export async function POST(req: NextRequest) {
     else if (/^(help|\/help|hi|hello|hey|\/start|menu|commands)$/i.test(lowerText)) {
       intent = { type: 'help' };
     }
+    // ── Errand quick-matches (run BEFORE the task quick-matches so "my
+    //    errands" doesn't get caught by the generic "list/plan" patterns).
+    // List errands — "my errands", "side list", "errand list", etc.
+    else if (
+      /^(my errands|errands|errand list|side list|other todos|other to-?dos|show errands|list errands)$/i.test(lowerText) ||
+      /what.?s on my (errand|side) list/i.test(lowerText) ||
+      /^what errands/i.test(lowerText)
+    ) {
+      intent = { type: 'list_other_todos' };
+    }
+    // Add errand with explicit prefix — "add errand X", "errand: X", "errands: X"
+    else if (/^(?:add\s+)?errands?\s*[:\-]?\s+(.+)/i.test(lowerText)) {
+      const match = lowerText.match(/^(?:add\s+)?errands?\s*[:\-]?\s+(.+)/i);
+      const raw = match?.[1]?.trim() || '';
+      // Split on commas, " and ", semicolons, or newlines.
+      const titles = raw
+        .split(/\s*,\s*|\s+and\s+|\s*;\s*|\n+/i)
+        .map(t => t.trim())
+        .filter(t => t.length > 0);
+      if (titles.length > 0) {
+        intent = {
+          type: 'add_other_todos',
+          todos: titles.map(t => ({ title: t.slice(0, 200), estimated_minutes: null })),
+        };
+      } else {
+        intent = await parseWhatsAppMessage(text);
+      }
+    }
+    // "Remind me to X" — single errand. AI handles multi-errand parsing
+    // with time estimates; this fast path is for the one-line common case.
+    else if (/^remind me to\s+(.+)/i.test(lowerText)) {
+      const match = lowerText.match(/^remind me to\s+(.+)/i);
+      const title = match?.[1]?.trim() || '';
+      if (title) {
+        intent = {
+          type: 'add_other_todos',
+          todos: [{ title: title.slice(0, 200), estimated_minutes: null }],
+        };
+      } else {
+        intent = await parseWhatsAppMessage(text);
+      }
+    }
     // List tasks — exact or contains keywords
     else if (
       /^(tasks|my tasks|list|plan|show tasks|today)$/i.test(lowerText) ||
       /what.?s (on my plate|my plan|my tasks|today)/i.test(lowerText) ||
-      /show.*(tasks|plan)/i.test(lowerText)
+      /show.*(tasks|plan)/i.test(lowerText) ||
+      /^what am i doing today\??$/i.test(lowerText)
     ) {
       intent = { type: 'list_tasks' };
     }
@@ -375,8 +504,8 @@ async function executeIntent(
       }
 
       const helpText = intent.type === 'off_topic'
-        ? `🎯 I'm your EffortOS task assistant — I only handle daily tasks and focus sessions.\n\nTry:\n• *Add tasks*: "Study math 2 pomodoros"\n• *My tasks*: "What's my plan?"\n• *Done*: "Finished with math"\n• *Progress*: "How am I doing?"\n• *Time today*: "How long today?"\n• *Journal*: "Add journal entry"`
-        : `🤔 I'm not sure what you mean. Try:\n\n• *Add tasks*: "Study math 2 pomodoros and review notes"\n• *My tasks*: "What's on my plate?"\n• *Complete*: "Done with math"\n• *Edit*: "Change math to 3 pomodoros"\n• *Delete*: "Delete math"\n• *Progress*: "How am I doing?"\n• *Time*: "How long today?"\n• *Journal*: "Add journal entry"\n• *Help*: "Help"`;
+        ? `🎯 I'm your EffortOS task assistant — I only handle daily tasks, errands, and focus sessions.\n\nTry:\n• *Tasks:* "Study math 2 poms" / "tasks" / "done 1"\n• *Errands:* "remind me to grab groceries" / "my errands"\n• *Status:* "progress" / "time today"\n• *Help:* "help"`
+        : `🤔 I'm not sure what you mean. Try:\n\n📝 *Tasks*\n• "Study math 2 poms and review notes"\n• "tasks" — see today's list\n• Reply with a number to mark done\n\n🗒 *Errands*\n• "remind me to grab groceries"\n• "my errands" — see side list\n\n📊 *Status*\n• "progress" / "time today"\n\nType *"help"* for the full menu.`;
       await sendTextMessage(phone, helpText);
       break;
     }
@@ -462,10 +591,14 @@ async function handleListTasks(
     return `${check} ${t.title} (${progress})`;
   });
 
-  // Store task IDs so we can match a numbered reply (TTL handled by Redis)
+  // Store task IDs so we can match a numbered reply (TTL handled by Redis).
+  // Also remember that the most recent list shown to this phone was TASKS,
+  // so a bare "3" resolves to task #3 (not errand #3 if both lists are
+  // currently cached).
   const incompleteTasks = tasks.filter((t: { completed: boolean }) => !t.completed);
   if (incompleteTasks.length > 0) {
     await setTaskList(phone, tasks.map((t: { id: string }) => t.id));
+    await setLastListType(phone, 'tasks');
   }
 
   const done = tasks.filter((t: { completed: boolean }) => t.completed).length;
@@ -501,10 +634,13 @@ async function handleCompleteTask(
     return;
   }
 
-  // Fuzzy match: find task whose title contains the query (case-insensitive)
-  const q = query.toLowerCase();
+  // Fuzzy match: normalize curly-quote / em-dash variants on both sides AND
+  // strip any leading list number from the query — both keep mobile-keyboard
+  // typography and "done with 6. Ale's letter" from killing the substring
+  // check.
+  const q = fuzzyTitleQuery(query);
   const match = tasks.find((t: { title: string }) =>
-    t.title.toLowerCase().includes(q),
+    normalizeForMatch(t.title).includes(q),
   );
 
   if (!match) {
@@ -513,7 +649,7 @@ async function handleCompleteTask(
       .join('\n');
     await sendTextMessage(
       phone,
-      `🤔 Couldn't find a task matching "${query}".\n\nYour open tasks:\n${taskList}\n\nTry: "Done with [task name]"`,
+      `🤔 Couldn't find a task matching "${query}".\n\nYour open tasks:\n${taskList}\n\nTry the number, or "Done with [task name]".`,
     );
     return;
   }
@@ -797,9 +933,15 @@ async function handleListOtherTodos(
     ? `\n\n⏱ Estimated total: ${formatErrandMinutes(totalMins)}`
     : '';
 
+  // Cache the displayed errand IDs + mark this phone's last list as
+  // ERRANDS so a numbered reply ("3") resolves to errand #3 rather than
+  // task #3. Same TTL as the task list cache.
+  await setErrandList(phone, (todos as Array<{ id: string }>).map(t => t.id));
+  await setLastListType(phone, 'errands');
+
   await sendTextMessage(
     phone,
-    `🗒 *Your side list* (${todos.length} errand${todos.length === 1 ? '' : 's'})\n\n${lines}${totalLine}\n\n💡 _Say "got the groceries" or "did the dentist call" to mark one done._`,
+    `🗒 *Your side list* (${todos.length} errand${todos.length === 1 ? '' : 's'})\n\n${lines}${totalLine}\n\n💡 _Reply with a number to mark one done, or say "got the groceries"._`,
   );
 }
 
@@ -809,7 +951,7 @@ async function handleCompleteOtherTodo(
   phone: string,
   query: string,
 ) {
-  const q = (query || '').trim().toLowerCase();
+  const q = fuzzyTitleQuery(query || '');
   if (!q) {
     await sendTextMessage(phone, '🤔 Which errand did you finish? Try: "got the groceries".');
     return;
@@ -827,14 +969,14 @@ async function handleCompleteOtherTodo(
   }
 
   const match = (todos as Array<{ id: string; title: string }>).find(t =>
-    t.title.toLowerCase().includes(q),
+    normalizeForMatch(t.title).includes(q),
   );
 
   if (!match) {
     const list = (todos as Array<{ title: string }>).map((t, i) => `${i + 1}. ${t.title}`).join('\n');
     await sendTextMessage(
       phone,
-      `🤔 Couldn't find an errand matching "${query}".\n\nYour open errands:\n${list}`,
+      `🤔 Couldn't find an errand matching "${query}".\n\nYour open errands:\n${list}\n\nTry the number, or be more specific.`,
     );
     return;
   }
@@ -870,8 +1012,9 @@ async function handleDeleteOtherTodo(
     return;
   }
 
+  const qNorm = fuzzyTitleQuery(q);
   const match = (todos as Array<{ id: string; title: string }>).find(t =>
-    t.title.toLowerCase().includes(q),
+    normalizeForMatch(t.title).includes(qNorm),
   );
 
   if (!match) {
@@ -886,21 +1029,27 @@ async function handleDeleteOtherTodo(
 async function sendHelpMessage(phone: string, name: string) {
   await sendTextMessage(
     phone,
-    `👋 Hey ${name}! Here's what I can do:\n\n` +
-    `📝 *Add tasks*\n"Study React for 2 pomodoros and review PRs"\n\n` +
-    `🎤 *Voice notes*\nSend a voice message — I'll transcribe and add tasks\n\n` +
-    `📋 *See tasks*\n"What's my plan?" — reply with a number to complete\n\n` +
-    `✅ *Complete*\n"Done with React" or just reply with the task number\n\n` +
-    `✏️ *Edit*\n"Change React to 3 pomodoros" or "Rename React to Vue"\n\n` +
-    `🗑 *Delete*\n"Delete React"\n\n` +
-    `⏱ *Time today*\n"How long today?"\n\n` +
-    `📊 *Progress*\n"How am I doing?"\n\n` +
-    `📓 *Journal*\n"Add journal entry for today"\n\n` +
-    `📅 *Plan tomorrow*\n"Plan tomorrow"\n\n` +
-    `📦 *Carry forward*\n"Carry all" — moves unfinished tasks to tomorrow\n\n` +
-    `🗒 *Other to-dos (errands)*\n"Remind me to grab groceries" or "Pick Susan up at 4pm — 30 min". Say "my errands" to see the list.\n\n` +
-    `🤫 *Pause coaching*\n"Shh" — pauses AI coach for 24h\n\n` +
-    `Just type or speak naturally — I'll figure it out! 🧠`,
+    `👋 Hey ${name}! Here's the cheat sheet.\n\n` +
+    `━━━ 📝 *DAILY TASKS* (focused work) ━━━\n` +
+    `*Add:* "Study React 2 poms, review PRs, write spec 3 poms"\n` +
+    `*See:* "tasks" or "what's my plan"\n` +
+    `*Done:* reply with the *number* (e.g. "1") — or "done React"\n` +
+    `*Edit:* "change React to 3 poms"  •  "rename React to Vue"\n` +
+    `*Delete:* "delete React"\n\n` +
+    `━━━ 🗒 *ERRANDS* (side list, no timer) ━━━\n` +
+    `*Add:* "remind me to grab groceries"  •  "errand: pick Susan up at 4 — 30 min"\n` +
+    `*See:* "my errands" or "side list"\n` +
+    `*Done:* reply with the *number* — or "got the groceries"\n` +
+    `*Drop:* "drop the dentist errand"\n\n` +
+    `━━━ 📊 *STATUS* ━━━\n` +
+    `"progress" / "how am I doing"  •  "time today"  •  "streak"\n\n` +
+    `━━━ 📅 *PLANNING* ━━━\n` +
+    `"plan tomorrow"  •  "carry all" (move incomplete to tomorrow)\n` +
+    `"add journal entry"\n\n` +
+    `━━━ ⚙️ *OTHER* ━━━\n` +
+    `🎤 Voice notes work — just send one, I'll transcribe.\n` +
+    `🤫 "shh" pauses coaching nudges for 24h.\n\n` +
+    `💡 *Tip:* whenever you see a numbered list, just reply with the number to mark it done.`,
   );
 }
 
@@ -1091,6 +1240,41 @@ async function handleCompleteTaskById(
   await sendTextMessage(phone, `✅ "${task.title}" — done! Nice work 🔥`);
 }
 
+// ── Complete errand by ID (for numbered replies against the side list) ──
+// Mirror of handleCompleteTaskById but writes to other_todos. Stamping
+// completed_at matches the schema convention used by handleCompleteOtherTodo
+// (the text/AI path) so analytics over completed errands stays consistent
+// regardless of how the user marked it done.
+async function handleCompleteOtherTodoById(
+  supabase: SupabaseClient,
+  userId: string,
+  phone: string,
+  todoId: string,
+) {
+  const { data: todo } = await supabase
+    .from('other_todos')
+    .select('title, completed')
+    .eq('id', todoId)
+    .eq('user_id', userId)
+    .single();
+
+  if (!todo) {
+    await sendTextMessage(phone, '❌ Errand not found.');
+    return;
+  }
+  if (todo.completed) {
+    await sendTextMessage(phone, `"${todo.title}" is already done ✅`);
+    return;
+  }
+
+  await supabase
+    .from('other_todos')
+    .update({ completed: true, completed_at: new Date().toISOString() })
+    .eq('id', todoId);
+
+  await sendTextMessage(phone, `✅ *${todo.title}* — done. One less thing on the side list. 🙌`);
+}
+
 // ── Edit task (change pomodoros or rename) ──
 async function handleEditTask(
   supabase: SupabaseClient,
@@ -1115,9 +1299,10 @@ async function handleEditTask(
     return;
   }
 
-  // Fuzzy match
-  const q = query.toLowerCase();
-  const match = tasks.find((t: { title: string }) => t.title.toLowerCase().includes(q));
+  // Fuzzy match — normalize quotes/dashes so curly-quote replies still match,
+  // and strip any leading list number from the query.
+  const q = fuzzyTitleQuery(query);
+  const match = tasks.find((t: { title: string }) => normalizeForMatch(t.title).includes(q));
   if (!match) {
     await sendTextMessage(phone, `🤔 Couldn't find a task matching "${query}".`);
     return;
@@ -1169,8 +1354,8 @@ async function handleDeleteTask(
     return;
   }
 
-  const q = query.toLowerCase();
-  const match = tasks.find((t: { title: string }) => t.title.toLowerCase().includes(q));
+  const q = fuzzyTitleQuery(query);
+  const match = tasks.find((t: { title: string }) => normalizeForMatch(t.title).includes(q));
   if (!match) {
     await sendTextMessage(phone, `🤔 Couldn't find a task matching "${query}".`);
     return;
