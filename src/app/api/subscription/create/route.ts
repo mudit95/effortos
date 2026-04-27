@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getRazorpay, TRIAL_DAYS, getPlanIdForTier } from '@/lib/razorpay';
 import { createClient } from '@/lib/supabase/server';
+import { rateLimitOrNull } from '@/lib/ratelimit';
 import type { PlanTier } from '@/types';
 
 /**
@@ -21,6 +22,13 @@ export async function POST(req: Request) {
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    // Rate-limit: each call hits Razorpay's subscriptions.create — costly
+    // and rate-limited upstream. The light bucket (20/hour) lets a confused
+    // user retry after a card-decline without locking them out, while
+    // capping a runaway client that triggers retries in a tight loop.
+    const blocked = await rateLimitOrNull(user.id, 'light');
+    if (blocked) return blocked;
 
     // Parse body
     const body = await req.json().catch(() => ({}));

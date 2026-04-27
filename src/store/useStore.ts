@@ -164,6 +164,16 @@ interface AppState {
   // View
   currentView: 'landing' | 'auth' | 'onboarding' | 'dashboard' | 'focus' | 'settings';
 
+  // Connection / Supabase outage UX
+  // 'unknown'  — pre-init, before we've successfully reached the cloud once.
+  // 'ok'       — last cloud call succeeded; banner hidden.
+  // 'degraded' — last cloud call failed (Supabase unreachable, fetch threw,
+  //              status endpoint 5xx). Banner shows; the app keeps running
+  //              from localStorage state. We never block the user.
+  connectionStatus: 'unknown' | 'ok' | 'degraded';
+  connectionLastError: string | null;
+  setConnectionStatus: (status: 'unknown' | 'ok' | 'degraded', lastError?: string | null) => void;
+
   // Actions
   initializeApp: () => void;
   login: (name: string, email: string) => void;
@@ -340,6 +350,15 @@ export const useStore = create<AppState>((set, get) => ({
   onboardingData: {},
   currentView: 'landing',
   quickPomodoroComplete: false,
+  connectionStatus: 'unknown',
+  connectionLastError: null,
+
+  setConnectionStatus: (status, lastError = null) => {
+    // Avoid noisy re-renders: only update if state actually changed.
+    const cur = get();
+    if (cur.connectionStatus === status && cur.connectionLastError === lastError) return;
+    set({ connectionStatus: status, connectionLastError: lastError });
+  },
 
   initializeApp: async () => {
     // If user explicitly logged out (currentView === 'landing' and not loading), skip re-init
@@ -514,14 +533,23 @@ export const useStore = create<AppState>((set, get) => ({
           });
 
           if (cloudActiveGoal) get().refreshDashboard();
+          // We reached Supabase, read the profile, and rehydrated state.
+          // That's the strongest signal of cloud-tier health we get on boot.
+          get().setConnectionStatus('ok');
           // Fetch subscription status in background
           get().fetchSubscriptionStatus();
           return; // Done — skip localStorage path below
         }
       }
     } catch (err) {
-      // Supabase unavailable — fall back to localStorage
+      // Supabase unavailable — fall back to localStorage. Surface this so the
+      // <ConnectionBanner> can warn the user that today's writes won't sync
+      // until the cloud is reachable. The app keeps running from local state.
       console.warn('Supabase session check failed, using localStorage:', err);
+      get().setConnectionStatus(
+        'degraded',
+        err instanceof Error ? err.message : 'Cloud unreachable',
+      );
     }
 
     // ── Local path: load data from localStorage ──
@@ -1799,10 +1827,17 @@ export const useStore = create<AppState>((set, get) => ({
     try {
       const res = await fetch('/api/subscription/status');
       if (!res.ok) {
+        // 5xx is a cloud-tier signal worth surfacing; 4xx is more likely an
+        // auth edge case (logged out, etc.) and shouldn't trip the banner.
+        if (res.status >= 500) {
+          get().setConnectionStatus('degraded', `subscription/status ${res.status}`);
+        }
         set({ subscription: { status: 'none', plan_tier: 'starter' }, subscriptionLoading: false });
         return;
       }
       const data = await res.json();
+      // Successful round-trip — clear any prior degradation.
+      get().setConnectionStatus('ok');
       set({
         subscription: {
           status: data.status,
@@ -1816,7 +1851,12 @@ export const useStore = create<AppState>((set, get) => ({
         },
         subscriptionLoading: false,
       });
-    } catch {
+    } catch (err) {
+      // Network/CORS failure — almost always an outage at the edge.
+      get().setConnectionStatus(
+        'degraded',
+        err instanceof Error ? err.message : 'subscription/status failed',
+      );
       set({ subscription: { status: 'none', plan_tier: 'starter' }, subscriptionLoading: false });
     }
   },

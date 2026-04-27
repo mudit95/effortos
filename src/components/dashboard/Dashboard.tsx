@@ -29,6 +29,7 @@ import { AIMotivationCard } from './AICards';
 import { PaywallModal } from '@/components/subscription/PaywallModal';
 import { TrialBanner } from '@/components/subscription/TrialBanner';
 import { PremiumGate } from '@/components/subscription/PremiumGate';
+import { FreeDashboardCallout } from '@/components/subscription/FreeDashboardCallout';
 import { TimerDisplay } from '@/components/timer/TimerDisplay';
 import { MeditationScreen } from '@/components/timer/MeditationScreen';
 import {
@@ -55,7 +56,11 @@ export function Dashboard() {
 
   const [showMeditation, setShowMeditation] = useState(false);
 
-  // Check subscription — show paywall if expired
+  // Check subscription — show paywall if expired.
+  // We open it ONCE per browser session (sessionStorage gate) so an expired
+  // user who dismissed it earlier today doesn't get the modal slammed in their
+  // face on every refresh. The FreeDashboardCallout still nudges them; it's
+  // less aggressive UX than the modal.
   const isExpired = !subscriptionLoading && subscription.status === 'expired';
 
   useEffect(() => {
@@ -64,8 +69,20 @@ export function Dashboard() {
   }, [refreshDashboard, requestNotificationPermission]);
 
   useEffect(() => {
-    if (isExpired) {
-      setShowPaywall(true);
+    if (!isExpired) return;
+    const KEY = 'effortos:expired-paywall-shown';
+    let alreadyShown = false;
+    try {
+      alreadyShown = sessionStorage.getItem(KEY) === '1';
+    } catch {
+      /* sessionStorage unavailable (private mode etc) — treat as not shown */
+    }
+    if (alreadyShown) return;
+    setShowPaywall(true);
+    try {
+      sessionStorage.setItem(KEY, '1');
+    } catch {
+      /* ignore */
     }
   }, [isExpired, setShowPaywall]);
 
@@ -149,6 +166,10 @@ export function Dashboard() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-4 sm:mt-6">
         {/* Personalized daily brief — context-on-arrival */}
         <DailyBrief />
+
+        {/* Free / expired callout — frames "what you have vs. what you unlock"
+            for non-paying users. Renders nothing for trialing/active users. */}
+        <FreeDashboardCallout />
 
         {/* Mode toggle — centered at top */}
         <div className="flex justify-center mb-6 sm:mb-8">

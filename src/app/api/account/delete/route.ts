@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getRazorpay } from '@/lib/razorpay';
+import { rateLimitOrNull } from '@/lib/ratelimit';
 
 /**
  * POST /api/account/delete
@@ -30,6 +31,12 @@ export async function POST(req: Request) {
     if (!user || !user.email) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    // Rate-limit BEFORE password verification so the password check can't be
+    // used as an unbounded brute-force oracle. The 'light' bucket (20/hour)
+    // is generous for legitimate mistypes and infeasible for brute force.
+    const blocked = await rateLimitOrNull(user.id, 'light');
+    if (blocked) return blocked;
 
     let body: { password?: unknown; confirmation?: unknown };
     try {

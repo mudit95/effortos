@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/admin';
+import { rateLimitByIpOrNull } from '@/lib/ratelimit';
 
 // Upsert
 export async function PUT(req: Request) {
@@ -27,13 +28,34 @@ export async function DELETE(req: Request) {
   return NextResponse.json({ ok: true });
 }
 
-// Public GET — anyone can read site content (used by frontend to hydrate text)
-export async function GET() {
-  // Use a server client with anon key (public reads are allowed by RLS)
+/**
+ * Public GET — anyone can read site content (used by frontend to hydrate text).
+ *
+ * This stays public by design (the landing page calls it pre-auth), but we
+ * harden it three ways:
+ *
+ *   1. Per-IP rate limit so a single client can't scrape-amplify against us.
+ *   2. CDN/edge cache headers — Vercel's CDN absorbs ~all traffic so legitimate
+ *      page loads never reach the function.
+ *   3. Projection limited to (key, value); never return updater identifiers,
+ *      timestamps, or descriptions.
+ */
+export async function GET(req: Request) {
+  const blocked = await rateLimitByIpOrNull(req, 'content');
+  if (blocked) return blocked;
+
   const { createClient } = await import('@/lib/supabase/server');
   const supabase = await createClient();
   const { data } = await supabase.from('site_content').select('key, value').limit(500);
   const map: Record<string, string> = {};
   (data ?? []).forEach((r: { key: string; value: string }) => { map[r.key] = r.value; });
-  return NextResponse.json(map);
+
+  return NextResponse.json(map, {
+    headers: {
+      // Cache aggressively at the edge; site content changes rarely and admins
+      // can purge by re-deploying or hitting PUT (which is uncacheable).
+      'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=3600',
+      'Vary': 'Accept-Encoding',
+    },
+  });
 }

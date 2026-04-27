@@ -3,6 +3,7 @@ import { verifyCronAuth } from '@/lib/cron-auth';
 import { getEligibleUsers, getUserTasks, getUserDaySummary, logEmail } from '@/lib/cron-helpers';
 import { afternoonEmail } from '@/lib/email-templates';
 import { sendEmail } from '@/lib/email';
+import { afternoonWhatsAppMessage, sendCronNudge } from '@/lib/whatsapp-nudge';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -23,6 +24,7 @@ export async function GET(request: Request) {
     }
 
     let sent = 0;
+    let waSent = 0;
     const errors: string[] = [];
 
     for (const user of users) {
@@ -54,6 +56,17 @@ export async function GET(request: Request) {
         });
 
         sent++;
+
+        // Companion WhatsApp nudge — best-effort.
+        const waMessage = afternoonWhatsAppMessage({
+          userName: user.name,
+          todayTasks,
+          sessionsToday: daySummary.total_sessions,
+          focusMinutesToday: daySummary.total_focus_minutes,
+        });
+        if (await sendCronNudge({ userId: user.user_id, nudgeType: 'afternoon', message: waMessage })) {
+          waSent++;
+        }
       } catch (err) {
         const msg = `${user.email}: ${err instanceof Error ? err.message : 'unknown'}`;
         errors.push(msg);
@@ -68,7 +81,7 @@ export async function GET(request: Request) {
       }
     }
 
-    return NextResponse.json({ sent, total: users.length, errors: errors.length > 0 ? errors : undefined });
+    return NextResponse.json({ sent, wa_sent: waSent, total: users.length, errors: errors.length > 0 ? errors : undefined });
   } catch (err) {
     console.error('[cron/afternoon-email] Fatal:', err);
     return NextResponse.json({ error: 'Cron failed' }, { status: 500 });

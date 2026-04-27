@@ -4,14 +4,36 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { extractIncomingMessage, sendTextMessage, sendButtonMessage, downloadWhatsAppMedia } from '@/lib/whatsapp';
 import { parseWhatsAppMessage, type WAIntent } from '@/lib/whatsapp-ai';
 import { getUserTimezone, todayKeyInTz, dateKeyInTz } from '@/lib/user-date';
+import {
+  setPendingFlow,
+  consumePendingFlow,
+  setTaskList,
+  getTaskList,
+  checkWhatsappRateLimit,
+} from '@/lib/whatsapp-state';
 
 // ── Webhook signature verification ──
 // Meta signs every webhook POST with X-Hub-Signature-256 using your app secret.
 // Verifying this prevents spoofed requests from third parties.
+//
+// Behaviour:
+//   - In production (NODE_ENV === 'production'): if META_APP_SECRET is missing
+//     we FAIL CLOSED. A misconfigured webhook should never accept anonymous
+//     payloads — the cost of a spoofed message executing actions on a user's
+//     account is far higher than the cost of a 503 until ops fix the env.
+//   - In non-production: missing secret bypasses verification so local dev /
+//     preview environments can use ngrok without real Meta keys.
 function verifyWebhookSignature(rawBody: string, signature: string | null): boolean {
   const appSecret = process.env.META_APP_SECRET;
   if (!appSecret) {
-    // If secret isn't configured, skip verification (dev mode)
+    if (process.env.NODE_ENV === 'production') {
+      console.error(
+        '[WhatsApp] META_APP_SECRET is not set in production — refusing webhook to avoid accepting spoofed payloads.',
+      );
+      return false;
+    }
+    // Dev / preview only.
+    console.warn('[WhatsApp] META_APP_SECRET not set — skipping verification (non-production).');
     return true;
   }
   if (!signature) return false;
@@ -33,35 +55,12 @@ function verifyWebhookSignature(rawBody: string, signature: string | null): bool
   }
 }
 
-// ── Simple in-memory rate limiter ──
-// Max 20 AI-parsed messages per user per hour.
-// This prevents users from treating the bot as a free ChatGPT.
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT = 20;
-const RATE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
-
-// In-memory map for multi-step conversations (e.g., "awaiting journal entry").
-// Key: phone number, Value: { type, userId, expiresAt }
-const pendingFlowMap = new Map<string, { type: 'journal' | 'reflection'; userId: string; expiresAt: number }>();
-const PENDING_TTL_MS = 10 * 60 * 1000; // 10 min timeout
-
-// Numbered task list memory — tracks the last task list sent to each user
-// so they can reply with just a number to complete a task.
-// Key: phone number, Value: { taskIds (ordered), expiresAt }
-const taskListMap = new Map<string, { taskIds: string[]; expiresAt: number }>();
-const TASK_LIST_TTL_MS = 30 * 60 * 1000; // 30 min
-
-function checkRateLimit(userId: string): boolean {
-  const now = Date.now();
-  const entry = rateLimitMap.get(userId);
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(userId, { count: 1, resetAt: now + RATE_WINDOW_MS });
-    return true;
-  }
-  if (entry.count >= RATE_LIMIT) return false;
-  entry.count++;
-  return true;
-}
+// ── Persistent webhook state ──
+// Rate limits, multi-step flow tracking, and numbered-task memory live in
+// Redis (see @/lib/whatsapp-state). Module-scoped Maps don't survive across
+// Vercel instances so anything we used to keep here was effectively
+// ephemeral and per-cold-container — see the doc-comment on whatsapp-state.ts
+// for the full rationale.
 
 /**
  * GET /api/whatsapp/webhook
@@ -132,16 +131,15 @@ export async function POST(req: NextRequest) {
     }
 
     // ── 1b. Check for pending multi-step flow (e.g., journal entry) ──
-    const pendingFlow = pendingFlowMap.get(from);
-    if (pendingFlow && Date.now() < pendingFlow.expiresAt) {
-      pendingFlowMap.delete(from);
+    // consumePendingFlow uses GETDEL so two near-simultaneous deliveries
+    // can't both consume the same flow. Redis TTL (10 min) handles
+    // expiration server-side — no manual sweep needed.
+    const pendingFlow = await consumePendingFlow(from);
+    if (pendingFlow) {
       if (pendingFlow.type === 'journal' || pendingFlow.type === 'reflection') {
         await handleSaveJournalEntry(supabase, pendingFlow.userId, from, text);
         return NextResponse.json({ status: 'ok' });
       }
-    } else if (pendingFlow) {
-      // Expired — clean up
-      pendingFlowMap.delete(from);
     }
 
     // ── 1c. Handle voice notes — transcribe and process as text ──
@@ -152,13 +150,18 @@ export async function POST(req: NextRequest) {
 
     // ── 1d. Handle numbered task completion (user replies "1", "2", etc.) ──
     const trimmedText = text.trim();
-    const taskListEntry = taskListMap.get(from);
-    if (taskListEntry && Date.now() < taskListEntry.expiresAt && /^\d+$/.test(trimmedText)) {
-      const idx = parseInt(trimmedText, 10) - 1;
-      if (idx >= 0 && idx < taskListEntry.taskIds.length) {
-        taskListMap.delete(from);
-        await handleCompleteTaskById(supabase, profile.id, from, taskListEntry.taskIds[idx]);
-        return NextResponse.json({ status: 'ok' });
+    if (/^\d+$/.test(trimmedText)) {
+      const taskIds = await getTaskList(from);
+      if (taskIds && taskIds.length > 0) {
+        const idx = parseInt(trimmedText, 10) - 1;
+        if (idx >= 0 && idx < taskIds.length) {
+          // Best-effort clear; we don't await it because the user might want
+          // to send another number reply for a second task within the TTL.
+          // Actually they DO often reply with multiple numbers in succession,
+          // so leaving the list in place lets that work — TTL will clean up.
+          await handleCompleteTaskById(supabase, profile.id, from, taskIds[idx]);
+          return NextResponse.json({ status: 'ok' });
+        }
       }
     }
 
@@ -169,7 +172,9 @@ export async function POST(req: NextRequest) {
     }
 
     // ── 3. Rate limit check before calling AI ──
-    if (!checkRateLimit(profile.id)) {
+    // Backed by Upstash sliding-window — survives across Vercel instances and
+    // can't be circumvented by spreading load over warm containers.
+    if (!(await checkWhatsappRateLimit(profile.id))) {
       await sendTextMessage(
         from,
         '⏳ You\'ve sent a lot of messages this hour. Take a break and try again in a bit!\n\nTip: You can manage tasks directly in the EffortOS app too.',
@@ -332,6 +337,18 @@ async function executeIntent(
     case 'time_today':
       await handleTimeToday(supabase, profile.id, phone, profile.name);
       break;
+    case 'add_other_todos':
+      await handleAddOtherTodos(supabase, profile.id, phone, intent.todos);
+      break;
+    case 'list_other_todos':
+      await handleListOtherTodos(supabase, profile.id, phone, profile.name);
+      break;
+    case 'complete_other_todo':
+      await handleCompleteOtherTodo(supabase, profile.id, phone, intent.query);
+      break;
+    case 'delete_other_todo':
+      await handleDeleteOtherTodo(supabase, profile.id, phone, intent.query);
+      break;
     case 'help':
       await sendHelpMessage(phone, profile.name);
       break;
@@ -445,13 +462,10 @@ async function handleListTasks(
     return `${check} ${t.title} (${progress})`;
   });
 
-  // Store task IDs so we can match a numbered reply
+  // Store task IDs so we can match a numbered reply (TTL handled by Redis)
   const incompleteTasks = tasks.filter((t: { completed: boolean }) => !t.completed);
   if (incompleteTasks.length > 0) {
-    taskListMap.set(phone, {
-      taskIds: tasks.map((t: { id: string }) => t.id),
-      expiresAt: Date.now() + TASK_LIST_TTL_MS,
-    });
+    await setTaskList(phone, tasks.map((t: { id: string }) => t.id));
   }
 
   const done = tasks.filter((t: { completed: boolean }) => t.completed).length;
@@ -617,12 +631,9 @@ async function handleCheckProgress(
 // Step 1: User says "add journal entry" → we prompt and set pending state.
 // Step 2: User sends the actual entry → handleSaveJournalEntry saves it.
 async function handleAddJournalPrompt(userId: string, phone: string, name: string) {
-  // Set pending flow so the NEXT message from this user is saved as a journal entry
-  pendingFlowMap.set(phone, {
-    type: 'journal',
-    userId,
-    expiresAt: Date.now() + PENDING_TTL_MS,
-  });
+  // Set pending flow so the NEXT message from this user is saved as a journal
+  // entry. TTL is enforced server-side by Redis (10 min) — no manual sweep.
+  await setPendingFlow(phone, { type: 'journal', userId });
 
   await sendTextMessage(
     phone,
@@ -688,6 +699,190 @@ async function handleSaveJournalEntry(
   }
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Other To-Dos (errands) — quarantined from the daily Pomodoro flow.
+// Stored in the `other_todos` table; never appear in morning/afternoon
+// nudges, never start a Pomodoro. The nightly recap mentions only the
+// COUNT of open errands. See migration 019_other_todos.sql + docstring on
+// src/lib/other-todos.ts for the full design rationale.
+// ────────────────────────────────────────────────────────────────────────────
+
+function formatErrandMinutes(mins: number | null | undefined): string {
+  if (mins == null) return '';
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+async function handleAddOtherTodos(
+  supabase: SupabaseClient,
+  userId: string,
+  phone: string,
+  todos: Array<{ title: string; estimated_minutes?: number | null }>,
+) {
+  if (!todos || todos.length === 0) {
+    await sendTextMessage(phone, '🤔 What errands should I add? Try: "remind me to grab groceries and call mom".');
+    return;
+  }
+
+  // Allowlist + clamp the inputs the AI gives us. We never trust the AI
+  // payload to be in-range — defensive validation here keeps the DB CHECK
+  // constraint from rejecting the whole batch over one malformed row.
+  const rows = todos.slice(0, 10).map((t) => {
+    const title = (t.title || '').trim().slice(0, 200);
+    let mins = t.estimated_minutes;
+    if (typeof mins !== 'number' || !Number.isFinite(mins) || mins <= 0) {
+      mins = null;
+    } else {
+      mins = Math.min(1440, Math.max(1, Math.round(mins)));
+    }
+    return { user_id: userId, title, estimated_minutes: mins };
+  }).filter(r => r.title.length > 0);
+
+  if (rows.length === 0) {
+    await sendTextMessage(phone, '🤔 Couldn\'t parse any errands from that. Try: "remind me to grab groceries".');
+    return;
+  }
+
+  const { error, data } = await supabase.from('other_todos').insert(rows).select('id, title, estimated_minutes');
+  if (error) {
+    console.error('[WhatsApp] Failed to insert other_todos:', JSON.stringify(error));
+    await sendTextMessage(phone, '❌ Something went wrong saving that. Try again?');
+    return;
+  }
+
+  const lines = (data as Array<{ title: string; estimated_minutes: number | null }> | null || rows).map((r) => {
+    const time = formatErrandMinutes(r.estimated_minutes);
+    return `  • ${r.title}${time ? ` — ${time}` : ''}`;
+  }).join('\n');
+
+  await sendTextMessage(
+    phone,
+    `🗒 Added to your side list:\n\n${lines}\n\n_These won't start a Pomodoro — say "my errands" to see the full list._`,
+  );
+}
+
+async function handleListOtherTodos(
+  supabase: SupabaseClient,
+  userId: string,
+  phone: string,
+  name: string,
+) {
+  const { data: todos } = await supabase
+    .from('other_todos')
+    .select('id, title, estimated_minutes, completed')
+    .eq('user_id', userId)
+    .eq('completed', false)
+    .order('sort_order', { ascending: false });
+
+  if (!todos || todos.length === 0) {
+    await sendTextMessage(
+      phone,
+      `🗒 Your side list is empty${name ? `, ${name}` : ''}.\n\nAdd errands like: "remind me to grab groceries" or "pick Susan up at 4pm — 30 min".`,
+    );
+    return;
+  }
+
+  const lines = (todos as Array<{ title: string; estimated_minutes: number | null }>).map((t, i) => {
+    const time = formatErrandMinutes(t.estimated_minutes);
+    return `${i + 1}. ${t.title}${time ? ` _(${time})_` : ''}`;
+  }).join('\n');
+
+  const totalMins = (todos as Array<{ estimated_minutes: number | null }>).reduce(
+    (s, t) => s + (t.estimated_minutes || 0),
+    0,
+  );
+  const totalLine = totalMins > 0
+    ? `\n\n⏱ Estimated total: ${formatErrandMinutes(totalMins)}`
+    : '';
+
+  await sendTextMessage(
+    phone,
+    `🗒 *Your side list* (${todos.length} errand${todos.length === 1 ? '' : 's'})\n\n${lines}${totalLine}\n\n💡 _Say "got the groceries" or "did the dentist call" to mark one done._`,
+  );
+}
+
+async function handleCompleteOtherTodo(
+  supabase: SupabaseClient,
+  userId: string,
+  phone: string,
+  query: string,
+) {
+  const q = (query || '').trim().toLowerCase();
+  if (!q) {
+    await sendTextMessage(phone, '🤔 Which errand did you finish? Try: "got the groceries".');
+    return;
+  }
+
+  const { data: todos } = await supabase
+    .from('other_todos')
+    .select('id, title')
+    .eq('user_id', userId)
+    .eq('completed', false);
+
+  if (!todos || todos.length === 0) {
+    await sendTextMessage(phone, '🎉 No open errands to complete — your side list is clear!');
+    return;
+  }
+
+  const match = (todos as Array<{ id: string; title: string }>).find(t =>
+    t.title.toLowerCase().includes(q),
+  );
+
+  if (!match) {
+    const list = (todos as Array<{ title: string }>).map((t, i) => `${i + 1}. ${t.title}`).join('\n');
+    await sendTextMessage(
+      phone,
+      `🤔 Couldn't find an errand matching "${query}".\n\nYour open errands:\n${list}`,
+    );
+    return;
+  }
+
+  await supabase
+    .from('other_todos')
+    .update({ completed: true, completed_at: new Date().toISOString() })
+    .eq('id', match.id);
+
+  await sendTextMessage(phone, `✅ *${match.title}* — done. One less thing on the side list. 🙌`);
+}
+
+async function handleDeleteOtherTodo(
+  supabase: SupabaseClient,
+  userId: string,
+  phone: string,
+  query: string,
+) {
+  const q = (query || '').trim().toLowerCase();
+  if (!q) {
+    await sendTextMessage(phone, '🤔 Which errand should I drop? Try: "drop the dentist errand".');
+    return;
+  }
+
+  const { data: todos } = await supabase
+    .from('other_todos')
+    .select('id, title')
+    .eq('user_id', userId)
+    .eq('completed', false);
+
+  if (!todos || todos.length === 0) {
+    await sendTextMessage(phone, '🗒 Your side list is already empty.');
+    return;
+  }
+
+  const match = (todos as Array<{ id: string; title: string }>).find(t =>
+    t.title.toLowerCase().includes(q),
+  );
+
+  if (!match) {
+    await sendTextMessage(phone, `🤔 Couldn't find an errand matching "${query}".`);
+    return;
+  }
+
+  await supabase.from('other_todos').delete().eq('id', match.id);
+  await sendTextMessage(phone, `🗑 Dropped *${match.title}* from your side list.`);
+}
+
 async function sendHelpMessage(phone: string, name: string) {
   await sendTextMessage(
     phone,
@@ -703,6 +898,7 @@ async function sendHelpMessage(phone: string, name: string) {
     `📓 *Journal*\n"Add journal entry for today"\n\n` +
     `📅 *Plan tomorrow*\n"Plan tomorrow"\n\n` +
     `📦 *Carry forward*\n"Carry all" — moves unfinished tasks to tomorrow\n\n` +
+    `🗒 *Other to-dos (errands)*\n"Remind me to grab groceries" or "Pick Susan up at 4pm — 30 min". Say "my errands" to see the list.\n\n` +
     `🤫 *Pause coaching*\n"Shh" — pauses AI coach for 24h\n\n` +
     `Just type or speak naturally — I'll figure it out! 🧠`,
   );

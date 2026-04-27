@@ -300,3 +300,19 @@ export interface CoachLogEntry {
   context_json?: Record<string, unknown>;
   created_at: string;
 }
+
+// ── Other To-Dos ─────────────────────────────────────────────────────
+// A lightweight side-list of non-Pomodoro tasks ("Pick Susan up", "Pay
+// the electricity bill"). Lives in its own table — these never enter
+// the daily Pomodoro flow, the morning/afternoon emails, or session
+// counts. The nightly recap mentions only the COUNT of open errands.
+export interface OtherTodo {
+  id: string;
+  user_id: string;
+  title: string;
+  estimated_minutes: number | null; // null = no estimate
+  completed: boolean;
+  completed_at: string | null;
+  sort_order: number; // ms epoch — higher = newer
+  created_at: string;
+}

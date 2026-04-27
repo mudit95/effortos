@@ -156,8 +156,14 @@ export function nightlyEmail(opts: {
   daySummary: DaySummary;
   activeGoal?: GoalSummary;
   tomorrowDay: string;
+  /**
+   * Open errands sitting on the user's "Other To-Dos" side list. Surfaced
+   * as a single quiet line in the nightly recap only — never in the morning
+   * or afternoon nudges. Pass 0 (or omit) to suppress the line entirely.
+   */
+  openOtherTodosCount?: number;
 }): { subject: string; html: string } {
-  const { userName, todayTasks, daySummary, activeGoal, tomorrowDay } = opts;
+  const { userName, todayTasks, daySummary, activeGoal, tomorrowDay, openOtherTodosCount = 0 } = opts;
   const firstName = userName.split(' ')[0];
 
   let body = `<h1>Day&rsquo;s wrap-up</h1>`;
@@ -198,6 +204,12 @@ export function nightlyEmail(opts: {
     body += `<p>Clean sweep today! Set up ${tomorrowDay}&rsquo;s tasks before you sign off.</p>`;
   } else {
     body += `<p>Tomorrow&rsquo;s a fresh start. Take a minute to set your tasks for ${tomorrowDay}.</p>`;
+  }
+
+  // Other To-Dos quiet line. Mentioned only at night, only as a count, never
+  // with titles — keeps the side list parking-lotty by design.
+  if (openOtherTodosCount > 0) {
+    body += `<p style="color:#64748b;font-size:13px;">📋 You also have ${openOtherTodosCount} errand${openOtherTodosCount === 1 ? '' : 's'} on your side list.</p>`;
   }
 
   body += `<a href="${APP_URL}/dashboard" class="btn">Plan tomorrow &rarr;</a>`;

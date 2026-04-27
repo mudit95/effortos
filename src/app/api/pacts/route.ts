@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import crypto from 'crypto';
 import { sendEmail, APP_URL } from '@/lib/email';
+import { rateLimitOrNull } from '@/lib/ratelimit';
 
 /**
  * GET /api/pacts
@@ -83,6 +84,13 @@ export async function POST(req: Request) {
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    // Rate-limit: each pact invite sends an email — without a cap a logged-in
+    // user could turn this into a free outbound-email amplifier or harass an
+    // address by repeatedly inviting it. Light bucket (20/hour) is plenty for
+    // legitimate pact creation.
+    const blocked = await rateLimitOrNull(user.id, 'light');
+    if (blocked) return blocked;
 
     const body = await req.json();
     const { partner_email } = body;

@@ -275,6 +275,174 @@ function InfiniteTickerRow({ direction = 'left', speed = 30 }: { direction?: 'le
 }
 
 // ═════════════════════════════════════════════════════════════════════
+// INFINITE VERTICAL CARD COLUMN — hero side panel, drifts upward
+// ═════════════════════════════════════════════════════════════════════
+
+function HeroCardGoal() {
+  return (
+    <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4 backdrop-blur-sm">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] uppercase tracking-[0.18em] text-white/30">Current goal</span>
+        <span className="flex items-center gap-1 text-[10px] text-cyan-400/70">
+          <Flame size={10} /> 8 day streak
+        </span>
+      </div>
+      <p className="text-sm text-white font-medium leading-snug mb-3">Learn Python for data science</p>
+      <div className="h-1.5 rounded-full bg-white/[0.05] overflow-hidden mb-2">
+        <div className="h-full w-[32%] rounded-full bg-gradient-to-r from-cyan-400 to-blue-500" />
+      </div>
+      <div className="flex justify-between text-[10px] font-mono text-white/30">
+        <span>31 / 96 sessions</span>
+        <span>~ 16 days left</span>
+      </div>
+    </div>
+  );
+}
+
+function HeroCardPomodoro() {
+  return (
+    <div className="rounded-2xl border border-cyan-500/15 bg-gradient-to-br from-cyan-500/[0.06] to-blue-500/[0.04] p-4 backdrop-blur-sm">
+      <div className="flex items-center justify-between mb-3">
+        <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-cyan-400/80">
+          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" /> Focus
+        </span>
+        <Timer size={12} className="text-white/30" />
+      </div>
+      <div className="flex items-baseline gap-2 mb-3">
+        <span className="text-3xl font-mono font-light text-white tabular-nums">14:23</span>
+        <span className="text-[10px] text-white/30">of 25:00</span>
+      </div>
+      <div className="h-1 rounded-full bg-white/[0.04] overflow-hidden">
+        <div className="h-full w-[42%] rounded-full bg-gradient-to-r from-cyan-400 to-blue-400" />
+      </div>
+      <p className="mt-3 text-[11px] text-white/40 truncate">Writing release notes · pom 2 of 3</p>
+    </div>
+  );
+}
+
+function HeroCardWhatsApp() {
+  return (
+    <div className="rounded-2xl border border-emerald-500/15 bg-emerald-500/[0.04] p-3.5 backdrop-blur-sm">
+      <div className="flex items-center gap-2 mb-2.5">
+        <div className="w-6 h-6 rounded-full bg-gradient-to-br from-cyan-400 to-blue-500 flex items-center justify-center text-[9px] font-bold text-white">EO</div>
+        <div className="flex-1 min-w-0">
+          <p className="text-[11px] font-medium text-white">EffortOS Coach</p>
+          <p className="text-[9px] text-emerald-400/70">on WhatsApp · just now</p>
+        </div>
+        <MessageCircle size={12} className="text-emerald-400/50" />
+      </div>
+      <div className="rounded-lg rounded-tl-sm bg-emerald-900/30 border border-emerald-500/10 p-2.5">
+        <p className="text-[11px] text-white/85 leading-snug whitespace-pre-line">📝 Added 3 tasks for today
+  ✅ Study Python — 2 poms
+  ✅ Review PRs — 1 pom
+  ✅ Release notes — 3 poms
+
+⏱ Total: 6 pomodoros 💪</p>
+      </div>
+    </div>
+  );
+}
+
+function HeroCardPlan() {
+  const tasks = [
+    { done: true, label: 'Study Python', poms: '2/2' },
+    { done: false, label: 'Review PRs', poms: '0/1' },
+    { done: false, label: 'Release notes', poms: '0/3' },
+  ];
+  return (
+    <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4 backdrop-blur-sm">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[10px] uppercase tracking-[0.18em] text-white/30">Daily Grind · Today</span>
+        <span className="text-[10px] font-mono text-white/30">2 / 6 poms</span>
+      </div>
+      <ul className="space-y-1.5">
+        {tasks.map((t) => (
+          <li key={t.label} className="flex items-center gap-2.5">
+            <span className={`w-3.5 h-3.5 rounded-full border flex-shrink-0 flex items-center justify-center ${t.done ? 'bg-cyan-400/80 border-cyan-400/80' : 'border-white/15'}`}>
+              {t.done && <CheckCircle2 size={10} className="text-[#080b10]" strokeWidth={3} />}
+            </span>
+            <span className={`flex-1 text-[12px] truncate ${t.done ? 'text-white/30 line-through' : 'text-white/70'}`}>{t.label}</span>
+            <span className="text-[10px] font-mono text-white/25">{t.poms}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function HeroCardInsight() {
+  return (
+    <div className="rounded-2xl border border-purple-500/15 bg-gradient-to-br from-purple-500/[0.05] to-cyan-500/[0.03] p-4 backdrop-blur-sm">
+      <div className="flex items-center gap-1.5 mb-2">
+        <Brain size={12} className="text-purple-300/70" />
+        <span className="text-[10px] uppercase tracking-[0.18em] text-purple-300/70">AI Insight</span>
+      </div>
+      <p className="text-[12px] text-white/75 leading-snug">
+        You complete <span className="text-cyan-300">40% more tasks</span> when you start before 10am.
+        Best day this week: <span className="text-cyan-300">Wednesday</span>.
+      </p>
+      <p className="mt-2 text-[9px] text-white/25">Based on your last 30 days · auto-refreshes</p>
+    </div>
+  );
+}
+
+function HeroCardWeek() {
+  const bars = [3, 5, 2, 7, 4, 6, 8];
+  const max = Math.max(...bars);
+  return (
+    <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4 backdrop-blur-sm">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[10px] uppercase tracking-[0.18em] text-white/30">This week</span>
+        <span className="flex items-center gap-1 text-[10px] text-emerald-400/80">
+          <TrendingUp size={10} /> +18%
+        </span>
+      </div>
+      <div className="flex items-end gap-1.5 h-12 mb-2">
+        {bars.map((b, i) => (
+          <div key={i} className="flex-1 rounded-sm bg-gradient-to-t from-cyan-500/40 to-cyan-300/20" style={{ height: `${(b / max) * 100}%` }} />
+        ))}
+      </div>
+      <div className="flex justify-between text-[9px] text-white/25 font-mono">
+        <span>14h 30m focused</span><span>35 sessions</span>
+      </div>
+    </div>
+  );
+}
+
+const HERO_CARDS: React.FC[] = [
+  HeroCardPomodoro,
+  HeroCardWhatsApp,
+  HeroCardGoal,
+  HeroCardPlan,
+  HeroCardInsight,
+  HeroCardWeek,
+];
+
+function InfiniteCardColumn({ speed = 38 }: { speed?: number }) {
+  // Duplicate the cards so the loop is seamless: when we've translated by
+  // exactly half the column's height, the second copy has scrolled into the
+  // first copy's position — visually identical.
+  const items = [...HERO_CARDS, ...HERO_CARDS];
+
+  return (
+    <div className="relative h-[640px] w-full max-w-[400px] overflow-hidden">
+      <motion.div
+        className="flex flex-col gap-3"
+        animate={{ y: ['0%', '-50%'] }}
+        transition={{ duration: speed, repeat: Infinity, ease: 'linear' }}
+      >
+        {items.map((Card, i) => (
+          <Card key={i} />
+        ))}
+      </motion.div>
+      {/* Fade edges top + bottom */}
+      <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-[#080b10] to-transparent pointer-events-none z-10" />
+      <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-[#080b10] to-transparent pointer-events-none z-10" />
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════
 // AUTO-PLAYING TIMER DEMO — sped up to show the flow
 // ═════════════════════════════════════════════════════════════════════
 
@@ -851,83 +1019,97 @@ export function LandingPage() {
         <MorphingBlob className="w-[600px] h-[600px] -top-40 -left-40 opacity-30" style={{ background: 'radial-gradient(circle, rgba(34,211,238,0.08) 0%, transparent 70%)' } as React.CSSProperties} />
         <MorphingBlob className="w-[500px] h-[500px] top-20 -right-40 opacity-20" style={{ background: 'radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 70%)' } as React.CSSProperties} />
 
-        <div className="max-w-4xl mx-auto text-center relative z-10">
-          {/* Badge */}
-          <motion.div
-            initial={{ opacity: 0, y: 10, scale: 0.9 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{ duration: 0.5, ease }}
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-cyan-500/20 bg-cyan-500/[0.06] mb-8"
-          >
-            <motion.div animate={{ rotate: [0, 360] }} transition={{ duration: 4, repeat: Infinity, ease: 'linear' }}>
-              <Sparkles size={12} className="text-cyan-400" />
+        <div className="max-w-6xl mx-auto w-full relative z-10 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] lg:gap-12 lg:items-center">
+          {/* ── LEFT: copy (centered ≤ md, left-aligned ≥ lg) ── */}
+          <div className="text-center lg:text-left max-w-xl mx-auto lg:mx-0 lg:max-w-none">
+            {/* Badge */}
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ duration: 0.5, ease }}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-cyan-500/20 bg-cyan-500/[0.06] mb-8"
+            >
+              <motion.div animate={{ rotate: [0, 360] }} transition={{ duration: 4, repeat: Infinity, ease: 'linear' }}>
+                <Sparkles size={12} className="text-cyan-400" />
+              </motion.div>
+              <span className="text-[11px] text-cyan-400/90 font-medium tracking-wide">The quiet OS for the work that matters</span>
             </motion.div>
-            <span className="text-[11px] text-cyan-400/90 font-medium tracking-wide">The quiet OS for the work that matters</span>
-          </motion.div>
 
-          <motion.h1
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1, duration: 0.8, ease }}
-            className="text-4xl sm:text-6xl lg:text-7xl font-bold text-white tracking-tight leading-[1.08] mb-6"
-          >
-            <span className="text-white/50">Finish</span>
-            <br />
-            <RotatingWord />
-          </motion.h1>
+            <motion.h1
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1, duration: 0.8, ease }}
+              className="text-4xl sm:text-6xl lg:text-7xl font-bold text-white tracking-tight leading-[1.08] mb-6"
+            >
+              <span className="text-white/50">Finish</span>
+              <br />
+              <RotatingWord />
+            </motion.h1>
 
-          <motion.p
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.25, duration: 0.7, ease }}
-            className="text-base sm:text-lg text-white/40 mb-10 max-w-xl mx-auto leading-relaxed"
-          >
-            In a world engineered to fragment your attention, EffortOS is the quiet operating
-            system that holds the line. Tell it your goal — it estimates the work, paces your
-            sessions, and recalibrates as you go. So the world doesn&apos;t get to decide what
-            you ship.
-          </motion.p>
+            <motion.p
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.25, duration: 0.7, ease }}
+              className="text-base sm:text-lg text-white/40 mb-10 max-w-xl mx-auto lg:mx-0 leading-relaxed"
+            >
+              In a world engineered to fragment your attention, EffortOS is the quiet operating
+              system that holds the line. Tell it your goal — it estimates the work, paces your
+              sessions, and recalibrates as you go. So the world doesn&apos;t get to decide what
+              you ship.
+            </motion.p>
 
-          {/* CTA */}
+            {/* CTA */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.35, duration: 0.6, ease }}
+              className="flex flex-col items-center lg:items-start gap-3"
+            >
+              <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
+                <Button
+                  variant="glow"
+                  size="lg"
+                  onClick={() => useStore.getState().startQuickPomodoro()}
+                  className="gap-2 px-8 h-13 text-base"
+                >
+                  <Play className="w-5 h-5 fill-current" />
+                  Try a quick pomodoro
+                </Button>
+                <Button variant="outline" size="lg" onClick={() => setView('auth')} className="gap-2 px-6 h-13 text-base">
+                  Sign up free <ArrowRight className="w-5 h-5" />
+                </Button>
+              </div>
+              <p className="text-[11px] text-white/20 mt-1">No signup. No noise. Just twenty-five quiet minutes.</p>
+            </motion.div>
+
+            {/* Trust badges */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.5, duration: 0.6 }}
+              className="flex flex-wrap items-center justify-center lg:justify-start gap-x-5 gap-y-2 mt-10"
+            >
+              {[
+                { icon: Shield, text: '3 days free, no card needed' },
+                { icon: Clock, text: 'Cancel anytime' },
+                { icon: Zap, text: 'No notifications by default' },
+              ].map(({ icon: I, text }) => (
+                <span key={text} className="flex items-center gap-1.5 text-xs text-white/25">
+                  <I size={12} /> {text}
+                </span>
+              ))}
+            </motion.div>
+          </div>
+
+          {/* ── RIGHT: vertical card stack (lg+ only) ── */}
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.35, duration: 0.6, ease }}
-            className="flex flex-col items-center gap-3"
+            initial={{ opacity: 0, x: 30 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.4, duration: 0.8, ease }}
+            className="hidden lg:flex justify-center"
+            aria-hidden="true"
           >
-            <div className="flex flex-col sm:flex-row gap-3 justify-center">
-              <Button
-                variant="glow"
-                size="lg"
-                onClick={() => useStore.getState().startQuickPomodoro()}
-                className="gap-2 px-8 h-13 text-base"
-              >
-                <Play className="w-5 h-5 fill-current" />
-                Try a quick pomodoro
-              </Button>
-              <Button variant="outline" size="lg" onClick={() => setView('auth')} className="gap-2 px-6 h-13 text-base">
-                Sign up free <ArrowRight className="w-5 h-5" />
-              </Button>
-            </div>
-            <p className="text-[11px] text-white/20 mt-1">No signup. No noise. Just twenty-five quiet minutes.</p>
-          </motion.div>
-
-          {/* Trust badges */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.5, duration: 0.6 }}
-            className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 mt-10"
-          >
-            {[
-              { icon: Shield, text: '3 days free, no card needed' },
-              { icon: Clock, text: 'Cancel anytime' },
-              { icon: Zap, text: 'No notifications by default' },
-            ].map(({ icon: I, text }) => (
-              <span key={text} className="flex items-center gap-1.5 text-xs text-white/25">
-                <I size={12} /> {text}
-              </span>
-            ))}
+            <InfiniteCardColumn />
           </motion.div>
         </div>
 

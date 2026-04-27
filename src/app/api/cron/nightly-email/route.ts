@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { verifyCronAuth } from '@/lib/cron-auth';
-import { getEligibleUsers, getUserTasks, getUserGoalSummary, getUserDaySummary, logEmail } from '@/lib/cron-helpers';
+import { getEligibleUsers, getUserTasks, getUserGoalSummary, getUserDaySummary, logEmail, countOpenOtherTodosForUser } from '@/lib/cron-helpers';
 import { nightlyEmail } from '@/lib/email-templates';
 import { sendEmail } from '@/lib/email';
+import { nightlyWhatsAppMessage, sendCronNudge } from '@/lib/whatsapp-nudge';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -23,6 +24,7 @@ export async function GET(request: Request) {
     }
 
     let sent = 0;
+    let waSent = 0;
     const errors: string[] = [];
 
     for (const user of users) {
@@ -36,10 +38,11 @@ export async function GET(request: Request) {
         tomorrow.setDate(tomorrow.getDate() + 1);
         const tomorrowDay = dayNames[tomorrow.getDay()];
 
-        const [todayTasks, daySummary, goalSummary] = await Promise.all([
+        const [todayTasks, daySummary, goalSummary, openOtherTodosCount] = await Promise.all([
           getUserTasks(user.user_id, todayStr),
           getUserDaySummary(user.user_id, todayStr),
           getUserGoalSummary(user.user_id),
+          countOpenOtherTodosForUser(user.user_id),
         ]);
 
         const { subject, html } = nightlyEmail({
@@ -48,6 +51,7 @@ export async function GET(request: Request) {
           daySummary,
           activeGoal: goalSummary,
           tomorrowDay,
+          openOtherTodosCount,
         });
 
         const result = await sendEmail({ to: user.email, subject, html, tags: [{ name: 'type', value: 'nightly' }] });
@@ -61,6 +65,19 @@ export async function GET(request: Request) {
         });
 
         sent++;
+
+        // Companion WhatsApp nudge — best-effort.
+        const waMessage = nightlyWhatsAppMessage({
+          userName: user.name,
+          todayTasks,
+          daySummary,
+          activeGoal: goalSummary,
+          tomorrowDay,
+          openOtherTodosCount,
+        });
+        if (await sendCronNudge({ userId: user.user_id, nudgeType: 'nightly', message: waMessage })) {
+          waSent++;
+        }
       } catch (err) {
         const msg = `${user.email}: ${err instanceof Error ? err.message : 'unknown'}`;
         errors.push(msg);
@@ -75,7 +92,7 @@ export async function GET(request: Request) {
       }
     }
 
-    return NextResponse.json({ sent, total: users.length, errors: errors.length > 0 ? errors : undefined });
+    return NextResponse.json({ sent, wa_sent: waSent, total: users.length, errors: errors.length > 0 ? errors : undefined });
   } catch (err) {
     console.error('[cron/nightly-email] Fatal:', err);
     return NextResponse.json({ error: 'Cron failed' }, { status: 500 });

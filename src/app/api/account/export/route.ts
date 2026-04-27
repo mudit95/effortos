@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { rateLimitOrNull } from '@/lib/ratelimit';
 
 /**
  * GET /api/account/export
@@ -20,6 +21,13 @@ export async function GET() {
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    // Rate-limit: data export is heavy (11 table scans) and used as a
+    // privacy/compliance feature, not a polling endpoint. The 'heavy' bucket
+    // (5/day) is plenty for legitimate use and stops a malicious script from
+    // turning this into a DOS amplifier.
+    const blocked = await rateLimitOrNull(user.id, 'heavy');
+    if (blocked) return blocked;
 
     // Every table that stores user-owned data. Keep in sync with the deletion
     // endpoint so export and delete cover the same surface area.

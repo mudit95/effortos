@@ -16,6 +16,13 @@ export type WAIntent =
   | { type: 'pause_coaching' }
   | { type: 'plan_tomorrow' }
   | { type: 'add_journal' }
+  // ── Other To-Dos (errands) — separate from the Pomodoro task flow. ──
+  // The user's "side list": "Pick Susan from school", "Pay bills".
+  // estimated_minutes is optional; null/undefined = no estimate.
+  | { type: 'add_other_todos'; todos: Array<{ title: string; estimated_minutes?: number | null }> }
+  | { type: 'list_other_todos' }
+  | { type: 'complete_other_todo'; query: string }
+  | { type: 'delete_other_todo'; query: string }
   | { type: 'off_topic' }
   | { type: 'unknown'; raw: string };
 
@@ -60,10 +67,45 @@ INTENTS:
 7. unknown — message seems task-related but you can't determine the specific intent.
    Return: { "type": "unknown", "raw": "original message" }
 
+8. add_other_todos — user wants to add ERRANDS or QUICK TASKS that are NOT
+   focused work sessions. These are life chores that don't need a Pomodoro:
+   "pick Susan up from school", "grab groceries", "pay phone bill", "call mom",
+   "renew passport", "schedule dentist appointment", "remind me to email Tom".
+   Trigger words: "errand", "remind me to", "add to my list", "todo:", "other:",
+   "pick up", "pickup", "grab", "drop off", "buy", "call", "schedule", "book",
+   "pay", "renew" — when the action is a real-world errand, not focused work.
+   Return: { "type": "add_other_todos", "todos": [{ "title": "...", "estimated_minutes": N | null }] }
+   - estimated_minutes: parse "30 min", "1 hour", "20 mins" into integer minutes.
+     If no time mentioned, set to null. Round to nearest 5 minutes.
+   - Title max 100 chars; truncate if longer.
+   - Multiple errands separated by commas, "and", or newlines → multiple entries.
+   - Distinguish from add_tasks: add_tasks is for FOCUSED WORK
+     (study, code, write, research, design). add_other_todos is for LIFE
+     ERRANDS (groceries, calls, pickup, bills, appointments).
+   - When in doubt between add_tasks and add_other_todos, ask: "would the user
+     start a Pomodoro timer on this?" If no — it's an errand.
+
+9. list_other_todos — user wants to see their errand list.
+   Return: { "type": "list_other_todos" }
+   Triggers: "what errands do I have", "my errand list", "other todos",
+   "side list", "what's on my other list", "list errands", "show errands".
+
+10. complete_other_todo — user marks an errand as done.
+    Return: { "type": "complete_other_todo", "query": "..." }
+    Triggers: "got the groceries", "picked up Susan", "called mom — done",
+    "finished the errand X". The query is a fuzzy match against the title.
+
+11. delete_other_todo — user wants to remove an errand from the list.
+    Return: { "type": "delete_other_todo", "query": "..." }
+    Triggers: "drop the dentist errand", "remove call mom from my list",
+    "cancel the grocery errand".
+
 ADDITIONAL RULES:
 - If the message contains multiple tasks separated by "and", commas, or newlines, parse each as a separate task.
 - "30 min" = 1 pomodoro, "1 hour" = 2 pomodoros, "1.5 hours" = 3 pomodoros, "2 hours" = 4 pomodoros.
-- When in doubt between add_tasks and off_topic, lean toward off_topic to save costs.`;
+- When in doubt between add_tasks and off_topic, lean toward off_topic to save costs.
+- IMPORTANT: errands ("pick up groceries", "call mom") MUST go into add_other_todos
+  not add_tasks — they would never start a Pomodoro session.`;
 
 export async function parseWhatsAppMessage(message: string): Promise<WAIntent> {
   const apiKey = process.env.ANTHROPIC_API_KEY;

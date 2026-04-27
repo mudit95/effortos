@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getRazorpay } from '@/lib/razorpay';
 import { createClient } from '@/lib/supabase/server';
+import { rateLimitOrNull } from '@/lib/ratelimit';
 
 /**
  * POST /api/subscription/cancel
@@ -13,6 +14,12 @@ export async function POST() {
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    // Rate-limit: cancellation hits Razorpay's API. The light bucket caps
+    // accidental double-clicks and stops a logged-in attacker from spamming
+    // Razorpay on a victim's behalf.
+    const blocked = await rateLimitOrNull(user.id, 'light');
+    if (blocked) return blocked;
 
     // `maybeSingle` with order+limit — `.single()` would 500 if the
     // user ends up with zero or multiple active rows. Take the newest.

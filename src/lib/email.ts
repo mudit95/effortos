@@ -14,6 +14,13 @@ function getResend(): Resend {
 /** Verified sender — change once your domain is verified in Resend. */
 export const FROM_EMAIL = process.env.EMAIL_FROM || 'EffortOS <onboarding@resend.dev>';
 
+/**
+ * Default reply-to. We funnel replies to a real inbox so users who actually hit
+ * "Reply" on the welcome email don't get a no-reply bounce. Override per-call
+ * via SendEmailOpts.replyTo.
+ */
+export const REPLY_TO = process.env.EMAIL_REPLY_TO || 'hello@effortos.com';
+
 /** Base URL for links in emails. */
 export const APP_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://effortos.vercel.app';
 
@@ -25,17 +32,60 @@ export interface SendEmailOpts {
   html: string;
   replyTo?: string;
   tags?: { name: string; value: string }[];
+  /**
+   * Whether this is a transactional email (account/billing/security). Skips
+   * the List-Unsubscribe header so users can't accidentally suppress critical
+   * receipts. Defaults to false (i.e. marketing/lifecycle, gets List-Unsubscribe).
+   */
+  transactional?: boolean;
+}
+
+/**
+ * Resolve `{{email}}` placeholders in HTML to the recipient's address. We do
+ * this server-side because Resend does not perform Mustache substitution by
+ * default — without this step the unsubscribe link in emailLayout shipped as
+ * a literal `{{email}}` and broke for every recipient.
+ */
+function injectRecipient(html: string, recipient: string): string {
+  // URL-encode so `+` aliases and unusual characters in the address survive
+  // the round-trip through the unsubscribe page's query parser.
+  const encoded = encodeURIComponent(recipient);
+  return html.split('{{email}}').join(encoded);
+}
+
+function unsubscribeHeaders(recipient: string) {
+  const url = `${APP_URL}/unsubscribe?email=${encodeURIComponent(recipient)}`;
+  return {
+    'List-Unsubscribe': `<${url}>, <mailto:unsubscribe@effortos.com?subject=unsubscribe>`,
+    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+  };
 }
 
 export async function sendEmail(opts: SendEmailOpts) {
   const resend = getResend();
+  // Single-recipient path. Per-address List-Unsubscribe headers and {{email}}
+  // substitution rely on knowing exactly who the recipient is, so we collapse
+  // string-or-string[] down to a single address. Callers with many recipients
+  // should use sendBulkEmail directly — accidentally passing an array here
+  // would silently strip per-recipient personalisation.
+  const recipients = Array.isArray(opts.to) ? opts.to : [opts.to];
+  if (recipients.length !== 1) {
+    throw new Error(
+      `sendEmail requires exactly one recipient; got ${recipients.length}. Use sendBulkEmail for many.`,
+    );
+  }
+  const recipient = recipients[0];
+  const html = injectRecipient(opts.html, recipient);
+  const headers = opts.transactional ? undefined : unsubscribeHeaders(recipient);
+
   const { data, error } = await resend.emails.send({
     from: FROM_EMAIL,
-    to: Array.isArray(opts.to) ? opts.to : [opts.to],
+    to: [recipient],
     subject: opts.subject,
-    html: opts.html,
-    replyTo: opts.replyTo,
+    html,
+    replyTo: opts.replyTo || REPLY_TO,
     tags: opts.tags,
+    headers,
   });
 
   if (error) {
@@ -54,6 +104,7 @@ export async function sendBulkEmail(
   subject: string,
   htmlFn: (email: string) => string,
   tags?: { name: string; value: string }[],
+  opts?: { transactional?: boolean; replyTo?: string },
 ): Promise<number> {
   const resend = getResend();
   let sent = 0;
@@ -64,8 +115,12 @@ export async function sendBulkEmail(
       from: FROM_EMAIL,
       to: [email],
       subject,
-      html: htmlFn(email),
+      // Run injectRecipient even on per-call htmlFn output so callers don't
+      // have to remember to expand {{email}} themselves.
+      html: injectRecipient(htmlFn(email), email),
+      replyTo: opts?.replyTo || REPLY_TO,
       tags,
+      headers: opts?.transactional ? undefined : unsubscribeHeaders(email),
     }));
     try {
       await resend.batch.send(emails);
@@ -82,6 +137,9 @@ export async function sendBulkEmail(
 /**
  * Base layout for all EffortOS emails.
  * Dark theme matching the app aesthetic. Pass inner HTML as `body`.
+ *
+ * The `{{email}}` token in the unsubscribe link is replaced at send time by
+ * sendEmail / sendBulkEmail. Don't pre-render it at template authoring time.
  */
 export function emailLayout(body: string, opts?: { preheader?: string }): string {
   const preheader = opts?.preheader || '';

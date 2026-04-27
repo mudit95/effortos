@@ -242,6 +242,31 @@ export async function getUserDaySummary(userId: string, date: string): Promise<D
 }
 
 /**
+ * Count open errands on a user's "Other To-Dos" side list.
+ *
+ * Used by the nightly recap (email + WhatsApp) to surface a single quiet
+ * count line. Never used in morning/afternoon nudges by design — these
+ * errands are deliberately a parking lot, not a daily grind item.
+ *
+ * Uses the admin client (RLS bypassed) because crons run without a user
+ * session.
+ */
+export async function countOpenOtherTodosForUser(userId: string): Promise<number> {
+  const supabase = getAdminSupabase();
+  const { count, error } = await supabase
+    .from('other_todos')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('completed', false);
+
+  if (error) {
+    console.error('[cron-helpers] countOpenOtherTodosForUser failed', { userId, error });
+    return 0;
+  }
+  return count ?? 0;
+}
+
+/**
  * Log an email send to the email_log table.
  */
 export async function logEmail(opts: {

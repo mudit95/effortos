@@ -384,6 +384,9 @@ async function notifyPaymentFailed({
         to: email,
         subject,
         html,
+        // Billing failure notice is transactional — must reach the inbox even
+        // if the user previously hit "unsubscribe" on lifecycle emails.
+        transactional: true,
         tags: [
           { name: 'type', value: logType },
           { name: 'subscription_id', value: sub.id },

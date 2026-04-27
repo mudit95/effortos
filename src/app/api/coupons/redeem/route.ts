@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { rateLimitOrNull } from '@/lib/ratelimit';
 
 /**
  * POST /api/coupons/redeem
@@ -21,6 +22,12 @@ export async function POST(req: Request) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  // Rate-limit: a brute-force coupon-code guesser would otherwise sweep our
+  // entire code namespace. Light bucket (20/hour) lets a legitimate user paste
+  // a wrong code a few times without getting locked out.
+  const blocked = await rateLimitOrNull(user.id, 'light');
+  if (blocked) return blocked;
 
   const { code } = await req.json();
   if (!code) return NextResponse.json({ error: 'code required' }, { status: 400 });

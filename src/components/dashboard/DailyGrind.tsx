@@ -11,7 +11,7 @@ import {
   Plus, Trash2, Play, Pause, RotateCcw, SkipForward,
   Repeat, ChevronLeft, ChevronRight, Maximize2, Circle,
   CheckCircle2, Clock, Flame, PlusCircle, X, Calendar, Sparkles,
-  CalendarPlus, List, LayoutGrid,
+  CalendarPlus, List, LayoutGrid, ListTodo,
 } from 'lucide-react';
 import * as storage from '@/lib/storage';
 import { PiPButton } from '@/components/timer/PiPButton';
@@ -30,6 +30,8 @@ import { StreakCalendar } from './StreakCalendar';
 // redundant "motivate the user" real estate.
 import { AIMotivationCard } from './AICards';
 import { TimeBoxView } from './TimeBoxView';
+import { OtherTodosDrawer } from './OtherTodosDrawer';
+import { countOpenOtherTodos } from '@/lib/other-todos';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
@@ -446,7 +448,23 @@ export function DailyGrind() {
   const [newTaskRepeating, setNewTaskRepeating] = useState(false);
   const [newTaskTag, setNewTaskTag] = useState<TaskTagId | undefined>(undefined);
   const [showManualPomodoro, setShowManualPomodoro] = useState(false);
+  const [showOtherTodos, setShowOtherTodos] = useState(false);
+  // Cached count of open errands so the trigger button can show a red dot
+  // without re-querying every render. Refreshed when the drawer opens or
+  // mutates a row (the drawer calls onOpenCountChange).
+  const [openOtherTodoCount, setOpenOtherTodoCount] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Initial fetch of the open-errand count for the trigger badge. Cheap
+  // (one HEAD count query). We don't poll — count is updated in-place as
+  // the drawer mutates rows, and refreshes the next time it opens.
+  useEffect(() => {
+    let cancelled = false;
+    countOpenOtherTodos().then(n => {
+      if (!cancelled) setOpenOtherTodoCount(n);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const isToday = dailyViewDate === getTodayKey();
   const isFutureDate = dailyViewDate > getTodayKey();
@@ -675,6 +693,25 @@ export function DailyGrind() {
                   Log
                 </button>
               )}
+              {/* Other To-Dos drawer trigger. Sits intentionally last in the
+                  control row — secondary surface for the side list of
+                  errands. The red dot is the only thing that draws the eye
+                  when there's something there. */}
+              <button
+                onClick={() => setShowOtherTodos(true)}
+                className="relative text-[10px] px-2 py-1 rounded-lg bg-white/5 text-white/30 hover:text-amber-300/80 hover:bg-amber-500/10 transition-all flex items-center gap-1"
+                title="Other To-Dos — errands & quick tasks"
+                aria-label={`Open other to-dos${openOtherTodoCount > 0 ? ` (${openOtherTodoCount} open)` : ''}`}
+              >
+                <ListTodo className="w-3 h-3" />
+                Other
+                {openOtherTodoCount > 0 && (
+                  <span
+                    className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-amber-400"
+                    aria-hidden="true"
+                  />
+                )}
+              </button>
             </div>
           </div>
 
@@ -1120,6 +1157,15 @@ export function DailyGrind() {
         onClose={() => setShowManualPomodoro(false)}
         tasks={dailyTasks}
         onSubmit={handleManualPomodoro}
+      />
+
+      {/* Other To-Dos drawer — slides in from the right. Mounted here at the
+          root so its fixed-position overlay can cover the whole viewport
+          regardless of where in the DailyGrind tree the trigger lives. */}
+      <OtherTodosDrawer
+        open={showOtherTodos}
+        onClose={() => setShowOtherTodos(false)}
+        onOpenCountChange={setOpenOtherTodoCount}
       />
     </div>
   );

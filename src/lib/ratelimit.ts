@@ -19,8 +19,8 @@
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 
-type Tier = 'light' | 'heavy';
-type IpTier = 'health';
+type Tier = 'light' | 'heavy' | 'whatsapp';
+type IpTier = 'health' | 'content';
 
 /** Limits, tuned to cap Anthropic spend per user without being user-hostile. */
 const LIMITS: Record<Tier, { tokens: number; window: `${number} ${'s' | 'm' | 'h' | 'd'}` }> = {
@@ -28,6 +28,9 @@ const LIMITS: Record<Tier, { tokens: number; window: `${number} ${'s' | 'm' | 'h
   light: { tokens: 20, window: '1 h' },
   // Longer-context endpoints that should only fire a handful of times a day.
   heavy: { tokens: 5, window: '1 d' },
+  // WhatsApp-bot AI parses. Independent bucket so a chatty WhatsApp user
+  // can't lock themselves out of dashboard AI features.
+  whatsapp: { tokens: 20, window: '1 h' },
 };
 
 /**
@@ -37,13 +40,22 @@ const LIMITS: Record<Tier, { tokens: number; window: `${number} ${'s' | 'm' | 'h
  */
 const IP_LIMITS: Record<IpTier, { tokens: number; window: `${number} ${'s' | 'm' | 'h' | 'd'}` }> = {
   health: { tokens: 60, window: '1 m' },
+  // Public content/site_content reads — landing page hydration. Should be
+  // CDN-cached, but we still cap raw IP traffic to stop scrapers replicating
+  // the entire site_content table on a loop.
+  content: { tokens: 120, window: '1 m' },
 };
 
-let _cache: { light: Ratelimit; heavy: Ratelimit } | null = null;
-let _ipCache: { health: Ratelimit } | null = null;
+let _cache: { light: Ratelimit; heavy: Ratelimit; whatsapp: Ratelimit } | null = null;
+let _ipCache: { health: Ratelimit; content: Ratelimit } | null = null;
 let _redis: Redis | null = null;
 
-function getRedis(): Redis | null {
+/**
+ * Singleton Upstash Redis client. Exported so other modules (whatsapp-state,
+ * etc.) can reuse the same connection config rather than rebuilding their own.
+ * Returns null when env vars are missing — callers must handle that.
+ */
+export function getRedis(): Redis | null {
   if (_redis) return _redis;
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -52,7 +64,7 @@ function getRedis(): Redis | null {
   return _redis;
 }
 
-function getLimiters(): { light: Ratelimit; heavy: Ratelimit } | null {
+function getLimiters(): { light: Ratelimit; heavy: Ratelimit; whatsapp: Ratelimit } | null {
   if (_cache) return _cache;
 
   const redis = getRedis();
@@ -71,12 +83,18 @@ function getLimiters(): { light: Ratelimit; heavy: Ratelimit } | null {
       analytics: true,
       prefix: 'rl:coach:heavy',
     }),
+    whatsapp: new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(LIMITS.whatsapp.tokens, LIMITS.whatsapp.window),
+      analytics: true,
+      prefix: 'rl:wa:msg',
+    }),
   };
 
   return _cache;
 }
 
-function getIpLimiters(): { health: Ratelimit } | null {
+function getIpLimiters(): { health: Ratelimit; content: Ratelimit } | null {
   if (_ipCache) return _ipCache;
 
   const redis = getRedis();
@@ -88,6 +106,12 @@ function getIpLimiters(): { health: Ratelimit } | null {
       limiter: Ratelimit.slidingWindow(IP_LIMITS.health.tokens, IP_LIMITS.health.window),
       analytics: true,
       prefix: 'rl:ip:health',
+    }),
+    content: new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(IP_LIMITS.content.tokens, IP_LIMITS.content.window),
+      analytics: true,
+      prefix: 'rl:ip:content',
     }),
   };
 
@@ -109,16 +133,33 @@ export interface RateLimitResult {
 /**
  * Consume one token for this (userId, tier) bucket.
  * Safe to call from any Next.js route handler.
+ *
+ * Fail mode when Upstash env vars are missing:
+ *   - production:  fail CLOSED (return 429-equivalent). A misconfigured prod
+ *                  with unbounded Anthropic spend is far worse than a brief
+ *                  outage that surfaces the misconfig immediately.
+ *   - non-production: fail OPEN with a one-time warning so local dev / preview
+ *                     environments still work without Upstash credentials.
  */
 export async function rateLimitCoach(userId: string, tier: Tier): Promise<RateLimitResult> {
   const limiters = getLimiters();
   if (!limiters) {
-    // Fail open if Upstash isn't configured. Log once-per-process so prod
-    // misconfig is visible without spamming.
+    if (process.env.NODE_ENV === 'production') {
+      if (!warned) {
+        console.error(
+          '[rate-limit] UPSTASH_REDIS_REST_URL/TOKEN not set in production — failing closed. ' +
+            'Configure Upstash immediately to restore service.',
+        );
+        warned = true;
+      }
+      // 60s retry-after — long enough to give ops time to wire env vars,
+      // short enough that a transient misconfig recovers gracefully.
+      return { ok: false, remaining: 0, reset: Date.now() + 60_000, limit: 0, retryAfterSec: 60 };
+    }
     if (!warned) {
       console.warn(
-        '[rate-limit] UPSTASH_REDIS_REST_URL/TOKEN not set — skipping rate limiting. ' +
-          'Anthropic spend is UNBOUNDED until these are configured.',
+        '[rate-limit] UPSTASH_REDIS_REST_URL/TOKEN not set — skipping rate limiting (non-production). ' +
+          'Anthropic spend is UNBOUNDED in this environment.',
       );
       warned = true;
     }
@@ -191,16 +232,27 @@ export function getClientIp(req: Request): string {
 }
 
 /**
- * Consume one token from the IP bucket for this (ip, tier). Fails open when
- * Upstash isn't configured — public endpoints must stay reachable in local
- * dev and during rollout before env vars are wired.
+ * Consume one token from the IP bucket for this (ip, tier).
+ *
+ * Fail mode mirrors rateLimitCoach: closed in production (return 429), open in
+ * dev/preview. Public endpoints staying reachable matters less than preventing
+ * scrape amplification when Upstash is unavailable in prod.
  */
 export async function rateLimitByIp(ip: string, tier: IpTier): Promise<RateLimitResult> {
   const limiters = getIpLimiters();
   if (!limiters) {
+    if (process.env.NODE_ENV === 'production') {
+      if (!ipWarned) {
+        console.error(
+          '[rate-limit] UPSTASH_REDIS_REST_URL/TOKEN not set in production — failing IP limiter closed.',
+        );
+        ipWarned = true;
+      }
+      return { ok: false, remaining: 0, reset: Date.now() + 60_000, limit: 0, retryAfterSec: 60 };
+    }
     if (!ipWarned) {
       console.warn(
-        '[rate-limit] UPSTASH_REDIS_REST_URL/TOKEN not set — skipping IP rate limiting.',
+        '[rate-limit] UPSTASH_REDIS_REST_URL/TOKEN not set — skipping IP rate limiting (non-production).',
       );
       ipWarned = true;
     }
