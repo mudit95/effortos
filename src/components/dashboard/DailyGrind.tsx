@@ -1196,14 +1196,27 @@ function TaskRow({
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, x: -20, transition: { duration: 0.2 } }}
-      className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
+      className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
         isActive && !completed
-          ? 'bg-[var(--accent,#22d3ee)]/[0.06] border border-[var(--accent,#22d3ee)]/30 shadow-[0_0_0_1px_rgba(34,211,238,0.08)]'
+          ? 'bg-[var(--accent,#22d3ee)]/[0.10] border border-[var(--accent,#22d3ee)]/50 shadow-[0_0_24px_rgba(34,211,238,0.18)]'
           : completed
             ? 'bg-white/[0.015] border border-white/[0.04] opacity-50'
             : 'bg-white/[0.02] hover:bg-white/[0.04] border border-white/[0.08] hover:border-white/[0.14]'
       } ${task.goal_id ? 'border-l-2 border-l-violet-500/60' : ''}`}
     >
+      {/* "Now" indicator — pulsing dot in the top-right of the active row.
+          Strengthens the active highlight for users who couldn't tell
+          which task was being timed at a glance. Only shown for the
+          one task whose timer is actively running. */}
+      {isActive && !completed && (
+        <span className="absolute -top-1.5 -right-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-[var(--accent,#22d3ee)] text-[8px] font-semibold text-[#0B0F14] uppercase tracking-wider shadow-[0_0_10px_rgba(34,211,238,0.4)]">
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="absolute inline-flex h-full w-full rounded-full bg-white opacity-75 animate-ping" />
+            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-white" />
+          </span>
+          Now
+        </span>
+      )}
       {/* Play / Checkbox area */}
       {!completed && isToday ? (
         <button

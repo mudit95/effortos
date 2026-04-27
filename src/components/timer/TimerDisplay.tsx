@@ -5,8 +5,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useTimer } from '@/hooks/useTimer';
 import { useStore } from '@/store/useStore';
+import { usePiP } from '@/hooks/usePiP';
 import { formatDuration } from '@/lib/utils';
-import { Play, Pause, RotateCcw, SkipForward, Maximize2 } from 'lucide-react';
+import { Play, Pause, RotateCcw, SkipForward, Maximize2, PictureInPicture2 } from 'lucide-react';
 
 interface TimerDisplayProps {
   compact?: boolean;
@@ -30,6 +31,12 @@ export function TimerDisplay({ compact = false, onEnterFocus }: TimerDisplayProp
   const activeDailyTaskId = useStore(s => s.activeDailyTaskId);
   const dailyTasks = useStore(s => s.dailyTasks);
 
+  // PiP state — when the floating window is open we hide the in-page
+  // ring so the user isn't watching two synchronised counters at once.
+  // The dashboard ring used to count down right next to the floating
+  // one, which read as "the long-term goal counter is also moving".
+  const { isPiPActive, closePiP } = usePiP();
+
   const activeDailyTask = useMemo(
     () =>
       dashboardMode === 'daily' && activeDailyTaskId
@@ -37,6 +44,25 @@ export function TimerDisplay({ compact = false, onEnterFocus }: TimerDisplayProp
         : undefined,
     [dashboardMode, dailyTasks, activeDailyTaskId]
   );
+
+  // What the timer is FOR — shown above the ring while the timer is
+  // running so it's never ambiguous which task/goal is in focus.
+  // Priority: daily task title > goal title > generic. Unassigned
+  // pomodoros in daily mode get an explicit "Unassigned" label so the
+  // user doesn't think a task they expected to see is missing.
+  const focusContext = useMemo<{ label: string; value: string } | null>(() => {
+    if (timerState === 'idle') return null;
+    if (dashboardMode === 'daily' && activeDailyTask) {
+      return { label: 'Now focusing', value: activeDailyTask.title };
+    }
+    if (dashboardMode === 'daily') {
+      return { label: 'Focus session', value: 'Unassigned' };
+    }
+    if (activeGoal) {
+      return { label: 'Working on', value: activeGoal.title };
+    }
+    return null;
+  }, [timerState, dashboardMode, activeDailyTask, activeGoal]);
 
   // Session label — per-task in daily mode, per-goal otherwise
   const sessionLabel = useMemo(() => {
@@ -64,52 +90,90 @@ export function TimerDisplay({ compact = false, onEnterFocus }: TimerDisplayProp
 
   return (
     <div className={`flex flex-col items-center ${compact ? 'scale-90' : ''}`}>
-      {/* Timer Ring */}
-      <div className="relative w-52 h-52 mb-6">
-        <svg width="208" height="208" viewBox="0 0 208 208" className="transform -rotate-90">
-          {/* Background */}
-          <circle
-            cx="104"
-            cy="104"
-            r="90"
-            fill="none"
-            stroke="rgba(255,255,255,0.04)"
-            strokeWidth="6"
-          />
-          {/* Progress */}
-          <motion.circle
-            cx="104"
-            cy="104"
-            r="90"
-            fill="none"
-            stroke={timerColor}
-            strokeWidth="6"
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            animate={{ strokeDashoffset: offset }}
-            transition={{ duration: 0.3, ease: 'linear' }}
-            style={{ filter: `drop-shadow(0 0 8px ${timerColor}40)` }}
-          />
-        </svg>
+      {/* Active task / goal banner — surfaces the focus subject above the
+          ring so it's always obvious what the timer is tracking. */}
+      <AnimatePresence mode="wait">
+        {focusContext && (
+          <motion.div
+            key={focusContext.value}
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.25 }}
+            className="mb-4 text-center max-w-xs"
+          >
+            <p className="text-[10px] text-white/30 uppercase tracking-widest mb-1">
+              {focusContext.label}
+            </p>
+            <p className="text-sm font-medium text-white/85 truncate px-2">
+              {focusContext.value}
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-        {/* Center content */}
-        <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <AnimatePresence mode="wait">
-            <motion.span
-              key={isBreak ? 'break' : 'focus'}
-              initial={{ opacity: 0, y: -5 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 5 }}
-              className="text-xs text-white/30 uppercase tracking-widest mb-1"
-            >
-              {isBreak ? 'Break' : 'Focus'}
-            </motion.span>
-          </AnimatePresence>
-          <span className="text-4xl font-mono font-bold text-white tracking-tight">
-            {formatDuration(timeRemaining)}
-          </span>
+      {/* Timer ring — hidden when the floating window is open. We show a
+          small placeholder instead, with a button to bring the timer
+          back into the dashboard. The PiP window itself is showing the
+          authoritative counter; rendering it twice is just noise. */}
+      {isPiPActive ? (
+        <div className="relative w-52 h-52 mb-6 flex flex-col items-center justify-center rounded-2xl border border-dashed border-cyan-500/20 bg-cyan-500/[0.02]">
+          <PictureInPicture2 className="w-8 h-8 text-cyan-400/50 mb-3" />
+          <p className="text-sm text-white/55 mb-1">Timer is floating</p>
+          <button
+            onClick={closePiP}
+            className="text-[11px] text-cyan-400/70 hover:text-cyan-300 transition-colors mt-1 underline-offset-2 hover:underline"
+          >
+            Close floating window
+          </button>
         </div>
-      </div>
+      ) : (
+        <div className="relative w-52 h-52 mb-6">
+          <svg width="208" height="208" viewBox="0 0 208 208" className="transform -rotate-90">
+            {/* Background */}
+            <circle
+              cx="104"
+              cy="104"
+              r="90"
+              fill="none"
+              stroke="rgba(255,255,255,0.04)"
+              strokeWidth="6"
+            />
+            {/* Progress */}
+            <motion.circle
+              cx="104"
+              cy="104"
+              r="90"
+              fill="none"
+              stroke={timerColor}
+              strokeWidth="6"
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              animate={{ strokeDashoffset: offset }}
+              transition={{ duration: 0.3, ease: 'linear' }}
+              style={{ filter: `drop-shadow(0 0 8px ${timerColor}40)` }}
+            />
+          </svg>
+
+          {/* Center content */}
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <AnimatePresence mode="wait">
+              <motion.span
+                key={isBreak ? 'break' : 'focus'}
+                initial={{ opacity: 0, y: -5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 5 }}
+                className="text-xs text-white/30 uppercase tracking-widest mb-1"
+              >
+                {isBreak ? 'Break' : 'Focus'}
+              </motion.span>
+            </AnimatePresence>
+            <span className="text-4xl font-mono font-bold text-white tracking-tight">
+              {formatDuration(timeRemaining)}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Controls */}
       <div className="flex items-center gap-3">
