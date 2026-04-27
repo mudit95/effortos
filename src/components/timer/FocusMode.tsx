@@ -282,7 +282,7 @@ export function FocusMode() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
             transition={{ duration: 0.4 }}
-            className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-xs px-4 pointer-events-none"
+            className="absolute bottom-24 left-1/2 -translate-x-1/2 w-full max-w-xs px-4 pointer-events-none"
           >
             <div className="px-3.5 py-2.5 rounded-xl bg-cyan-500/[0.06] border border-cyan-500/10 text-center">
               <p className="text-xs text-white/40 leading-relaxed">
@@ -502,8 +502,12 @@ export function FocusMode() {
             {completionPct}% complete
           </p>
         )}
+        {/* Compact PiP button — the prominent card variant overlapped the
+            absolute-positioned bottom hint on shorter viewports. We have
+            the 'P' keyboard shortcut and the in-view shortcuts panel
+            documenting PiP, so the compact button is enough surface. */}
         <div className="flex justify-center mt-3 w-full max-w-xs mx-auto">
-          <PiPButton />
+          <PiPButton compact />
         </div>
       </div>
 
