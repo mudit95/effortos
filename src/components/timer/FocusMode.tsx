@@ -15,10 +15,9 @@ import { BreathingGuide } from './BreathingGuide';
 import { warmUpAudio } from '@/lib/sounds';
 import { QuickPomodoroPrompt } from './QuickPomodoroPrompt';
 
-// How long the "Press Space / Escape" intro banner stays visible before
-// auto-dismissing. Tuned by feel: long enough to read once, short enough
-// to vanish before it becomes distracting.
-const HINT_DISMISS_MS = 8000;
+// How long the keyboard-shortcuts panel stays visible on first mount.
+// The user gets a brief glance at the available shortcuts, then it
+// auto-collapses so it doesn't compete with the timer for attention.
 const SHORTCUTS_INITIAL_MS = 4000;
 
 export function FocusMode() {
@@ -60,7 +59,6 @@ export function FocusMode() {
   }, [dashboardMode, dailyTasks, activeDailyTaskId]);
 
   const [showShortcuts, setShowShortcuts] = useState(false);
-  const [showHint, setShowHint] = useState(true);
   const [meditating, setMeditating] = useState(false);
 
   // PiP toggle — exposed both via the in-view button and the 'P' shortcut.
@@ -79,13 +77,6 @@ export function FocusMode() {
   // Warm up the Web Audio API on mount. The user clicked into focus mode,
   // so we have a user-gesture context to unlock AudioContext.
   useEffect(() => { warmUpAudio(); }, []);
-
-  // Auto-dismiss the bottom hint banner — even in focus mode, ephemeral
-  // guidance shouldn't linger and fight for attention.
-  useEffect(() => {
-    const t = setTimeout(() => setShowHint(false), HINT_DISMISS_MS);
-    return () => clearTimeout(t);
-  }, []);
 
   // Show the shortcuts panel briefly on first mount.
   useEffect(() => {
@@ -269,26 +260,6 @@ export function FocusMode() {
                   Up next: <span className="text-green-300/80 font-medium">{nextDailyTask.title}</span>
                 </p>
               )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Auto-dismissing intro hint (only during focus). */}
-      <AnimatePresence>
-        {showHint && !isBreak && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-            transition={{ duration: 0.4 }}
-            className="absolute bottom-24 left-1/2 -translate-x-1/2 w-full max-w-xs px-4 pointer-events-none"
-          >
-            <div className="px-3.5 py-2.5 rounded-xl bg-cyan-500/[0.06] border border-cyan-500/10 text-center">
-              <p className="text-xs text-white/40 leading-relaxed">
-                Press <strong className="text-cyan-400/70">Space</strong> to pause/resume.
-                Press <strong className="text-cyan-400/70">Escape</strong> to exit.
-              </p>
             </div>
           </motion.div>
         )}
