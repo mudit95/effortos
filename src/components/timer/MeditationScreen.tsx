@@ -40,7 +40,9 @@ export function MeditationScreen({ onClose }: { onClose: () => void }) {
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const breathRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const breathStartRef = useRef(Date.now());
+  // 0 is a sentinel — the breathing effect stamps Date.now() on mount.
+  // Calling Date.now() during render violates react-hooks/purity.
+  const breathStartRef = useRef(0);
 
   const isActive = state === 'running';
   useWakeLock(isActive);
@@ -127,7 +129,7 @@ export function MeditationScreen({ onClose }: { onClose: () => void }) {
           {state === 'done' ? 'Well done' : 'Meditate'}
         </h1>
         {state === 'picking' && (
-          <p className="mt-2 text-sm text-white/30">Choose how long you'd like to sit</p>
+          <p className="mt-2 text-sm text-white/30">Choose how long you&apos;d like to sit</p>
         )}
         {state === 'done' && (
           <p className="mt-2 text-sm text-white/35">Take a moment before you continue</p>

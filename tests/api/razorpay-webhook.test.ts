@@ -34,7 +34,13 @@ beforeEach(() => {
   process.env.RAZORPAY_CURRENCY = 'INR';
   process.env.RAZORPAY_PLAN_ID = 'plan_starter_test';
   process.env.RAZORPAY_PRO_PLAN_ID = 'plan_pro_test';
-  process.env.RAZORPAY_STARTER_MONTHLY_PRICE = String(STARTER_PRICE);
+  // The route's plan-amount allowlist is built at module-import time inside
+  // src/lib/razorpay.ts, which reads RAZORPAY_MONTHLY_PRICE for the starter
+  // tier. The naming is historical — there used to be only one tier — and
+  // the env-var name doesn't match the constant. We must use the env name
+  // the lib actually reads, then rely on vi.resetModules() in postEvent to
+  // force a fresh import that picks these up.
+  process.env.RAZORPAY_MONTHLY_PRICE = String(STARTER_PRICE);
   process.env.RAZORPAY_PRO_MONTHLY_PRICE = String(PRO_PRICE);
   process.env.NEXT_PUBLIC_SUPABASE_URL = 'http://localhost:54321';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'svc_test';
@@ -144,7 +150,7 @@ function sign(body: string, secret = WEBHOOK_SECRET): string {
 async function postEvent(
   body: object,
   signature: string | null,
-): Promise<{ status: number; body: any }> {
+): Promise<{ status: number; body: Record<string, unknown> }> {
   vi.resetModules();
   const mod = await import('@/app/api/webhooks/razorpay/route');
   const rawBody = JSON.stringify(body);

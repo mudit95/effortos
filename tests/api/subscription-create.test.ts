@@ -133,7 +133,7 @@ function reset(): void {
   state.readCount = 0;
 }
 
-async function callRoute(): Promise<{ status: number; body: any }> {
+async function callRoute(): Promise<{ status: number; body: Record<string, unknown> }> {
   // Re-import the route fresh per test so module-level state (if any) resets.
   vi.resetModules();
   const mod = await import('@/app/api/subscription/create/route');

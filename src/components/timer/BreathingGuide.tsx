@@ -22,7 +22,10 @@ type Phase = 'inhale' | 'exhale';
 export function BreathingGuide({ onClose }: { onClose?: () => void }) {
   const [phase, setPhase] = useState<Phase>('inhale');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const startRef = useRef(Date.now());
+  // Initialise to 0 and stamp inside the effect — calling Date.now() during
+  // render trips react-hooks/purity and the value would be replaced by the
+  // effect on mount anyway.
+  const startRef = useRef(0);
 
   useEffect(() => {
     startRef.current = Date.now();

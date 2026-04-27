@@ -19,8 +19,9 @@
  * a rejected signature returns 401 before any of them are touched.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHmac } from 'crypto';
+import type { NextRequest } from 'next/server';
 
 const APP_SECRET = 'test_meta_app_secret_aaa';
 
@@ -76,44 +77,36 @@ async function postWebhook(opts: {
   signature: string | null;
   nodeEnv?: string;
   appSecret?: string | null;
-}): Promise<{ status: number; body: any }> {
-  const prevNodeEnv = process.env.NODE_ENV;
-  const prevSecret = process.env.META_APP_SECRET;
+}): Promise<{ status: number; body: Record<string, unknown> }> {
+  // Newer Node treats process.env.NODE_ENV as a non-configurable property,
+  // so Object.defineProperty trips a TypeError. vi.stubEnv routes around
+  // this by patching at the vitest layer, and it's auto-restored after
+  // each test via vi.unstubAllEnvs() (we call it in afterEach below).
   if (opts.nodeEnv !== undefined) {
-    Object.defineProperty(process.env, 'NODE_ENV', {
-      value: opts.nodeEnv,
-      configurable: true,
-    });
+    vi.stubEnv('NODE_ENV', opts.nodeEnv);
   }
   if (opts.appSecret === null) {
-    delete process.env.META_APP_SECRET;
+    // stubEnv with empty string maps to "unset" for our verifier — the route
+    // only checks truthiness of process.env.META_APP_SECRET.
+    vi.stubEnv('META_APP_SECRET', '');
   } else if (opts.appSecret !== undefined) {
-    process.env.META_APP_SECRET = opts.appSecret;
+    vi.stubEnv('META_APP_SECRET', opts.appSecret);
   }
 
-  try {
-    vi.resetModules();
-    const mod = await import('@/app/api/whatsapp/webhook/route');
-    const rawBody = JSON.stringify(opts.body);
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
-    if (opts.signature !== null) headers['x-hub-signature-256'] = opts.signature;
-    const req = new Request('http://test/api/whatsapp/webhook', {
-      method: 'POST',
-      headers,
-      body: rawBody,
-    });
-    // The route is typed against NextRequest but accepts plain Request at runtime.
-    const res = await mod.POST(req as any);
-    const data = await res.json();
-    return { status: res.status, body: data };
-  } finally {
-    Object.defineProperty(process.env, 'NODE_ENV', {
-      value: prevNodeEnv,
-      configurable: true,
-    });
-    if (prevSecret === undefined) delete process.env.META_APP_SECRET;
-    else process.env.META_APP_SECRET = prevSecret;
-  }
+  vi.resetModules();
+  const mod = await import('@/app/api/whatsapp/webhook/route');
+  const rawBody = JSON.stringify(opts.body);
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (opts.signature !== null) headers['x-hub-signature-256'] = opts.signature;
+  const req = new Request('http://test/api/whatsapp/webhook', {
+    method: 'POST',
+    headers,
+    body: rawBody,
+  });
+  // The route is typed against NextRequest but accepts plain Request at runtime.
+  const res = await mod.POST(req as unknown as NextRequest);
+  const data = (await res.json()) as Record<string, unknown>;
+  return { status: res.status, body: data };
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
@@ -121,6 +114,12 @@ async function postWebhook(opts: {
 describe('/api/whatsapp/webhook — signature verification', () => {
   beforeEach(() => {
     process.env.META_APP_SECRET = APP_SECRET;
+  });
+
+  afterEach(() => {
+    // Reverses every vi.stubEnv() call from the prior test, restoring the
+    // real process.env values. Without this, NODE_ENV bleeds across tests.
+    vi.unstubAllEnvs();
   });
 
   it('rejects request with missing signature header (401)', async () => {
