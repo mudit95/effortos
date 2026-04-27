@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { verifyCronAuth } from '@/lib/cron-auth';
-import { getEligibleUsers, getUserTasks, getUserGoalSummary, getUserDaySummary, logEmail, countOpenOtherTodosForUser } from '@/lib/cron-helpers';
+import { getEligibleUsers, getUserTasks, getUserGoalSummary, getUserDaySummary, logEmail, countOpenOtherTodosForUser, wasEmailSentRecently } from '@/lib/cron-helpers';
 import { nightlyEmail } from '@/lib/email-templates';
 import { sendEmail } from '@/lib/email';
 import { nightlyWhatsAppMessage, sendCronNudge } from '@/lib/whatsapp-nudge';
@@ -25,10 +25,16 @@ export async function GET(request: Request) {
 
     let sent = 0;
     let waSent = 0;
+    let skipped = 0;
     const errors: string[] = [];
 
     for (const user of users) {
       try {
+        // Idempotency — see morning-email for rationale.
+        if (await wasEmailSentRecently(user.user_id, 'nightly')) {
+          skipped++;
+          continue;
+        }
         const now = new Date();
         const userNow = new Date(now.toLocaleString('en-US', { timeZone: user.timezone }));
         const todayStr = userNow.toISOString().slice(0, 10);
@@ -92,7 +98,7 @@ export async function GET(request: Request) {
       }
     }
 
-    return NextResponse.json({ sent, wa_sent: waSent, total: users.length, errors: errors.length > 0 ? errors : undefined });
+    return NextResponse.json({ sent, wa_sent: waSent, skipped_dedup: skipped, total: users.length, errors: errors.length > 0 ? errors : undefined });
   } catch (err) {
     console.error('[cron/nightly-email] Fatal:', err);
     return NextResponse.json({ error: 'Cron failed' }, { status: 500 });

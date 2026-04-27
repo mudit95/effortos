@@ -56,6 +56,8 @@ export interface PendingFlow {
 const k = {
   pending: (phone: string) => `wa:pending:${phone}`,
   taskList: (phone: string) => `wa:tasks:${phone}`,
+  errandList: (phone: string) => `wa:errands:${phone}`,
+  lastListType: (phone: string) => `wa:lastlist:${phone}`,
 };
 
 // ── Pending multi-step flow ───────────────────────────────────────
@@ -140,6 +142,66 @@ export async function clearTaskList(phone: string): Promise<void> {
     return;
   }
   await r.del(k.taskList(phone));
+}
+
+// ── Numbered errand list memory (parallel to task list) ───────────
+//
+// When the user views their "Other To-Dos" list on WhatsApp, we cache
+// the displayed errand IDs the same way we cache task IDs. A bare
+// number reply ("3") looks up against whichever list was shown most
+// recently — see lastListType below. Separate key so we never confuse
+// task #3 with errand #3.
+
+export type ListType = 'tasks' | 'errands';
+
+export async function setErrandList(phone: string, errandIds: string[]): Promise<void> {
+  const r = getRedis();
+  if (!r) {
+    warnOnce();
+    return;
+  }
+  await r.set(k.errandList(phone), JSON.stringify(errandIds), { ex: TASK_LIST_TTL_SEC });
+}
+
+export async function getErrandList(phone: string): Promise<string[] | null> {
+  const r = getRedis();
+  if (!r) {
+    warnOnce();
+    return null;
+  }
+  const val = await r.get<string[] | string>(k.errandList(phone));
+  if (!val) return null;
+  if (Array.isArray(val)) return val;
+  try {
+    return JSON.parse(val) as string[];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Remember which kind of list was most recently shown to this phone.
+ * The numbered-reply handler reads this to decide whether "3" means
+ * "task #3" or "errand #3". Same TTL as the list caches themselves.
+ */
+export async function setLastListType(phone: string, type: ListType): Promise<void> {
+  const r = getRedis();
+  if (!r) {
+    warnOnce();
+    return;
+  }
+  await r.set(k.lastListType(phone), type, { ex: TASK_LIST_TTL_SEC });
+}
+
+export async function getLastListType(phone: string): Promise<ListType | null> {
+  const r = getRedis();
+  if (!r) {
+    warnOnce();
+    return null;
+  }
+  const val = await r.get<string>(k.lastListType(phone));
+  if (val === 'tasks' || val === 'errands') return val;
+  return null;
 }
 
 // ── AI rate limit ────────────────────────────────────────────────

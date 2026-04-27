@@ -267,6 +267,49 @@ export async function countOpenOtherTodosForUser(userId: string): Promise<number
 }
 
 /**
+ * Has this user already received this email type recently? Used by the
+ * morning/afternoon/nightly crons to prevent duplicate sends when:
+ *   - the cron is mis-scheduled and fires multiple times per hour
+ *   - Vercel retries the cron after a function timeout
+ *   - multiple production deploys cut over during the user's target window
+ *
+ * We use an 18-hour window (not 24) because:
+ *   - 18h cleanly covers a full day's TZ shift edge
+ *   - it still lets a user who genuinely opted out yesterday and back in
+ *     today receive their next-day nudge
+ *   - failed sends (status='failed') are NOT counted, so a real failure
+ *     doesn't block a retry on the next cron pass
+ *
+ * Reads from the (user_id, created_at DESC) index on email_log.
+ *
+ * Fails OPEN: if the dedup query itself errors, returns false so we'd
+ * rather risk a duplicate send than silently drop a real one. Logs loudly.
+ */
+export async function wasEmailSentRecently(
+  userId: string,
+  emailType: 'morning' | 'afternoon' | 'nightly',
+  hoursWindow = 18,
+): Promise<boolean> {
+  const supabase = getAdminSupabase();
+  const since = new Date(Date.now() - hoursWindow * 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('email_log')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('email_type', emailType)
+    .eq('status', 'sent')
+    .gte('created_at', since)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error('[cron-helpers] wasEmailSentRecently failed', { userId, emailType, error });
+    return false;
+  }
+  return data !== null;
+}
+
+/**
  * Log an email send to the email_log table.
  */
 export async function logEmail(opts: {

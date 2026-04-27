@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { verifyCronAuth } from '@/lib/cron-auth';
-import { getEligibleUsers, getUserTasks, getUserGoalSummary, logEmail } from '@/lib/cron-helpers';
+import { getEligibleUsers, getUserTasks, getUserGoalSummary, logEmail, wasEmailSentRecently } from '@/lib/cron-helpers';
 import { morningEmail } from '@/lib/email-templates';
 import { sendEmail } from '@/lib/email';
 import { morningWhatsAppMessage, sendCronNudge } from '@/lib/whatsapp-nudge';
@@ -25,10 +25,19 @@ export async function GET(request: Request) {
 
     let sent = 0;
     let waSent = 0;
+    let skipped = 0;
     const errors: string[] = [];
 
     for (const user of users) {
       try {
+        // Idempotency: if this user already got a morning send in the last
+        // 18 hours, skip. Protects against duplicate-send bugs from cron
+        // retries, mis-scheduled cron firing every 15 mins, or deploy
+        // cutovers. See wasEmailSentRecently for full rationale.
+        if (await wasEmailSentRecently(user.user_id, 'morning')) {
+          skipped++;
+          continue;
+        }
         // Yesterday's date in user's timezone
         const now = new Date();
         const userNow = new Date(now.toLocaleString('en-US', { timeZone: user.timezone }));
@@ -87,7 +96,7 @@ export async function GET(request: Request) {
       }
     }
 
-    return NextResponse.json({ sent, wa_sent: waSent, total: users.length, errors: errors.length > 0 ? errors : undefined });
+    return NextResponse.json({ sent, wa_sent: waSent, skipped_dedup: skipped, total: users.length, errors: errors.length > 0 ? errors : undefined });
   } catch (err) {
     console.error('[cron/morning-email] Fatal:', err);
     return NextResponse.json({ error: 'Cron failed' }, { status: 500 });
