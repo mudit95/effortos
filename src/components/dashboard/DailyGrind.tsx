@@ -29,7 +29,7 @@ import { StreakCalendar } from './StreakCalendar';
 import { AIMotivationCard } from './AICards';
 import { TimeBoxView } from './TimeBoxView';
 import { OtherTodosDrawer } from './OtherTodosDrawer';
-import { countOpenOtherTodos, listOtherTodos } from '@/lib/other-todos';
+import { countOpenOtherTodos, listOtherTodos, toggleOtherTodoComplete } from '@/lib/other-todos';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
@@ -545,6 +545,39 @@ export function DailyGrind() {
     listOtherTodos({ includeCompleted: false }).then(list => {
       setTopErrands(list.slice(0, 3));
     });
+  };
+
+  // Mark an errand done directly from the right-rail mini card. Optimistic:
+  // we drop the row from the local list immediately so the user gets a
+  // satisfying tick without waiting for the network. The count badge and
+  // top-3 are then re-fetched from source so we don't drift if the request
+  // failed. Toast confirms the action and gives the title for context.
+  const handleErrandToggle = async (errand: OtherTodo) => {
+    setTopErrands(prev => prev.filter(e => e.id !== errand.id));
+    setOpenOtherTodoCount(prev => Math.max(0, prev - 1));
+    try {
+      await toggleOtherTodoComplete(errand.id, errand.completed);
+      addToast(`✓ "${errand.title}" — done`, 'success');
+      // Re-fetch the count + top-3 from source so a deeper item bubbles
+      // up into the visible 3-slot preview, and the badge stays honest if
+      // anything else mutated in another tab.
+      const [n, list] = await Promise.all([
+        countOpenOtherTodos(),
+        listOtherTodos({ includeCompleted: false }),
+      ]);
+      setOpenOtherTodoCount(n);
+      setTopErrands(list.slice(0, 3));
+    } catch (err) {
+      console.error('[DailyGrind] toggleOtherTodoComplete failed', err);
+      addToast('Couldn\'t update that errand. Try the drawer.', 'warning');
+      // Reconcile from source — UI was optimistic, source of truth wins.
+      const [n, list] = await Promise.all([
+        countOpenOtherTodos(),
+        listOtherTodos({ includeCompleted: false }),
+      ]);
+      setOpenOtherTodoCount(n);
+      setTopErrands(list.slice(0, 3));
+    }
   };
 
   const isToday = dailyViewDate === getTodayKey();
@@ -1156,21 +1189,34 @@ export function DailyGrind() {
           </div>
 
           {topErrands.length > 0 ? (
-            <div className="space-y-1.5">
-              {topErrands.map(e => (
-                <div
-                  key={e.id}
-                  className="flex items-center gap-2 px-1 py-0.5"
-                >
-                  <Circle className="w-2.5 h-2.5 text-white/25 flex-shrink-0" />
-                  <p className="flex-1 min-w-0 text-xs text-white/70 truncate">{e.title}</p>
-                  {e.estimated_minutes && (
-                    <span className="text-[10px] text-white/30 tabular-nums flex-shrink-0">
-                      {e.estimated_minutes}m
-                    </span>
-                  )}
-                </div>
-              ))}
+            <div className="space-y-0.5">
+              <AnimatePresence>
+                {topErrands.map(e => (
+                  <motion.div
+                    key={e.id}
+                    layout
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, x: 12, transition: { duration: 0.18 } }}
+                    className="group flex items-center gap-2 px-1 py-1 rounded-md hover:bg-white/[0.025] transition-colors"
+                  >
+                    <button
+                      onClick={() => handleErrandToggle(e)}
+                      className="flex-shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-white/25 hover:text-amber-300 hover:bg-amber-500/15 transition-all"
+                      title="Mark errand done"
+                      aria-label={`Mark "${e.title}" as done`}
+                    >
+                      <Circle className="w-3 h-3" />
+                    </button>
+                    <p className="flex-1 min-w-0 text-xs text-white/70 truncate">{e.title}</p>
+                    {e.estimated_minutes && (
+                      <span className="text-[10px] text-white/30 tabular-nums flex-shrink-0">
+                        {e.estimated_minutes}m
+                      </span>
+                    )}
+                  </motion.div>
+                ))}
+              </AnimatePresence>
             </div>
           ) : (
             <p className="text-[11px] text-white/30 italic px-1">No open errands.</p>
