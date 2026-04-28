@@ -27,6 +27,11 @@ export type WAIntent =
   | { type: 'list_other_todos' }
   | { type: 'complete_other_todo'; query: string }
   | { type: 'delete_other_todo'; query: string }
+  // Conversational, advisory replies about the user's actual tasks, errands,
+  // sessions, or how their workday is going. The handler loads real context
+  // (today's tasks, errands, focus time) and asks Claude to respond. Stays
+  // strictly scoped — off-topic chatter still goes to off_topic, not here.
+  | { type: 'chat_about_tasks'; raw: string }
   | { type: 'off_topic' }
   | { type: 'unknown'; raw: string };
 
@@ -174,14 +179,37 @@ INTENTS (return EXACTLY one):
 
 ── FALLBACKS ──
 
-17. off_topic — message is clearly NOT about the user's tasks/errands/day.
-    Return: { "type": "off_topic" }
-    Examples: recipes, trivia, code help, news, jokes, philosophy.
-    DO NOT use off_topic for ambiguous task-shaped messages. When the message
-    mentions "today", "my plan", "my tasks", "my errands", or any task-like
-    verb, pick the closest real intent instead.
+17. chat_about_tasks — the user is THINKING OUT LOUD or asking a QUESTION
+    about their tasks, errands, day, or progress that doesn't fit a
+    structured action. Use this for advisory / conversational queries that
+    are still scoped to the user's work-day.
+    Return: { "type": "chat_about_tasks", "raw": "<original message>" }
+    Examples:
+      "what should I focus on first?" / "where do I start?"
+      "I'm feeling overwhelmed" / "this is a lot — help me prioritise"
+      "how's my day going?" / "tell me about my list"
+      "which task is the heaviest?"
+      "should I take a break?" / "is it time for a break?"
+      "should I do react or math first?"
+      "can I finish all this today?"
+      "give me a pep talk" (still task-scoped — about THEIR work)
+      "what did I get done this morning?"
+      "talk me through what's left"
+    DO NOT use this for clear actions like add/edit/delete/complete — those
+    have their own structured intents. Use chat ONLY when the user wants
+    a conversation, opinion, or summary about their existing items.
 
-18. unknown — message looks task-related but you can't pin down which intent.
+18. off_topic — message is clearly NOT about the user's tasks/errands/day.
+    Return: { "type": "off_topic" }
+    Examples: recipes, trivia, code help, news, jokes, philosophy, sports,
+    weather, gossip, general life advice unrelated to the user's tasks.
+    Use this only when the message has nothing to do with the user's
+    work-day. When in doubt and the message is plausibly about their
+    tasks/lists/progress, prefer chat_about_tasks.
+
+19. unknown — message looks task-related but you genuinely can't tell what
+    they want, even as a chat reply. This should be rare — most ambiguous
+    messages should route to chat_about_tasks.
     Return: { "type": "unknown", "raw": "original message" }`;
 
 export async function parseWhatsAppMessage(message: string): Promise<WAIntent> {
@@ -225,10 +253,99 @@ export async function parseWhatsAppMessage(message: string): Promise<WAIntent> {
     }
 
     const parsed = JSON.parse(jsonMatch[0]);
+    // Defensive: ensure the intents that need the original text actually
+    // have it, even if the model omitted the `raw` field.
+    if (
+      (parsed.type === 'unknown' || parsed.type === 'chat_about_tasks') &&
+      typeof parsed.raw !== 'string'
+    ) {
+      parsed.raw = message;
+    }
     console.log('[WhatsApp AI] Parsed intent:', parsed.type);
     return parsed as WAIntent;
   } catch (err) {
     console.error('WhatsApp AI parse error:', err);
     return { type: 'unknown', raw: message };
+  }
+}
+
+// ── Conversational chat response ───────────────────────────────────────────
+//
+// Used by handleChatAboutTasks. The route layer assembles a context block
+// (today's tasks, open errands, focus time) and passes it here along with
+// the user's original message. This function asks Claude to generate a
+// short, conversational reply scoped strictly to the user's work-day.
+//
+// Why a separate function (not a second intent of parseWhatsAppMessage)?
+// The parser is an INSTRUCTION-FOLLOWING classifier: input → JSON intent.
+// Chat is a CONTEXT-AWARE generator: input + user's data → free text.
+// Keeping them separate prevents the classifier prompt from being
+// polluted with conversational examples and keeps each call focused.
+
+const CHAT_SYSTEM_PROMPT = `You are EffortOS, a focused-work assistant on WhatsApp. The user is messaging you to think out loud about their tasks, lists, day, or progress. You'll receive their actual data in a CONTEXT block, then their message in a USER MESSAGE block.
+
+REPLY RULES:
+- 1–3 short sentences. WhatsApp users want quick reads, not essays.
+- Reference REAL items from CONTEXT — task titles, counts, hours. Never invent tasks or numbers.
+- Be warm but not gushing. Like a focused colleague, not a hype-man.
+- Use the user's first name occasionally if it lands naturally.
+- WhatsApp formatting only: *bold* for emphasis, _italic_ for examples or quoted task names. No headers, no bullet lists, no horizontal rules.
+- At most one emoji per reply.
+
+SCOPE — CRITICAL:
+- Stay strictly within the user's work-day: tasks, errands, focus time, progress, prioritisation, breaks.
+- If the user's message drifts off topic (recipes, news, jokes, philosophy, weather, sports, general advice), gently redirect: "Let's keep it on your day — want me to walk through what's left?"
+- Don't pretend to perform actions. If the user is asking you to DO something concrete (add/complete/edit/delete a task), tell them the exact phrasing that triggers the action — e.g., "Try _done React_ to mark it complete." Don't try to perform actions in this mode.
+- If CONTEXT shows the user has no tasks at all and they're asking about their day, suggest they add a few tasks: "Looks like nothing's planned yet — want to text me a few tasks?"
+
+NEVER:
+- Make up task names that aren't in CONTEXT.
+- Make up pomodoro counts or focus minutes.
+- Suggest the user is doing well/poorly without grounding it in their numbers.
+- Wander into general life coaching unrelated to the present day's work.`;
+
+/**
+ * Generate a conversational reply about the user's tasks/lists/stats.
+ *
+ * @param contextBlock A pre-formatted summary of the user's current data
+ *   (tasks, errands, focus time, etc.). Built by the route handler.
+ * @param userMessage  The user's original WhatsApp message.
+ * @returns The generated reply text, or null on failure (caller should fall
+ *   back to a canned message).
+ */
+export async function generateChatResponse(
+  contextBlock: string,
+  userMessage: string,
+): Promise<string | null> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    console.error('[WhatsApp Chat] ANTHROPIC_API_KEY is not set — chat disabled');
+    return null;
+  }
+
+  try {
+    const anthropic = new Anthropic({ apiKey });
+    const response = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 250,
+      system: CHAT_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content: `[CONTEXT]\n${contextBlock}\n\n[USER MESSAGE]\n${userMessage}`,
+        },
+      ],
+    });
+
+    const text = response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join('')
+      .trim();
+
+    return text || null;
+  } catch (err) {
+    console.error('[WhatsApp Chat] generation failed:', err);
+    return null;
   }
 }

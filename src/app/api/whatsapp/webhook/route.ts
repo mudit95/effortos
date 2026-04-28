@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { extractIncomingMessage, sendTextMessage, downloadWhatsAppMedia } from '@/lib/whatsapp';
-import { parseWhatsAppMessage, type WAIntent } from '@/lib/whatsapp-ai';
+import { parseWhatsAppMessage, generateChatResponse, type WAIntent } from '@/lib/whatsapp-ai';
 import { getUserTimezone, todayKeyInTz, dateKeyInTz } from '@/lib/user-date';
 import {
   setPendingFlow,
@@ -563,6 +563,9 @@ async function executeIntent(
       break;
     case 'help':
       await sendHelpMessage(phone, profile.name);
+      break;
+    case 'chat_about_tasks':
+      await handleChatAboutTasks(supabase, profile, phone, intent.raw);
       break;
     case 'off_topic':
     case 'unknown':
@@ -1155,6 +1158,129 @@ async function sendHelpMessage(phone: string, name: string) {
     `💡 Tip: whenever you see a numbered list, reply with the number to mark it done.`,
     { suppressFooter: true },
   );
+}
+
+// ── Conversational chat about the user's tasks/lists/day ─────────────
+//
+// The parser routes ambiguous-but-task-shaped messages here ("what should
+// I focus on first?", "I'm overwhelmed", "tell me about my list", "should
+// I take a break?"). We load the user's actual tasks, errands, and focus
+// time, build a context block, and let Claude generate a short reply
+// scoped strictly to their work-day. See generateChatResponse + the
+// CHAT_SYSTEM_PROMPT in @/lib/whatsapp-ai.
+//
+// Read-only: this handler never adds/edits/deletes anything. If the
+// message turned out to be a concrete action ("delete react"), the parser
+// would have routed to the structured intent instead. The chat handler
+// stays advisory.
+async function handleChatAboutTasks(
+  supabase: SupabaseClient,
+  profile: UserProfile,
+  phone: string,
+  rawMessage: string,
+) {
+  const tz = await getUserTimezone(supabase, profile.id);
+  const todayKey = todayKeyInTz(tz);
+
+  // Fetch today's tasks, open errands, and today's completed sessions in
+  // parallel. Each query is small and indexed; this keeps the chat reply
+  // latency dominated by the LLM call rather than three serial round-trips.
+  const [tasksRes, errandsRes, sessionsRes] = await Promise.all([
+    supabase
+      .from('daily_tasks')
+      .select('title, completed, pomodoros_target, pomodoros_done, tag')
+      .eq('user_id', profile.id)
+      .eq('date', todayKey)
+      .order('sort_order', { ascending: true }),
+    supabase
+      .from('other_todos')
+      .select('title, completed, estimated_minutes')
+      .eq('user_id', profile.id)
+      .eq('completed', false)
+      .order('sort_order', { ascending: true }),
+    supabase
+      .from('sessions')
+      .select('duration, end_time, status')
+      .eq('user_id', profile.id)
+      .eq('status', 'completed')
+      // Sessions completed in the last 24h is a generous proxy for "today";
+      // we'd need the user's tz to do a strict day boundary, but the LLM
+      // only uses this as a soft signal anyway.
+      .gte('end_time', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+  ]);
+
+  type TaskRow = {
+    title: string;
+    completed: boolean;
+    pomodoros_target: number;
+    pomodoros_done: number;
+    tag?: string;
+  };
+  type ErrandRow = {
+    title: string;
+    completed: boolean;
+    estimated_minutes?: number | null;
+  };
+  type SessionRow = { duration?: number | null };
+
+  const tasks = (tasksRes.data || []) as TaskRow[];
+  const errands = (errandsRes.data || []) as ErrandRow[];
+  const sessions = (sessionsRes.data || []) as SessionRow[];
+
+  const tasksDone = tasks.filter((t) => t.completed).length;
+  const tasksTotal = tasks.length;
+  const pomsDone = tasks.reduce((sum, t) => sum + (t.pomodoros_done || 0), 0);
+  const pomsTotal = tasks.reduce((sum, t) => sum + (t.pomodoros_target || 0), 0);
+  // `duration` on completed sessions is stored in seconds (see storage.completeSession).
+  const focusMinutesToday = Math.round(
+    sessions.reduce((sum, s) => sum + (s.duration || 0), 0) / 60,
+  );
+
+  const taskList =
+    tasks.length > 0
+      ? tasks
+          .map((t, i) => {
+            const status = t.completed ? ' ✓ done' : '';
+            const tagPart = t.tag ? ` [${t.tag}]` : '';
+            return `${i + 1}. ${t.title} — ${t.pomodoros_done}/${t.pomodoros_target} poms${tagPart}${status}`;
+          })
+          .join('\n')
+      : '(no tasks planned for today)';
+
+  const errandList =
+    errands.length > 0
+      ? errands
+          .map((e, i) => {
+            const est = e.estimated_minutes ? ` (~${e.estimated_minutes}m)` : '';
+            return `${i + 1}. ${e.title}${est}`;
+          })
+          .join('\n')
+      : '(no open errands)';
+
+  const contextBlock =
+    `User's first name: ${profile.name}\n` +
+    `\n` +
+    `Today's tasks (${tasksDone}/${tasksTotal} complete, ${pomsDone}/${pomsTotal} pomodoros):\n` +
+    `${taskList}\n` +
+    `\n` +
+    `Open errands (side list, no timer):\n` +
+    `${errandList}\n` +
+    `\n` +
+    `Focus time today: ${focusMinutesToday} minutes`;
+
+  const reply = await generateChatResponse(contextBlock, rawMessage);
+
+  if (!reply) {
+    // Either the API key is missing or the model errored — fall back to a
+    // helpful canned reply rather than silence.
+    await sendBotReply(
+      phone,
+      `🤔 I'm not sure how to respond to that. Try a specific command — send *help* for the menu.`,
+    );
+    return;
+  }
+
+  await sendBotReply(phone, reply);
 }
 
 async function handlePauseCoaching(
