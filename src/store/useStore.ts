@@ -414,6 +414,7 @@ export const useStore = create<AppState>((set, get) => ({
             avatar_url: profile.avatar_url,
             phone_number: profile.phone_number || '',
             whatsapp_linked: profile.whatsapp_linked || false,
+            bot_persona: profile.bot_persona || undefined,
             settings: {
               focus_duration: profile.focus_duration,
               break_duration: profile.break_duration,
@@ -744,12 +745,20 @@ export const useStore = create<AppState>((set, get) => ({
       return;
     }
     storage.updateUser({ onboarding_completed: true });
-    // Sync onboarding_completed flag to Supabase
+    // Sync onboarding_completed flag — and the chosen bot persona —
+    // to Supabase. Persona persists here even when the user *skips*
+    // the WhatsApp step, so if they later link from Settings the bot
+    // already knows the voice they picked during onboarding. The
+    // verify endpoint also writes persona on confirm, so the two
+    // paths converge to the same column.
+    const personaForSync = onboardingData.botPersona;
     cloudSync(async () => {
       const supabase = createClient();
       const { data: { user: authUser } } = await supabase.auth.getUser();
       if (authUser) {
-        await supabase.from('profiles').update({ onboarding_completed: true }).eq('id', authUser.id);
+        const update: Record<string, unknown> = { onboarding_completed: true };
+        if (personaForSync) update.bot_persona = personaForSync;
+        await supabase.from('profiles').update(update).eq('id', authUser.id);
       }
     });
 
@@ -760,7 +769,14 @@ export const useStore = create<AppState>((set, get) => ({
     }
 
     set({
-      user: { ...user, onboarding_completed: true },
+      user: {
+        ...user,
+        onboarding_completed: true,
+        // If the user picked a persona during onboarding (and the
+        // verify flow hasn't already mirrored it), reflect it here so
+        // the dashboard / settings UI see the chosen voice immediately.
+        bot_persona: personaForSync ?? user.bot_persona,
+      },
       activeGoal: goal,
       currentView: 'dashboard',
       onboardingStep: 0,
@@ -1051,6 +1067,10 @@ export const useStore = create<AppState>((set, get) => ({
       created_at: new Date().toISOString(),
     };
 
+    if (guestUser.settings?.sound_enabled !== false) {
+      playSound('session_start');
+    }
+
     // Stash a local session id (no cloud sync for guest)
     const sessionId = crypto.randomUUID();
 
@@ -1105,6 +1125,14 @@ export const useStore = create<AppState>((set, get) => ({
       await api.saveTimerState({ goalId, remaining: focusDuration, isRunning: true, sessionId: session.id });
     });
 
+    // Audible feedback on the start gesture. Inside the user click handler
+    // here, the AudioContext can be created/resumed in-gesture, so this is
+    // the most reliable place to make sound work. Gated on the user's
+    // sound_enabled setting (default on).
+    if (user?.settings?.sound_enabled !== false) {
+      playSound('session_start');
+    }
+
     set({
       timerState: 'running',
       timeRemaining: focusDuration,
@@ -1115,7 +1143,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   pauseTimer: () => {
-    const { timeRemaining, activeGoal, currentSessionId } = get();
+    const { timeRemaining, activeGoal, currentSessionId, user } = get();
     if (activeGoal) {
       storage.saveTimerState({
         goalId: activeGoal.id,
@@ -1124,11 +1152,14 @@ export const useStore = create<AppState>((set, get) => ({
         sessionId: currentSessionId || undefined,
       });
     }
+    if (user?.settings?.sound_enabled !== false) {
+      playSound('session_pause');
+    }
     set({ timerState: 'paused' });
   },
 
   resumeTimer: () => {
-    const { timeRemaining, activeGoal, currentSessionId } = get();
+    const { timeRemaining, activeGoal, currentSessionId, user } = get();
     if (activeGoal) {
       storage.saveTimerState({
         goalId: activeGoal.id,
@@ -1136,6 +1167,9 @@ export const useStore = create<AppState>((set, get) => ({
         isRunning: true,
         sessionId: currentSessionId || undefined,
       });
+    }
+    if (user?.settings?.sound_enabled !== false) {
+      playSound('session_start');
     }
     set({ timerState: 'running' });
   },
@@ -1308,6 +1342,9 @@ export const useStore = create<AppState>((set, get) => ({
     if (currentSessionId) {
       storage.discardSession(currentSessionId);
       cloudSync(() => api.discardSession(currentSessionId));
+    }
+    if (user?.settings?.sound_enabled !== false) {
+      playSound('session_pause');
     }
     set({
       timerState: 'idle',

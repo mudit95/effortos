@@ -1,7 +1,18 @@
 // Theme-specific sound effects using Web Audio API
-// Each theme has unique pomodoro-complete and break-complete sounds
+// Each theme has unique pomodoro-complete and break-complete sounds.
+//
+// Sound types:
+//   pomodoro_complete   — focus session finished (full chime)
+//   break_complete      — break finished (lighter chime)
+//   session_start       — quick "play" tick when user starts/resumes (subtle)
+//   session_pause       — quick "pause" tick when user pauses (subtle)
+//
+// Start/pause are kept very short (~150 ms) and quiet so they read as
+// haptic feedback rather than music. They're not theme-skinned because
+// users would notice the inconsistency between subtle UI ticks more than
+// they'd appreciate the variety.
 
-type SoundType = 'pomodoro_complete' | 'break_complete';
+type SoundType = 'pomodoro_complete' | 'break_complete' | 'session_start' | 'session_pause';
 
 let audioContext: AudioContext | null = null;
 
@@ -186,8 +197,11 @@ function oceanBreakComplete(ctx: AudioContext) {
   playNote(ctx, 493.88, t + 0.4, 0.4, 'sine', 0.15); // B4
 }
 
-// Sound dispatch map
-const THEME_SOUNDS: Record<string, Record<SoundType, (ctx: AudioContext) => void>> = {
+// Sound dispatch map. Only the theme-skinned types live here — universal
+// ticks (session_start, session_pause) are dispatched separately in
+// playSound() and don't vary by theme.
+type ThemedSoundType = 'pomodoro_complete' | 'break_complete';
+const THEME_SOUNDS: Record<string, Record<ThemedSoundType, (ctx: AudioContext) => void>> = {
   dark: {
     pomodoro_complete: darkPomodoroComplete,
     break_complete: darkBreakComplete,
@@ -222,10 +236,46 @@ const THEME_SOUNDS: Record<string, Record<SoundType, (ctx: AudioContext) => void
   },
 };
 
+// ── Universal session start / pause ticks ──────────────────────────────
+//
+// These two are not theme-skinned — they're tiny UI ticks (~150 ms) so
+// the user gets immediate feedback when they hit play / pause. Volume is
+// kept low (0.12) so they don't feel like the bigger complete chimes.
+function sessionStartTick(ctx: AudioContext) {
+  const t = ctx.currentTime;
+  // Quick ascending two-note blip — reads as "go".
+  playNote(ctx, 587.33, t, 0.08, 'sine', 0.12);          // D5
+  playNote(ctx, 880, t + 0.07, 0.12, 'sine', 0.12);      // A5
+}
+
+function sessionPauseTick(ctx: AudioContext) {
+  const t = ctx.currentTime;
+  // Quick descending two-note blip — reads as "stop".
+  playNote(ctx, 880, t, 0.08, 'sine', 0.10);             // A5
+  playNote(ctx, 587.33, t + 0.07, 0.12, 'sine', 0.10);   // D5
+}
+
 export function playSound(soundType: SoundType, themeId?: string) {
   try {
-    const theme = themeId || (typeof window !== 'undefined' ? localStorage.getItem('effortos_theme') : null) || 'dark';
     const ctx = getAudioContext();
+    // Browsers sometimes leave the context "suspended" even after creation;
+    // we resume defensively here too. The promise is fire-and-forget — if
+    // the resume genuinely fails (no user gesture has fired yet) the
+    // schedule below will still queue a buffer that plays once the
+    // context wakes up on a later interaction.
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+    // Universal ticks bypass the theme map.
+    if (soundType === 'session_start') {
+      sessionStartTick(ctx);
+      return;
+    }
+    if (soundType === 'session_pause') {
+      sessionPauseTick(ctx);
+      return;
+    }
+    const theme = themeId || (typeof window !== 'undefined' ? localStorage.getItem('effortos_theme') : null) || 'dark';
     const themeSounds = THEME_SOUNDS[theme] || THEME_SOUNDS.dark;
     themeSounds[soundType](ctx);
   } catch (e) {

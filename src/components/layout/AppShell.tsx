@@ -17,6 +17,7 @@ import { applyTheme, getStoredTheme } from '@/components/dashboard/SettingsModal
 import { useServiceWorker } from '@/hooks/useServiceWorker';
 import { useRealtimeSync } from '@/hooks/useRealtimeSync';
 import { createClient } from '@/lib/supabase/client';
+import { warmUpAudio } from '@/lib/sounds';
 import { Sparkles } from 'lucide-react';
 
 export function AppShell() {
@@ -39,6 +40,15 @@ export function AppShell() {
     // Apply stored theme on load
     const theme = getStoredTheme();
     applyTheme(theme);
+    // Prime the AudioContext on the very first user interaction (click,
+    // keypress, touch). Without this the dashboard's complete chimes —
+    // which fire from the worker callback long after any user gesture —
+    // are silently blocked by the browser autoplay policy. FocusMode and
+    // MeditationScreen used to be the only places that called this; that
+    // meant users who only ever sat in the dashboard had a permanently
+    // suspended AudioContext and no sound. Calling once here at app boot
+    // makes the gesture-aware listener present everywhere from the start.
+    warmUpAudio();
 
     // Listen for Supabase auth state changes (initial hydration, sign-in, token refresh).
     // INITIAL_SESSION fires on page refresh once the session cookie is rehydrated — we

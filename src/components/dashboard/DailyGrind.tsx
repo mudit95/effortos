@@ -9,11 +9,12 @@ import { getLocalTodayKey, toLocalDateKey } from '@/lib/utils';
 import { TASK_TAGS, type TaskTagId, type DailyTask, type Goal, type OtherTodo } from '@/types';
 import {
   Plus, Trash2, Play, Pause, RotateCcw, SkipForward,
-  Repeat, ChevronLeft, ChevronRight, Maximize2, Circle,
+  Repeat, ChevronLeft, ChevronRight, Maximize2, Circle, PictureInPicture2,
   CheckCircle2, Clock, Flame, PlusCircle, X, Calendar, Sparkles,
   CalendarPlus, List, LayoutGrid, ListTodo,
 } from 'lucide-react';
 import { PiPButton } from '@/components/timer/PiPButton';
+import { usePiP } from '@/hooks/usePiP';
 import { HintBanner } from '@/components/ui/HintBanner';
 import { CoachPlanPanel } from './CoachPlanPanel';
 import { CoachDebriefCard } from './CoachDebriefCard';
@@ -239,6 +240,12 @@ function LargeTimerClock({
   onSkipBreak: () => void;
   onFocusMode: () => void;
 }) {
+  // PiP state — when the floating window is open, hide the in-page ring
+  // and show a placeholder card. Same convention TimerDisplay uses on
+  // the long-term dashboard, so the two surfaces stay consistent: only
+  // ONE counter visible at any moment.
+  const { isPiPActive, closePiP } = usePiP();
+
   const ringSize = 168;
   const strokeWidth = 5;
   const radius = (ringSize - strokeWidth * 2) / 2;
@@ -283,63 +290,83 @@ function LargeTimerClock({
         )}
       </motion.div>
 
-      {/* Large ring + timer */}
-      <div className="relative" style={{ width: ringSize, height: ringSize }}>
-        {/* Background track */}
-        <svg width={ringSize} height={ringSize} viewBox={`0 0 ${ringSize} ${ringSize}`} className="absolute inset-0 transform -rotate-90">
-          <circle
-            cx={ringSize / 2}
-            cy={ringSize / 2}
-            r={radius}
-            fill="none"
-            stroke="rgba(255,255,255,0.04)"
-            strokeWidth={strokeWidth}
-          />
-          {/* Progress arc */}
-          <motion.circle
-            cx={ringSize / 2}
-            cy={ringSize / 2}
-            r={radius}
-            fill="none"
-            stroke={timerColor}
-            strokeWidth={strokeWidth}
-            strokeLinecap="round"
-            strokeDasharray={circumference}
-            animate={{ strokeDashoffset: offset }}
-            transition={{ duration: 0.5, ease: 'easeOut' }}
-            style={{ filter: `drop-shadow(0 0 8px ${timerColor}40)` }}
-          />
-        </svg>
-
-        {/* Center time display */}
-        <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <motion.div
-            key={timeRemaining}
-            initial={{ opacity: 0.8 }}
-            animate={{ opacity: 1 }}
-            className="text-3xl font-mono font-bold text-white tracking-tight tabular-nums"
+      {/* Large ring + timer — replaced with a floating-timer placeholder
+          when the PiP window is open. The PiP window is the canonical
+          counter at that point; rendering a second ticking ring here is
+          just visual noise (and matches what TimerDisplay does on the
+          long-term dashboard). */}
+      {isPiPActive ? (
+        <div
+          style={{ width: ringSize, height: ringSize }}
+          className="relative flex flex-col items-center justify-center rounded-2xl border border-dashed border-cyan-500/20 bg-cyan-500/[0.02]"
+        >
+          <PictureInPicture2 className="w-7 h-7 text-cyan-400/50 mb-2" />
+          <p className="text-xs text-white/55 mb-1">Timer is floating</p>
+          <button
+            onClick={closePiP}
+            className="text-[10px] text-cyan-400/70 hover:text-cyan-300 transition-colors mt-1 underline-offset-2 hover:underline"
           >
-            {minutes.toString().padStart(2, '0')}
-            <span className="text-white/30">:</span>
-            {seconds.toString().padStart(2, '0')}
-          </motion.div>
-          <p className="text-[9px] text-white/25 mt-0.5 uppercase tracking-wider">
-            {isBreak ? 'Break' : 'Focus'}
-          </p>
+            Close floating window
+          </button>
         </div>
+      ) : (
+        <div className="relative" style={{ width: ringSize, height: ringSize }}>
+          {/* Background track */}
+          <svg width={ringSize} height={ringSize} viewBox={`0 0 ${ringSize} ${ringSize}`} className="absolute inset-0 transform -rotate-90">
+            <circle
+              cx={ringSize / 2}
+              cy={ringSize / 2}
+              r={radius}
+              fill="none"
+              stroke="rgba(255,255,255,0.04)"
+              strokeWidth={strokeWidth}
+            />
+            {/* Progress arc */}
+            <motion.circle
+              cx={ringSize / 2}
+              cy={ringSize / 2}
+              r={radius}
+              fill="none"
+              stroke={timerColor}
+              strokeWidth={strokeWidth}
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              animate={{ strokeDashoffset: offset }}
+              transition={{ duration: 0.5, ease: 'easeOut' }}
+              style={{ filter: `drop-shadow(0 0 8px ${timerColor}40)` }}
+            />
+          </svg>
 
-        {/* Pulsing glow when running */}
-        {timerState === 'running' && !isBreak && (
-          <motion.div
-            className="absolute inset-0 rounded-full"
-            style={{
-              boxShadow: `inset 0 0 30px ${timerColor}08, 0 0 40px ${timerColor}06`,
-            }}
-            animate={{ opacity: [0.5, 1, 0.5] }}
-            transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
-          />
-        )}
-      </div>
+          {/* Center time display */}
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <motion.div
+              key={timeRemaining}
+              initial={{ opacity: 0.8 }}
+              animate={{ opacity: 1 }}
+              className="text-3xl font-mono font-bold text-white tracking-tight tabular-nums"
+            >
+              {minutes.toString().padStart(2, '0')}
+              <span className="text-white/30">:</span>
+              {seconds.toString().padStart(2, '0')}
+            </motion.div>
+            <p className="text-[9px] text-white/25 mt-0.5 uppercase tracking-wider">
+              {isBreak ? 'Break' : 'Focus'}
+            </p>
+          </div>
+
+          {/* Pulsing glow when running */}
+          {timerState === 'running' && !isBreak && (
+            <motion.div
+              className="absolute inset-0 rounded-full"
+              style={{
+                boxShadow: `inset 0 0 30px ${timerColor}08, 0 0 40px ${timerColor}06`,
+              }}
+              animate={{ opacity: [0.5, 1, 0.5] }}
+              transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+            />
+          )}
+        </div>
+      )}
 
       {/* Controls — three slots: reset, primary action, focus-mode. Equal
           width so the row reads as a deliberate cockpit, not a scattered
@@ -718,27 +745,36 @@ export function DailyGrind() {
           intensity per day plus a journal-entry indicator dot, so a
           single grid carries both streaks. */}
       <div className="lg:col-span-3 space-y-4">
-        {isToday && (
-          isTimerActive ? (
-            <LargeTimerClock
-              timeRemaining={timeRemaining}
-              isBreak={isBreak}
-              progress={progress}
-              timerState={timerState}
-              activeTask={activeTask}
-              onPause={pauseTimer}
-              onResume={resumeTimer}
-              onReset={resetTimer}
-              onSkipBreak={skipBreak}
-              onFocusMode={() => setView('focus')}
-            />
-          ) : (
-            <IdleTimerPlaceholder
-              onStartUnassigned={handleStartUnassigned}
-              hasTasks={pendingTasks.length > 0}
-            />
-          )
-        )}
+        {/* Timer cockpit visibility:
+              - active session  → always show LargeTimerClock, regardless of
+                which day the user is viewing. A running pomodoro is global
+                state; navigating to tomorrow's plan shouldn't make the
+                running timer disappear from the UI.
+              - idle + viewing today → show IdleTimerPlaceholder so the
+                cockpit area never collapses to a void.
+              - idle + viewing past/future → show nothing (the calendar
+                takes the top of the rail). Adding a placeholder here
+                would imply the user could "start a session for tomorrow"
+                which the timer doesn't support. */}
+        {isTimerActive ? (
+          <LargeTimerClock
+            timeRemaining={timeRemaining}
+            isBreak={isBreak}
+            progress={progress}
+            timerState={timerState}
+            activeTask={activeTask}
+            onPause={pauseTimer}
+            onResume={resumeTimer}
+            onReset={resetTimer}
+            onSkipBreak={skipBreak}
+            onFocusMode={() => setView('focus')}
+          />
+        ) : isToday ? (
+          <IdleTimerPlaceholder
+            onStartUnassigned={handleStartUnassigned}
+            hasTasks={pendingTasks.length > 0}
+          />
+        ) : null}
         <StreakCalendar
           dailySessions={dashboardStats?.daily_sessions || []}
           recommendedDaily={activeGoal?.recommended_sessions_per_day}
