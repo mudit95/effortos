@@ -160,6 +160,22 @@ INTENTS (return EXACTLY one):
     - Decision rule when ambiguous: would the user start a 25-minute focus
       timer on this? If no → errand. "Code feature X" = task. "Email Tom
       back" = errand. "Write blog post" = task. "Pay phone bill" = errand.
+    - TITLE NORMALIZATION (CRITICAL): errands live on an UNDATED side list.
+      STRIP every date / time qualifier from the title before returning.
+      The storage can't honor a date anyway, and leaving the qualifier in
+      makes the side list read like garbled notes.
+      Strip leading or trailing phrases like: "for tomorrow", "tomorrow",
+      "today", "tonight", "this morning/afternoon/evening/week/weekend",
+      "for/on Monday/Tuesday/.../Sunday", "next week", "by Friday",
+      "at 4pm", "around 3pm" (preserve "at 4pm" only if the time is part
+      of the action, e.g., "pick Susan up at 4pm" stays).
+      Examples:
+        "for tomorrow take laptop to Encora" → title: "take laptop to Encora"
+        "pick up groceries today" → title: "pick up groceries"
+        "call mom tonight" → title: "call mom"
+        "next week, book dentist" → title: "book dentist"
+        "tomorrow morning grab coffee" → title: "grab coffee"
+        "pick Susan up at 4pm" → title: "pick Susan up at 4pm" (keep — time is part of the action)
 
 14. list_other_todos — show the errand side list.
     Return: { "type": "list_other_todos" }

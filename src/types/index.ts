@@ -10,8 +10,21 @@ export interface User {
   avatar_url?: string;
   phone_number?: string;
   whatsapp_linked?: boolean;
+  bot_persona?: BotPersona;
   settings: UserSettings;
 }
+
+/**
+ * Voice the WhatsApp bot uses when talking to the user.
+ *  - friend:    warm, casual, irreverent. Banter and emojis.
+ *  - mentor:    thoughtful, growth-oriented, encouraging.
+ *  - boss:      direct, results-driven, deadline-aware (in a fun way).
+ *  - colleague: peer-to-peer, helpful, dry pragmatism.
+ *
+ * Picked during onboarding, surfaced in the welcome message, and used
+ * by every coach/whatsapp message thereafter.
+ */
+export type BotPersona = 'friend' | 'mentor' | 'boss' | 'colleague';
 
 export interface UserSettings {
   focus_duration: number;   // seconds (default 1500 = 25min)
@@ -143,6 +156,9 @@ export interface OnboardingData {
   consistencyLevel: 'low' | 'medium' | 'high';
   userTimeEstimate?: number;
   userTimeBias: number;
+  /** Selected bot persona (drives WhatsApp tone). Optional —
+   *  falls back to 'friend' if the user skips the step. */
+  botPersona?: BotPersona;
 }
 
 export interface Toast {

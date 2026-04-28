@@ -937,6 +937,69 @@ function formatErrandMinutes(mins: number | null | undefined): string {
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
+/**
+ * Strip leading / trailing date qualifiers from an errand title.
+ *
+ * Why: errands live on an undated side list, so phrases like
+ * "for tomorrow", "tonight", "next week" can't be honored anyway. If they
+ * leak into the title the list reads like noisy notes ("for tomorrow take
+ * laptop to Encora" instead of "take laptop to Encora").
+ *
+ * The AI parser prompt asks Claude to strip these too, but we can't trust
+ * a free-form generation to be 100% reliable on every variation, so this
+ * runs as a safety net on every insert. Returns the cleaned title plus a
+ * flag the caller uses to nudge the user that errands don't have dates.
+ *
+ * The patterns are deliberately conservative — only strip when the date
+ * phrase looks unambiguously like scheduling, not when it's part of the
+ * action (e.g., "pick Susan up at 4pm" should keep the time).
+ */
+function stripErrandDateQualifier(raw: string): { cleaned: string; hadQualifier: boolean } {
+  const original = raw.trim();
+  let s = original;
+
+  // Each pattern is a leading / trailing date phrase plus optional comma /
+  // colon. We anchor with ^ or $ and consume any surrounding whitespace
+  // / punctuation so the cleanup doesn't leave double spaces or trailing
+  // commas behind.
+  const patterns: RegExp[] = [
+    // Leading: "for tomorrow ", "tomorrow,", "today —", "tonight: "
+    /^(?:for\s+)?(?:today|tomorrow|tonight|tmrw|tmw|tomm?orrow)\s*[,:.\-—]?\s+/i,
+    // Trailing: " for tomorrow", " today.", " tonight"
+    /\s+(?:for\s+)?(?:today|tomorrow|tonight|tmrw|tmw|tomm?orrow)\s*[.!?]?\s*$/i,
+    // Leading: "this morning ", "this evening, "
+    /^this\s+(?:morning|afternoon|evening|week|weekend)\s*[,:.\-—]?\s+/i,
+    // Trailing: " this evening", " this week"
+    /\s+this\s+(?:morning|afternoon|evening|week|weekend)\s*[.!?]?\s*$/i,
+    // Leading day-of-week qualifier: "for Monday", "on Friday"
+    /^(?:for|on|by)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*[,:.\-—]?\s+/i,
+    // Trailing day-of-week qualifier
+    /\s+(?:for|on|by)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s*[.!?]?\s*$/i,
+    // "next week" leading / trailing
+    /^next\s+week\s*[,:.\-—]?\s+/i,
+    /\s+next\s+week\s*[.!?]?\s*$/i,
+    // Combined leading: "tomorrow morning"
+    /^(?:tomorrow|tonight)\s+(?:morning|afternoon|evening)\s*[,:.\-—]?\s+/i,
+  ];
+
+  for (const p of patterns) {
+    s = s.replace(p, ' ').trim();
+  }
+
+  // Squash any double-spaces the strips left behind, plus a leftover
+  // leading / trailing comma the patterns might miss in odd phrasings.
+  s = s.replace(/\s+/g, ' ').replace(/^[,:\-—\s]+|[,:\-—\s]+$/g, '').trim();
+
+  // Defensive: if cleanup left an empty string (the user typed only a
+  // date phrase, somehow), fall back to the original — better to keep
+  // the errand intact than drop it silently.
+  if (!s) {
+    return { cleaned: original, hadQualifier: false };
+  }
+
+  return { cleaned: s, hadQualifier: s.toLowerCase() !== original.toLowerCase() };
+}
+
 async function handleAddOtherTodos(
   supabase: SupabaseClient,
   userId: string,
@@ -951,15 +1014,20 @@ async function handleAddOtherTodos(
   // Allowlist + clamp the inputs the AI gives us. We never trust the AI
   // payload to be in-range — defensive validation here keeps the DB CHECK
   // constraint from rejecting the whole batch over one malformed row.
+  // We also strip date qualifiers from the title as a safety net (the AI
+  // parser prompt asks for this, but we don't trust it 100%).
+  let anyHadDateQualifier = false;
   const rows = todos.slice(0, 10).map((t) => {
-    const title = (t.title || '').trim().slice(0, 200);
+    const rawTitle = (t.title || '').trim().slice(0, 200);
+    const { cleaned, hadQualifier } = stripErrandDateQualifier(rawTitle);
+    if (hadQualifier) anyHadDateQualifier = true;
     let mins = t.estimated_minutes;
     if (typeof mins !== 'number' || !Number.isFinite(mins) || mins <= 0) {
       mins = null;
     } else {
       mins = Math.min(1440, Math.max(1, Math.round(mins)));
     }
-    return { user_id: userId, title, estimated_minutes: mins };
+    return { user_id: userId, title: cleaned, estimated_minutes: mins };
   }).filter(r => r.title.length > 0);
 
   if (rows.length === 0) {
@@ -979,9 +1047,18 @@ async function handleAddOtherTodos(
     return `  • ${r.title}${time ? ` — ${time}` : ''}`;
   }).join('\n');
 
+  // If the user mentioned a future date ("for tomorrow", etc.) we stripped
+  // it from the title, but they probably meant for the errand to be
+  // scheduled. Errands don't have dates yet, so be transparent about it
+  // and point them at tasks for date-scoped work. This avoids the silent
+  // "wait, I said tomorrow" confusion.
+  const dateNote = anyHadDateQualifier
+    ? `\n\n_Heads up: errands don't have dates — they live on a flat side list. For date-specific items, try _add task: "<title>" for tomorrow_._`
+    : '';
+
   await sendBotReply(
     phone,
-    `🗒 Added to your side list:\n\n${lines}\n\n_These won't start a Pomodoro — say "my errands" to see the full list._`,
+    `🗒 Added to your side list:\n\n${lines}\n\n_These won't start a Pomodoro — say "my errands" to see the full list._${dateNote}`,
   );
 }
 

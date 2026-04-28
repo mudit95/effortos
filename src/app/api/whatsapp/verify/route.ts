@@ -4,6 +4,8 @@ import { Redis } from '@upstash/redis';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendTextMessage } from '@/lib/whatsapp';
+import { buildWelcomeMessage, resolvePersona } from '@/lib/whatsapp-welcome';
+import type { BotPersona } from '@/types';
 
 // ── OTP storage ──────────────────────────────────────────────
 // Primary: Upstash Redis — survives cold starts on Vercel's
@@ -115,10 +117,22 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { action, phone, code } = body;
+    const { action, phone, code, persona } = body;
 
     if (!phone || typeof phone !== 'string') {
       return NextResponse.json({ error: 'Phone number required' }, { status: 400 });
+    }
+
+    // Validate persona if supplied. We accept undefined (caller didn't
+    // pick one — defaults to 'friend' downstream) but reject anything
+    // that isn't a known value, so the DB CHECK constraint never trips.
+    const allowedPersonas: BotPersona[] = ['friend', 'mentor', 'boss', 'colleague'];
+    let confirmedPersona: BotPersona | undefined;
+    if (persona !== undefined && persona !== null && persona !== '') {
+      if (typeof persona !== 'string' || !allowedPersonas.includes(persona as BotPersona)) {
+        return NextResponse.json({ error: 'Invalid persona' }, { status: 400 });
+      }
+      confirmedPersona = persona as BotPersona;
     }
 
     // Normalize: strip spaces, ensure starts with +
@@ -139,7 +153,7 @@ export async function POST(req: NextRequest) {
       if (!code || typeof code !== 'string') {
         return NextResponse.json({ error: 'OTP code required' }, { status: 400 });
       }
-      return await handleConfirmOTP(user.id, cleanPhone, code.trim());
+      return await handleConfirmOTP(user.id, cleanPhone, code.trim(), confirmedPersona);
     } else {
       return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
@@ -202,7 +216,12 @@ function safeEqualOtp(a: string, b: string): boolean {
   try { return crypto.timingSafeEqual(aBuf, bBuf); } catch { return false; }
 }
 
-async function handleConfirmOTP(userId: string, phone: string, code: string) {
+async function handleConfirmOTP(
+  userId: string,
+  phone: string,
+  code: string,
+  persona?: BotPersona,
+) {
   const entry = await otpGet(phone);
 
   if (!entry) {
@@ -246,12 +265,27 @@ async function handleConfirmOTP(userId: string, phone: string, code: string) {
     );
   }
 
-  // OTP verified — link phone to profile
-  // NOTE: Delete OTP AFTER successful DB write (not before) to avoid race condition
+  // OTP verified — link phone to profile.
+  //
+  // NOTE: Delete OTP AFTER successful DB write (not before) to avoid race condition.
+  //
+  // Persona handling: if the caller passed a persona (i.e. came from
+  // onboarding where they just picked one), persist it alongside the
+  // phone link so the welcome message — and every subsequent coach
+  // reply — uses that voice. If no persona is supplied (e.g. user is
+  // re-linking from Settings without changing voice) we leave whatever
+  // is on the profile alone.
   const serviceClient = createServiceClient();
+  const linkUpdate: Record<string, unknown> = {
+    phone_number: phone,
+    whatsapp_linked: true,
+  };
+  if (persona) {
+    linkUpdate.bot_persona = persona;
+  }
   const { error: dbError } = await serviceClient
     .from('profiles')
-    .update({ phone_number: phone, whatsapp_linked: true })
+    .update(linkUpdate)
     .eq('id', userId);
 
   if (dbError) {
@@ -262,12 +296,58 @@ async function handleConfirmOTP(userId: string, phone: string, code: string) {
   // DB update succeeded — now safe to clear OTP
   await otpDel(phone);
 
-  // Send confirmation via WhatsApp
+  // Pull name, active-goal title, and persona to compose the welcome
+  // message. Best-effort: if any lookup fails we still send a useful
+  // greeting, just without the personalised touches. Failure here must
+  // NOT block the verify response — the link itself succeeded above.
+  let firstName = 'friend';
+  let activeGoalTitle: string | null = null;
+  let resolvedPersona = resolvePersona(persona);
+  try {
+    const [{ data: profile }, { data: goal }] = await Promise.all([
+      serviceClient
+        .from('profiles')
+        .select('display_name, bot_persona')
+        .eq('id', userId)
+        .maybeSingle(),
+      serviceClient
+        .from('goals')
+        .select('title')
+        .eq('user_id', userId)
+        .eq('status', 'active')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+    if (profile?.display_name) {
+      // Use only the first word — feels conversational on WhatsApp
+      // ("Hey Mudit" vs the more formal "Hey Mudit Mohilay").
+      firstName = profile.display_name.trim().split(/\s+/)[0] || 'friend';
+    }
+    if (goal?.title) {
+      activeGoalTitle = goal.title;
+    }
+    // If we didn't get persona from the request body (re-linking from
+    // Settings) read whatever is currently on the profile so the voice
+    // stays consistent across re-links.
+    if (!persona && profile?.bot_persona) {
+      resolvedPersona = resolvePersona(profile.bot_persona);
+    }
+  } catch (err) {
+    console.error('[whatsapp/verify] welcome-message profile/goal lookup failed:', err);
+  }
+
+  // Send the welcome message via WhatsApp. The body varies by persona —
+  // see lib/whatsapp-welcome.ts for the four voices.
   const waNumber = phone.replace('+', '');
   await sendTextMessage(
     waNumber,
-    `✅ WhatsApp linked to EffortOS!\n\nYou can now manage tasks from here. Try:\n• "Study React for 2 pomodoros"\n• "What's my plan?"\n• "Done with React"\n• "How am I doing?"`,
+    buildWelcomeMessage({
+      firstName,
+      goalTitle: activeGoalTitle,
+      persona: resolvedPersona,
+    }),
   );
 
-  return NextResponse.json({ verified: true });
+  return NextResponse.json({ verified: true, persona: resolvedPersona });
 }
