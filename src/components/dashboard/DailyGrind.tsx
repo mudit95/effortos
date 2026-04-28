@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
 import { useTimer } from '@/hooks/useTimer';
 import { getLocalTodayKey, toLocalDateKey } from '@/lib/utils';
-import { TASK_TAGS, type TaskTagId, type DailyTask, type Goal } from '@/types';
+import { TASK_TAGS, type TaskTagId, type DailyTask, type Goal, type OtherTodo } from '@/types';
 import {
   Plus, Trash2, Play, Pause, RotateCcw, SkipForward,
   Repeat, ChevronLeft, ChevronRight, Maximize2, Circle,
@@ -29,7 +29,7 @@ import { StreakCalendar } from './StreakCalendar';
 import { AIMotivationCard } from './AICards';
 import { TimeBoxView } from './TimeBoxView';
 import { OtherTodosDrawer } from './OtherTodosDrawer';
-import { countOpenOtherTodos } from '@/lib/other-todos';
+import { countOpenOtherTodos, listOtherTodos } from '@/lib/other-todos';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
@@ -209,7 +209,13 @@ function ManualPomodoroBody({
   );
 }
 
-/* ── Large Centered Timer Clock ───────────────────────────────────── */
+/* ── Compact Timer Cockpit (left-rail) ────────────────────────────── */
+// Used to be a large centred clock that lived in the middle column. The
+// new workbench layout pins the timer to the left rail instead, so it's
+// always next to the streak calendar and never has to compete for the
+// task-list real estate. The component keeps the same control surface
+// (pause / resume / reset / skip-break / focus-mode) but renders smaller
+// to fit the narrower column.
 function LargeTimerClock({
   timeRemaining,
   isBreak,
@@ -233,8 +239,8 @@ function LargeTimerClock({
   onSkipBreak: () => void;
   onFocusMode: () => void;
 }) {
-  const ringSize = 220;
-  const strokeWidth = 6;
+  const ringSize = 168;
+  const strokeWidth = 5;
   const radius = (ringSize - strokeWidth * 2) / 2;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference * (1 - progress);
@@ -249,26 +255,26 @@ function LargeTimerClock({
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.9 }}
       transition={{ duration: 0.4, ease }}
-      className="flex flex-col items-center py-6"
+      className="flex flex-col items-center p-4 rounded-2xl border border-[var(--accent,#22d3ee)]/20 bg-[var(--accent,#22d3ee)]/[0.04]"
     >
       {/* Task label */}
       <motion.div
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
-        className="mb-4 text-center"
+        className="mb-3 text-center w-full"
       >
-        <p className="text-[10px] text-white/25 uppercase tracking-widest">
-          {isBreak ? 'Break Time' : 'Focusing on'}
+        <p className="text-[9px] text-[var(--accent,#22d3ee)]/70 uppercase tracking-widest font-medium">
+          {isBreak ? 'Break Time' : 'Now focusing'}
         </p>
-        <p className="text-sm text-white/70 font-medium mt-0.5 max-w-[260px] truncate">
+        <p className="text-[13px] text-white/85 font-medium mt-0.5 leading-tight px-1 truncate">
           {activeTask ? activeTask.title : 'Unassigned Pomodoro'}
         </p>
         {activeTask && (
-          <div className="flex items-center justify-center gap-1 mt-1">
+          <div className="flex items-center justify-center gap-1 mt-1.5">
             {Array.from({ length: activeTask.pomodoros_target }).map((_, i) => (
               <div
                 key={i}
-                className={`w-2 h-2 rounded-full transition-colors ${
+                className={`w-1.5 h-1.5 rounded-full transition-colors ${
                   i < activeTask.pomodoros_done ? 'bg-[var(--accent,#22d3ee)]' : 'bg-white/10'
                 }`}
               />
@@ -311,13 +317,13 @@ function LargeTimerClock({
             key={timeRemaining}
             initial={{ opacity: 0.8 }}
             animate={{ opacity: 1 }}
-            className="text-5xl font-mono font-bold text-white tracking-wider"
+            className="text-3xl font-mono font-bold text-white tracking-tight tabular-nums"
           >
             {minutes.toString().padStart(2, '0')}
             <span className="text-white/30">:</span>
             {seconds.toString().padStart(2, '0')}
           </motion.div>
-          <p className="text-[10px] text-white/20 mt-1 uppercase tracking-wider">
+          <p className="text-[9px] text-white/25 mt-0.5 uppercase tracking-wider">
             {isBreak ? 'Break' : 'Focus'}
           </p>
         </div>
@@ -335,59 +341,119 @@ function LargeTimerClock({
         )}
       </div>
 
-      {/* Controls */}
-      <div className="flex items-center gap-3 mt-6">
+      {/* Controls — three slots: reset, primary action, focus-mode. Equal
+          width so the row reads as a deliberate cockpit, not a scattered
+          set of icons. */}
+      <div className="flex items-center gap-1.5 mt-4 w-full">
         {timerState === 'running' && (
           <>
             <button
-              onClick={onPause}
-              className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-all"
+              onClick={onReset}
+              className="flex-1 h-9 rounded-lg bg-white/[0.03] border border-white/[0.06] flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/5 transition-all"
+              title="Reset"
             >
-              <Pause className="w-5 h-5 fill-current" />
+              <RotateCcw className="w-3.5 h-3.5" />
             </button>
             <button
-              onClick={onReset}
-              className="w-10 h-10 rounded-xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center text-white/25 hover:text-white/50 hover:bg-white/5 transition-all"
+              onClick={onPause}
+              className="flex-[2] h-9 rounded-lg bg-[var(--accent,#22d3ee)]/15 border border-[var(--accent,#22d3ee)]/25 flex items-center justify-center gap-1.5 text-[var(--accent,#22d3ee)] hover:bg-[var(--accent,#22d3ee)]/20 transition-all text-xs font-medium"
             >
-              <RotateCcw className="w-4 h-4" />
+              <Pause className="w-3.5 h-3.5 fill-current" />
+              Pause
             </button>
             <button
               onClick={onFocusMode}
-              className="w-10 h-10 rounded-xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center text-white/25 hover:text-white/50 hover:bg-white/5 transition-all"
+              className="flex-1 h-9 rounded-lg bg-white/[0.03] border border-white/[0.06] flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/5 transition-all"
+              title="Enter focus mode"
             >
-              <Maximize2 className="w-4 h-4" />
+              <Maximize2 className="w-3.5 h-3.5" />
             </button>
           </>
         )}
         {timerState === 'paused' && (
           <>
             <button
-              onClick={onResume}
-              className="w-12 h-12 rounded-2xl bg-[var(--accent,#22d3ee)]/10 border border-[var(--accent,#22d3ee)]/20 flex items-center justify-center text-[var(--accent,#22d3ee)] hover:bg-[var(--accent,#22d3ee)]/20 transition-all"
+              onClick={onReset}
+              className="flex-1 h-9 rounded-lg bg-white/[0.03] border border-white/[0.06] flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/5 transition-all"
+              title="Reset"
             >
-              <Play className="w-5 h-5 fill-current" />
+              <RotateCcw className="w-3.5 h-3.5" />
             </button>
             <button
-              onClick={onReset}
-              className="w-10 h-10 rounded-xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center text-white/25 hover:text-white/50 hover:bg-white/5 transition-all"
+              onClick={onResume}
+              className="flex-[2] h-9 rounded-lg bg-[var(--accent,#22d3ee)] border border-[var(--accent,#22d3ee)] flex items-center justify-center gap-1.5 text-[#062028] hover:brightness-110 transition-all text-xs font-medium"
             >
-              <RotateCcw className="w-4 h-4" />
+              <Play className="w-3.5 h-3.5 fill-current" />
+              Resume
+            </button>
+            <button
+              onClick={onFocusMode}
+              className="flex-1 h-9 rounded-lg bg-white/[0.03] border border-white/[0.06] flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/5 transition-all"
+              title="Enter focus mode"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
             </button>
           </>
         )}
         {timerState === 'break' && (
           <button
             onClick={onSkipBreak}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm text-white/50 hover:text-white/80 hover:bg-white/10 transition-all"
+            className="w-full h-9 rounded-lg bg-white/[0.04] border border-white/[0.08] flex items-center justify-center gap-1.5 text-xs text-white/55 hover:text-white/80 hover:bg-white/[0.06] transition-all"
           >
-            <SkipForward className="w-4 h-4" />
+            <SkipForward className="w-3.5 h-3.5" />
             Skip Break
           </button>
         )}
       </div>
 
-      {/* PiP float button */}
+      {/* PiP float button — small text-only chip beneath the controls. */}
       <PiPButton className="mt-2" compact />
+    </motion.div>
+  );
+}
+
+/* ── Idle Timer Placeholder ───────────────────────────────────────── */
+// Shown in the left rail when no pomodoro is running, so the cockpit
+// area never collapses to a void. Quiet visual: dim ring, small CTA.
+// Click pulls focus to the task list to remind users where to start.
+function IdleTimerPlaceholder({
+  onStartUnassigned,
+  hasTasks,
+}: {
+  onStartUnassigned: () => void;
+  hasTasks: boolean;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.96 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.35, ease }}
+      className="flex flex-col items-center p-4 rounded-2xl border border-white/[0.05] bg-white/[0.015]"
+    >
+      <p className="text-[9px] text-white/30 uppercase tracking-widest font-medium mb-1.5">
+        Ready when you are
+      </p>
+      <p className="text-[13px] text-white/55 font-medium mb-3 text-center leading-tight px-1">
+        {hasTasks ? 'Click play on a task to begin' : 'Add tasks to start a session'}
+      </p>
+
+      <div className="relative w-[168px] h-[168px] flex items-center justify-center">
+        <svg width="168" height="168" viewBox="0 0 168 168" className="absolute inset-0 transform -rotate-90">
+          <circle cx="84" cy="84" r="79" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="5" />
+        </svg>
+        <div className="flex flex-col items-center">
+          <Play className="w-6 h-6 text-white/15" />
+          <p className="text-[10px] text-white/20 mt-2 uppercase tracking-wider">Idle</p>
+        </div>
+      </div>
+
+      <button
+        onClick={onStartUnassigned}
+        className="mt-4 w-full h-9 rounded-lg bg-white/[0.03] border border-dashed border-white/[0.08] flex items-center justify-center gap-1.5 text-xs text-white/45 hover:text-[var(--accent,#22d3ee)]/80 hover:border-[var(--accent,#22d3ee)]/20 hover:bg-[var(--accent,#22d3ee)]/[0.04] transition-all"
+      >
+        <Play className="w-3.5 h-3.5 fill-current" />
+        Start unassigned
+      </button>
     </motion.div>
   );
 }
@@ -449,18 +515,37 @@ export function DailyGrind() {
   // without re-querying every render. Refreshed when the drawer opens or
   // mutates a row (the drawer calls onOpenCountChange).
   const [openOtherTodoCount, setOpenOtherTodoCount] = useState(0);
+  // Top 3 open errands shown in the right-rail mini card. We refresh this
+  // alongside the count so the inline preview never goes stale relative
+  // to the badge. The full drawer still owns the source-of-truth list.
+  const [topErrands, setTopErrands] = useState<OtherTodo[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Initial fetch of the open-errand count for the trigger badge. Cheap
-  // (one HEAD count query). We don't poll — count is updated in-place as
-  // the drawer mutates rows, and refreshes the next time it opens.
+  // Initial fetch of open-errand count + the top 3 for the inline preview.
+  // The two queries run in parallel; either failing leaves the rail in a
+  // graceful empty state rather than showing stale data.
   useEffect(() => {
     let cancelled = false;
-    countOpenOtherTodos().then(n => {
-      if (!cancelled) setOpenOtherTodoCount(n);
+    Promise.all([
+      countOpenOtherTodos(),
+      listOtherTodos({ includeCompleted: false }),
+    ]).then(([n, list]) => {
+      if (cancelled) return;
+      setOpenOtherTodoCount(n);
+      setTopErrands(list.slice(0, 3));
     });
     return () => { cancelled = true; };
   }, []);
+
+  // Re-fetch the inline errand preview whenever the drawer's count
+  // changes (drawer calls onOpenCountChange after every mutation).
+  // Wrapped so we can pass the same callback shape to the drawer.
+  const handleErrandCountChange = (n: number) => {
+    setOpenOtherTodoCount(n);
+    listOtherTodos({ includeCompleted: false }).then(list => {
+      setTopErrands(list.slice(0, 3));
+    });
+  };
 
   const isToday = dailyViewDate === getTodayKey();
   const isFutureDate = dailyViewDate > getTodayKey();
@@ -592,11 +677,35 @@ export function DailyGrind() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      {/* Left column: Calendar only. Trimmed from col-span-3 to col-span-3
-          still, but with the AI Insight card removed the rail reads as a
-          compact sidebar rather than competing for vertical space with the
-          main tasks column. */}
+      {/* Left column: Timer cockpit (active or idle) + month streak calendar.
+          The cockpit lives here in the new workbench layout instead of
+          floating into the middle column when active — it's always next
+          to the calendar so the user's eye doesn't have to track between
+          two distant areas of the screen. The calendar shows pomodoro
+          intensity per day plus a journal-entry indicator dot, so a
+          single grid carries both streaks. */}
       <div className="lg:col-span-3 space-y-4">
+        {isToday && (
+          isTimerActive ? (
+            <LargeTimerClock
+              timeRemaining={timeRemaining}
+              isBreak={isBreak}
+              progress={progress}
+              timerState={timerState}
+              activeTask={activeTask}
+              onPause={pauseTimer}
+              onResume={resumeTimer}
+              onReset={resetTimer}
+              onSkipBreak={skipBreak}
+              onFocusMode={() => setView('focus')}
+            />
+          ) : (
+            <IdleTimerPlaceholder
+              onStartUnassigned={handleStartUnassigned}
+              hasTasks={pendingTasks.length > 0}
+            />
+          )
+        )}
         <StreakCalendar
           dailySessions={dashboardStats?.daily_sessions || []}
           recommendedDaily={activeGoal?.recommended_sessions_per_day}
@@ -755,23 +864,10 @@ export function DailyGrind() {
         <CoachPlanPanel />
         <CoachDebriefCard />
 
-        {/* ── LARGE CENTERED TIMER ─── when a pomodoro is active */}
-        <AnimatePresence>
-          {isToday && isTimerActive && (
-            <LargeTimerClock
-              timeRemaining={timeRemaining}
-              isBreak={isBreak}
-              progress={progress}
-              timerState={timerState}
-              activeTask={activeTask}
-              onPause={pauseTimer}
-              onResume={resumeTimer}
-              onReset={resetTimer}
-              onSkipBreak={skipBreak}
-              onFocusMode={() => setView('focus')}
-            />
-          )}
-        </AnimatePresence>
+        {/* The active timer cockpit used to render here in the middle
+            column. It now lives in the left rail (next to the streak
+            calendar) so the task list isn't pushed down by the ring when
+            a session starts. */}
 
         {/* Hint for first-time Daily Grind users */}
         <HintBanner id="daily-grind-intro">
@@ -1025,6 +1121,68 @@ export function DailyGrind() {
           streakDays={dashboardStats?.current_streak ?? 0}
           userName={useStore.getState().user?.name || 'there'}
         />
+
+        {/* Errand mini card — surfaces the top of the side list inline so
+            the user sees what's pending without having to open the drawer.
+            Click "View all" to open the full drawer (still the canonical
+            place for editing / completing / reordering errands). When the
+            list is empty we show a subtle "No errands" empty state plus an
+            "+ Add errand" link that also opens the drawer in add-mode. */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1, duration: 0.4, ease }}
+          className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <h3 className="text-[10px] text-amber-300/70 uppercase tracking-widest font-medium">
+                Errands
+              </h3>
+              {openOtherTodoCount > 0 && (
+                <span className="px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300/90 text-[10px] font-semibold tabular-nums">
+                  {openOtherTodoCount}
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => setShowOtherTodos(true)}
+              className="text-[10px] text-white/35 hover:text-white/70 transition-colors flex items-center gap-0.5"
+              aria-label="Open errand drawer"
+            >
+              View all
+              <ChevronRight className="w-3 h-3" />
+            </button>
+          </div>
+
+          {topErrands.length > 0 ? (
+            <div className="space-y-1.5">
+              {topErrands.map(e => (
+                <div
+                  key={e.id}
+                  className="flex items-center gap-2 px-1 py-0.5"
+                >
+                  <Circle className="w-2.5 h-2.5 text-white/25 flex-shrink-0" />
+                  <p className="flex-1 min-w-0 text-xs text-white/70 truncate">{e.title}</p>
+                  {e.estimated_minutes && (
+                    <span className="text-[10px] text-white/30 tabular-nums flex-shrink-0">
+                      {e.estimated_minutes}m
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[11px] text-white/30 italic px-1">No open errands.</p>
+          )}
+
+          <button
+            onClick={() => setShowOtherTodos(true)}
+            className="mt-2.5 w-full text-[11px] text-white/30 hover:text-white/60 hover:bg-white/[0.02] py-1.5 rounded-md border border-dashed border-white/[0.06] hover:border-white/[0.10] transition-all"
+          >
+            + Add errand
+          </button>
+        </motion.div>
         {/* Today at a glance — the old "Today's Charter" and "Today's Focus"
             cards said nearly the same thing with different framings. Both are
             now folded into a single compact card: four stats in a 2x2 grid
@@ -1155,7 +1313,7 @@ export function DailyGrind() {
       <OtherTodosDrawer
         open={showOtherTodos}
         onClose={() => setShowOtherTodos(false)}
-        onOpenCountChange={setOpenOtherTodoCount}
+        onOpenCountChange={handleErrandCountChange}
       />
     </div>
   );
