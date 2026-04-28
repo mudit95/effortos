@@ -230,9 +230,35 @@ export async function POST(req: NextRequest) {
     // consumePendingFlow uses GETDEL so two near-simultaneous deliveries
     // can't both consume the same flow. Redis TTL (10 min) handles
     // expiration server-side — no manual sweep needed.
+    //
+    // Voice-note quirk: if the user said "add journal entry" and replies
+    // with a VOICE NOTE (audioId, no text), we have to transcribe FIRST,
+    // otherwise we'd save an empty journal entry. We re-arm the flow on
+    // transcription failure so the user can just resend instead of having
+    // to type "add journal entry" again from scratch.
     const pendingFlow = await consumePendingFlow(from);
     if (pendingFlow) {
       if (pendingFlow.type === 'journal' || pendingFlow.type === 'reflection') {
+        if (audioId && !text) {
+          await sendBotReply(from, '🎤 Got your voice note — transcribing for the journal...');
+          const result = await transcribeVoiceNote(audioId);
+          if (!result.ok) {
+            // Re-arm the flow so the user can retry without re-prompting.
+            await setPendingFlow(from, pendingFlow);
+            const msg =
+              result.reason === 'download_failed'
+                ? '❌ Couldn\'t download the voice note. Send your journal entry again?'
+                : result.reason === 'whisper_failed'
+                ? '❌ Couldn\'t transcribe the voice note. Try sending it again, or type the entry instead.'
+                : result.reason === 'empty'
+                ? '🤔 I couldn\'t make out any words. Send the voice note again, or type the entry.'
+                : '🎤 Voice transcription isn\'t enabled — type your journal entry instead.';
+            await sendBotReply(from, msg);
+            return NextResponse.json({ status: 'ok' });
+          }
+          await handleSaveJournalEntry(supabase, pendingFlow.userId, from, result.transcript);
+          return NextResponse.json({ status: 'ok' });
+        }
         await handleSaveJournalEntry(supabase, pendingFlow.userId, from, text);
         return NextResponse.json({ status: 'ok' });
       }
@@ -859,7 +885,8 @@ async function handleAddJournalPrompt(userId: string, phone: string, name: strin
 
   await sendBotReply(
     phone,
-    `📓 Ready to add your journal entry for today, ${name || 'friend'}.\n\nPlease send your journal entry now — I'll save it as-is. You have 10 minutes.`,
+    `📓 Ready to add your journal entry for today, ${name || 'friend'}.\n\n` +
+    `Write it as a text reply, *or send a voice note* — I'll transcribe and save whichever you send next as today's entry. You have 10 minutes.`,
   );
 }
 
@@ -1458,6 +1485,55 @@ async function handleButtonReply(
   }
 }
 
+// ── Voice transcription helper ──
+//
+// Used by handleVoiceNote (general voice notes) and by the journal pending-flow
+// path (where we need to transcribe BEFORE persisting the journal entry).
+// Returns a structured result so callers can distinguish failure kinds and
+// decide what to surface to the user — and, in the journal case, whether to
+// re-arm the pending flow so the user doesn't have to start over.
+type TranscriptionResult =
+  | { ok: true; transcript: string }
+  | { ok: false; reason: 'no_api_key' | 'download_failed' | 'whisper_failed' | 'empty' };
+
+async function transcribeVoiceNote(audioId: string): Promise<TranscriptionResult> {
+  // Groq runs Whisper Large v3 Turbo at ~$0.002/min — about 3× cheaper than
+  // OpenAI's whisper-1 and noticeably faster (sub-second for short notes).
+  // The endpoint is OpenAI-compatible: same multipart `file` + `model` +
+  // `language` body, same response shape — only the URL, key, and model
+  // name change.
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    console.error('[WhatsApp] GROQ_API_KEY not configured — voice transcription unavailable');
+    return { ok: false, reason: 'no_api_key' };
+  }
+  const audioBuffer = await downloadWhatsAppMedia(audioId);
+  if (!audioBuffer) return { ok: false, reason: 'download_failed' };
+
+  const formData = new FormData();
+  const uint8 = new Uint8Array(audioBuffer);
+  const blob = new Blob([uint8], { type: 'audio/ogg' });
+  formData.append('file', blob, 'voice.ogg');
+  formData.append('model', 'whisper-large-v3-turbo');
+  formData.append('language', 'en');
+
+  const whisperRes = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: formData,
+  });
+
+  if (!whisperRes.ok) {
+    console.error('[WhatsApp] Groq Whisper API error:', await whisperRes.text());
+    return { ok: false, reason: 'whisper_failed' };
+  }
+
+  const whisperData = await whisperRes.json() as { text?: string };
+  const transcript = whisperData.text?.trim();
+  if (!transcript) return { ok: false, reason: 'empty' };
+  return { ok: true, transcript };
+}
+
 // ── Voice note handler ──
 async function handleVoiceNote(
   supabase: SupabaseClient,
@@ -1465,8 +1541,7 @@ async function handleVoiceNote(
   phone: string,
   audioId: string,
 ) {
-  const openaiKey = process.env.OPENAI_API_KEY;
-  if (!openaiKey) {
+  if (!process.env.GROQ_API_KEY) {
     await sendBotReply(phone, '🎤 Voice notes aren\'t enabled yet — please type your message instead.');
     return;
   }
@@ -1474,38 +1549,19 @@ async function handleVoiceNote(
   await sendBotReply(phone, '🎤 Got your voice note — transcribing...');
 
   try {
-    const audioBuffer = await downloadWhatsAppMedia(audioId);
-    if (!audioBuffer) {
-      await sendBotReply(phone, '❌ Couldn\'t download the voice note. Try again?');
+    const result = await transcribeVoiceNote(audioId);
+    if (!result.ok) {
+      const msg = result.reason === 'download_failed'
+        ? '❌ Couldn\'t download the voice note. Try again?'
+        : result.reason === 'whisper_failed'
+        ? '❌ Couldn\'t transcribe the voice note. Try typing instead.'
+        : result.reason === 'empty'
+        ? '🤔 I couldn\'t make out any words. Try again or type it out.'
+        : '🎤 Voice notes aren\'t enabled yet — please type your message instead.';
+      await sendBotReply(phone, msg);
       return;
     }
-
-    // Send to OpenAI Whisper API
-    const formData = new FormData();
-    const uint8 = new Uint8Array(audioBuffer);
-    const blob = new Blob([uint8], { type: 'audio/ogg' });
-    formData.append('file', blob, 'voice.ogg');
-    formData.append('model', 'whisper-1');
-    formData.append('language', 'en');
-
-    const whisperRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${openaiKey}` },
-      body: formData,
-    });
-
-    if (!whisperRes.ok) {
-      console.error('[WhatsApp] Whisper API error:', await whisperRes.text());
-      await sendBotReply(phone, '❌ Couldn\'t transcribe the voice note. Try typing instead.');
-      return;
-    }
-
-    const whisperData = await whisperRes.json() as { text?: string };
-    const transcript = whisperData.text?.trim();
-    if (!transcript) {
-      await sendBotReply(phone, '🤔 I couldn\'t make out any words. Try again or type it out.');
-      return;
-    }
+    const transcript = result.transcript;
 
     // ── Voice journal fast path ──────────────────────────────────────────
     // Whisper transcripts almost always start with capitalised English; the
