@@ -28,6 +28,13 @@ import {
 
 import { enqueueOffline, initOfflineSync } from '@/lib/offline-queue';
 
+// Module-level single-flight handle for initializeApp. The Supabase auth
+// listener fires INITIAL_SESSION + SIGNED_IN + TOKEN_REFRESHED in close
+// succession after a fresh login; without this guard, two parallel inits
+// race on store writes and the user sees flaky "logged in / logged out"
+// flicker. See initializeApp() below for the read/clear logic.
+let _initPromise: Promise<void> | null = null;
+
 /** Fire-and-forget Supabase write. Logs errors but never blocks.
  *  If the call fails while offline, optionally queues it for replay. */
 function cloudSync(
@@ -361,13 +368,26 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   initializeApp: async () => {
+    // ── Single-flight guard ────────────────────────────────────────────
+    // Multiple Supabase auth events (INITIAL_SESSION, SIGNED_IN,
+    // TOKEN_REFRESHED) used to each trigger initializeApp() in parallel.
+    // The two runs raced on store writes — whichever finished second
+    // clobbered the first. That manifested as "auth sometimes works,
+    // sometimes doesn't" and stale data after sign-in. Now we de-dupe:
+    // a second call while one is in flight just awaits the in-flight
+    // promise instead of starting a duplicate run.
+    if (_initPromise) {
+      return _initPromise;
+    }
+
     // If user explicitly logged out (currentView === 'landing' and not loading), skip re-init
     const currentState = get();
     if (currentState.currentView === 'landing' && !currentState.isLoading && !currentState.isAuthenticated) {
       return;
     }
 
-    let _isCloud = false;
+    _initPromise = (async () => {
+      let _isCloud = false;
 
     try {
     // Check Supabase session first (only if configured)
@@ -440,19 +460,55 @@ export const useStore = create<AppState>((set, get) => ({
           // eagerly. Clearing eagerly caused a race on page refresh where a
           // transient auth hiccup would fall through to the localStorage path
           // with zero goals and incorrectly open the onboarding flow.
-          let cachedGoals: Goal[] = [];
-          try { cachedGoals = storage.getGoals(); } catch { /* ok */ }
+          const cachedGoals: Goal[] = (() => {
+            try { return storage.getGoals(); } catch { return []; }
+          })();
 
-          let cloudGoals: Goal[];
-          try {
-            cloudGoals = await api.getGoals();
-          } catch {
-            cloudGoals = cachedGoals; // Restore from cache if cloud fails
-          }
+          // Load daily grind state — pure local reads, no network needed.
+          const dashboardMode = storage.getDashboardMode();
+          const dailyGrindLayout = storage.getDailyGrindLayout();
+          const todayKey = new Date().toISOString().split('T')[0];
+
+          // Parallelise the five cloud fetches. They used to run sequentially
+          // (5× round-trip ≈ 1.5–3 s on cold-start latency); now they run
+          // concurrently and the boot completes in roughly the slowest single
+          // call (≈ 300–500 ms). Each individual fetch falls back to its
+          // localStorage cache on failure, so a single slow endpoint can't
+          // sink the whole boot.
+          const [
+            goalsRes,
+            dailyTasksRes,
+            templatesRes,
+            journalRes,
+            shadowRes,
+          ] = await Promise.allSettled([
+            api.getGoals(),
+            api.getDailyTasksForDate(todayKey),
+            api.getRepeatingTemplates(),
+            api.getJournalEntries(),
+            api.getShadowGoals(),
+          ]);
+
+          const cloudGoals: Goal[] = goalsRes.status === 'fulfilled'
+            ? goalsRes.value
+            : cachedGoals;
+          const dailyTasks: DailyTask[] = dailyTasksRes.status === 'fulfilled'
+            ? dailyTasksRes.value
+            : storage.ensureRepeatingTasksForDate(todayKey);
+          const repeatingTemplates: RepeatingTaskTemplate[] = templatesRes.status === 'fulfilled'
+            ? templatesRes.value
+            : storage.getRepeatingTemplates().filter(t => t.active);
+          const journalEntries: JournalEntry[] = journalRes.status === 'fulfilled'
+            ? journalRes.value
+            : storage.getJournalEntries();
+          const shadowGoals: ShadowGoal[] = shadowRes.status === 'fulfilled'
+            ? shadowRes.value
+            : storage.getShadowGoals();
+
           const cloudActiveGoal = cloudGoals.find(g => g.status === 'active') || null;
           const focusDuration = supaUser.settings?.focus_duration || 25 * 60;
 
-          // Recover timer state from localStorage first (instant), fallback to cloud
+          // Recover timer state from localStorage (instant, no network).
           const timerSaved = storage.getTimerState();
           let timeRemaining = focusDuration;
           let timerState: TimerState = 'idle';
@@ -466,40 +522,6 @@ export const useStore = create<AppState>((set, get) => ({
               timerState = 'paused';
               currentSessionId = timerSaved.sessionId || null;
             }
-          }
-
-          // Load daily grind state
-          const dashboardMode = storage.getDashboardMode();
-          const dailyGrindLayout = storage.getDailyGrindLayout();
-          const todayKey = new Date().toISOString().split('T')[0];
-          let dailyTasks: DailyTask[] = [];
-          let repeatingTemplates: RepeatingTaskTemplate[] = [];
-          try {
-            dailyTasks = await api.getDailyTasksForDate(todayKey);
-            repeatingTemplates = await api.getRepeatingTemplates();
-          } catch {
-            dailyTasks = storage.ensureRepeatingTasksForDate(todayKey);
-            repeatingTemplates = storage.getRepeatingTemplates().filter(t => t.active);
-          }
-
-          // Load the user's journal entries (all dates) so the calendar
-          // can render indicator dots without a second round-trip. Fall
-          // back to localStorage if the cloud call fails so anonymous
-          // journaling still survives a cloud outage.
-          let journalEntries: JournalEntry[] = [];
-          try {
-            journalEntries = await api.getJournalEntries();
-          } catch {
-            journalEntries = storage.getJournalEntries();
-          }
-
-          // Same fallback strategy for shadow goals — they're tiny rows
-          // and the shelf renders empty if neither source has data.
-          let shadowGoals: ShadowGoal[] = [];
-          try {
-            shadowGoals = await api.getShadowGoals();
-          } catch {
-            shadowGoals = storage.getShadowGoals();
           }
 
           // Also cache goals to localStorage for offline access
@@ -575,15 +597,19 @@ export const useStore = create<AppState>((set, get) => ({
         set({ isLoading: false });
         return;
       }
-      // Not yet hydrated — wait briefly for auth listener to re-trigger.
-      // Safety net: if still loading after 3 seconds, show landing page
-      // so the user isn't stuck on a forever-spinner.
+      // Not yet hydrated — wait for auth listener to re-trigger.
+      // Safety net: if still loading after 8 seconds, show landing page
+      // so the user isn't stuck on a forever-spinner. 8s (was 3s) gives
+      // cold-start Vercel functions enough time to finish the
+      // exchangeCodeForSession + profile fetch before we give up. The
+      // BootLoader's "stalled" state already shows a slow-connection
+      // message at 6s, so there's user-facing feedback well before this.
       setTimeout(() => {
         const s = get();
         if (s.isLoading && !s.isAuthenticated) {
           set({ isLoading: false, currentView: 'landing' });
         }
-      }, 3000);
+      }, 8000);
       return;
     }
 
@@ -645,6 +671,15 @@ export const useStore = create<AppState>((set, get) => ({
       // Global safety net — if anything in init crashes, show landing page
       console.error('App initialization failed:', fatalErr);
       set({ isLoading: false, currentView: 'landing', user: null, isAuthenticated: false });
+    }
+    })();
+
+    try {
+      await _initPromise;
+    } finally {
+      // Always clear the in-flight handle so the next legitimate trigger
+      // (e.g. SIGNED_IN after the user returns from another tab) can run.
+      _initPromise = null;
     }
   },
 

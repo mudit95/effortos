@@ -50,22 +50,32 @@ export function AppShell() {
     // makes the gesture-aware listener present everywhere from the start.
     warmUpAudio();
 
-    // Listen for Supabase auth state changes (initial hydration, sign-in, token refresh).
-    // INITIAL_SESSION fires on page refresh once the session cookie is rehydrated — we
-    // re-run initializeApp so the cloud path has a chance to populate state. Without
-    // this, a transient cookie hydration race can leave us stuck on the spinner or
-    // fall through to the localStorage path and incorrectly open onboarding.
+    // Listen for Supabase auth state changes.
+    //
+    // Three events fire shortly after a successful login (INITIAL_SESSION,
+    // SIGNED_IN, TOKEN_REFRESHED). Triggering initializeApp() on all three
+    // used to start parallel inits that raced on store writes — the
+    // proximate cause of "auth sometimes works, sometimes doesn't."
+    //
+    // The store now has a single-flight guard, so concurrent calls collapse
+    // to one in-flight promise. We still narrow the listener to:
+    //   - INITIAL_SESSION: needed on hard refresh to rehydrate from cookie.
+    //   - SIGNED_IN: needed for fresh OAuth/email sign-in.
+    //   - TOKEN_REFRESHED: NOT a re-init trigger. The cookie is already
+    //     refreshed by the supabase client — there's nothing for the app
+    //     to do except keep going.
     let subscription: { unsubscribe: () => void } | null = null;
     try {
       const supabase = createClient();
       const { data } = supabase.auth.onAuthStateChange(
         (event: string, session: { user?: unknown } | null) => {
-          if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+          if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') {
             if (session?.user) {
               initializeApp();
             }
           }
-          // SIGNED_OUT is handled by the logout() action — no need to re-initialize
+          // SIGNED_OUT is handled by the logout() action — no need to re-initialize.
+          // TOKEN_REFRESHED is intentionally ignored — see comment block above.
         }
       );
       subscription = data.subscription;
