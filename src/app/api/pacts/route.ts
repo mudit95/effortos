@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import crypto from 'crypto';
 import { sendEmail, APP_URL } from '@/lib/email';
 import { rateLimitOrNull } from '@/lib/ratelimit';
+import { PENDING_PACT_TTL_DAYS } from '@/lib/pacts';
 
 /**
  * GET /api/pacts
@@ -17,8 +19,8 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Fetch pacts where the user is either the creator or the accepted partner
-    const { data: pacts, error } = await supabase
+    // Fetch pacts where the user is either the creator or the accepted partner.
+    const { data: rawPacts, error } = await supabase
       .from('pacts')
       .select('*')
       .or(`user_id.eq.${user.id},partner_user_id.eq.${user.id}`)
@@ -28,6 +30,19 @@ export async function GET() {
       console.error('Pacts list error:', error);
       return NextResponse.json({ error: 'Failed to fetch pacts' }, { status: 500 });
     }
+
+    // Hide stale pending invites (>7d) so the menu doesn't pile up
+    // with invites the partner never accepted. App-side filter rather
+    // than nesting boolean logic in PostgREST .or() — the result set
+    // per user is tiny and this stays readable. The rows themselves
+    // remain in the DB until the daily cron flips them to 'declined'
+    // (see /api/cron/pacts-cleanup), so this is purely a UI filter
+    // that's resilient to cron lag.
+    const staleCutoffMs = Date.now() - PENDING_PACT_TTL_DAYS * 24 * 60 * 60 * 1000;
+    const pacts = rawPacts.filter((p) => {
+      if (p.status !== 'pending') return true;
+      return new Date(p.created_at).getTime() >= staleCutoffMs;
+    });
 
     // For each pact, determine the partner's user_id and fetch their stats
     const partnerIds = pacts
@@ -105,12 +120,27 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'You cannot create a pact with yourself' }, { status: 400 });
     }
 
-    // Check if the partner already has a profile (optional — they might not be signed up yet)
-    const { data: partnerProfile } = await supabase
+    // Check if the partner already has a profile.
+    //
+    // RLS NOTE: profiles RLS typically restricts SELECT to your own
+    // row (`auth.uid() = id`), so the user-scoped client would return
+    // 0 rows for ANY email except the inviter's own — leaving every
+    // pact created with partner_user_id = NULL, which then breaks the
+    // accept flow (RLS blocks the invitee from finding it). We use
+    // the service-role client just for this email→user_id resolution.
+    //
+    // Privacy: we only ever read `id`, only on an exact email match
+    // the inviter just typed in, and we don't return that id back to
+    // the inviter. So this doesn't expose whether an arbitrary email
+    // has an account beyond what the inviter could already infer
+    // (the email-or-not distinction shows up in whether the partner
+    // can immediately accept vs. has to sign up first).
+    const service = createServiceClient();
+    const { data: partnerProfile } = await service
       .from('profiles')
       .select('id')
       .eq('email', trimmedEmail)
-      .single();
+      .maybeSingle();
 
     // Generate invite code on the app side (avoids dependency on pgcrypto extension)
     const inviteCode = crypto.randomBytes(12).toString('hex');

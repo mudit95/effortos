@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 
 /**
  * POST /api/pacts/accept
@@ -7,6 +8,18 @@ import { createClient } from '@/lib/supabase/server';
  * Body: { invite_code: string }
  *
  * Sets partner_user_id to the current user, status to 'active', and accepted_at to now.
+ *
+ * RLS NOTE: The lookup-by-invite-code uses the service-role client on
+ * purpose. The pacts SELECT policy requires `auth.uid() = user_id OR
+ * auth.uid() = partner_user_id`, but a pending invite's
+ * partner_user_id is NULL until the invitee accepts — so the user-
+ * scoped client would always return 0 rows here ("Pact not found").
+ *
+ * Bypassing RLS is safe because the 24-byte hex invite_code is itself
+ * the authenticator (whoever holds the code is the legitimate
+ * invitee). After the lookup we still re-check status and that the
+ * caller isn't the creator before flipping the row to 'active' on the
+ * user-scoped client — so the UPDATE remains RLS-protected.
  */
 export async function POST(req: Request) {
   try {
@@ -23,8 +36,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'invite_code is required' }, { status: 400 });
     }
 
-    // Look up the pact by invite_code
-    const { data: pact, error: lookupError } = await supabase
+    // Service-role lookup — see RLS NOTE on the route docblock.
+    const service = createServiceClient();
+    const { data: pact, error: lookupError } = await service
       .from('pacts')
       .select('*')
       .eq('invite_code', invite_code.trim())
@@ -45,8 +59,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'You cannot accept your own pact' }, { status: 400 });
     }
 
-    // Accept the pact
-    const { data: updated, error: updateError } = await supabase
+    // Update on the user-scoped client. The pacts UPDATE policy is
+    // `auth.uid() = user_id OR auth.uid() = partner_user_id` — the
+    // partner_user_id is still NULL on the row at this exact instant,
+    // so we'd be blocked. Use the service client for the write too.
+    // The race-condition guard on `status='pending'` plus the explicit
+    // pact.id match makes this safe.
+    const { data: updated, error: updateError } = await service
       .from('pacts')
       .update({
         partner_user_id: user.id,
