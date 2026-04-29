@@ -6,14 +6,16 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { sendTextMessage } from '@/lib/whatsapp';
 import { generateCoachMessage } from '@/lib/coach-ai';
 import type { UserContext } from '@/lib/coach-engine';
+import { resolvePersona } from '@/lib/persona-tone';
 
 export async function sendProWelcome(userId: string): Promise<void> {
   const supabase = createServiceClient();
 
-  // Get user profile
+  // Get user profile (includes bot_persona so the upgrade welcome
+  // sounds like the user's chosen voice, not a generic one).
   const { data: profile } = await supabase
     .from('profiles')
-    .select('id, name, phone_number, timezone, whatsapp_linked')
+    .select('id, name, phone_number, timezone, whatsapp_linked, bot_persona')
     .eq('id', userId)
     .single();
 
@@ -45,6 +47,7 @@ export async function sendProWelcome(userId: string): Promise<void> {
     localHour: 12,
     localDayOfWeek: new Date().getDay(),
     intensity: 'balanced',
+    persona: resolvePersona(profile.bot_persona),
     totalTasks: 0,
     completedTasks: 0,
     totalPomsDone: 0,

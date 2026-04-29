@@ -45,7 +45,8 @@ export async function GET(request: Request) {
         coaching_intensity,
         coaching_quiet_start,
         coaching_quiet_end,
-        coaching_paused_until
+        coaching_paused_until,
+        bot_persona
       `)
       .eq('whatsapp_linked', true)
       .not('phone_number', 'is', null);

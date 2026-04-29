@@ -7,8 +7,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { NudgeType } from '@/types';
 import type { UserContext } from '@/lib/coach-engine';
+import { personaSystemSnippet, personaGreeting, personaPush } from '@/lib/persona-tone';
 
-const SYSTEM_PROMPT = `You are the EffortOS AI Coach, a proactive productivity partner that sends WhatsApp messages to help users complete their daily tasks and long-term goals.
+const BASE_SYSTEM_PROMPT = `You are the EffortOS AI Coach, a proactive productivity partner that sends WhatsApp messages to help users complete their daily tasks and long-term goals.
 
 RULES:
 - Write SHORT, punchy WhatsApp messages (max 300 chars). These are nudges, not essays.
@@ -28,6 +29,16 @@ CONTEXT AWARENESS:
 - Morning = energizing
 - Evening = reflective/grateful
 - After streak break = empathetic, no pressure`;
+
+/**
+ * Compose the per-message system prompt by appending the persona
+ * snippet to the base prompt. We do it per-message rather than caching
+ * because the user could change persona at any time (Settings UI), and
+ * regenerating the prompt is essentially free.
+ */
+function systemPromptFor(ctx: UserContext): string {
+  return `${BASE_SYSTEM_PROMPT}\n\n${personaSystemSnippet(ctx.persona)}`;
+}
 
 const NUDGE_PROMPTS: Record<NudgeType, (ctx: UserContext) => string> = {
   morning_kickoff: (ctx) =>
@@ -161,7 +172,7 @@ export async function generateCoachMessage(
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 300,
-      system: SYSTEM_PROMPT,
+      system: systemPromptFor(context),
       messages: [{ role: 'user', content: promptFn(context) }],
     });
 
@@ -185,42 +196,51 @@ export async function generateCoachMessage(
 
 /**
  * Static fallback messages — used if AI fails or is not configured.
+ *
+ * The opener and (where natural) sign-off are pulled from the persona
+ * helpers so even the no-AI path sounds like the chosen voice. The
+ * informational middle stays the same regardless of persona — it's
+ * factual data (counts, streaks, goal names).
  */
 function getFallbackMessage(nudgeType: NudgeType, ctx: UserContext): string {
+  const greet = personaGreeting(ctx.persona, ctx.name); // e.g. "Yo Mudit"
+  const push = personaPush(ctx.persona);                // e.g. "Let's gooo 🚀"
+
   switch (nudgeType) {
     case 'morning_kickoff':
-      return `☀️ Good morning ${ctx.name}! You have ${ctx.totalTasks} tasks and ${ctx.totalPomsTarget} pomodoros planned today. Let's make it count!`;
+      return `☀️ ${greet}! You have ${ctx.totalTasks} tasks and ${ctx.totalPomsTarget} pomodoros planned today. ${push}`;
     case 'task_planning_prompt':
-      return `📋 Hey ${ctx.name}, no tasks planned yet today. What do you want to work on? Just text me your tasks!`;
+      return `📋 ${greet} — no tasks planned yet today. What do you want to work on? Just text me your tasks.`;
     case 'midday_checkin':
-      return `🔥 Halfway check: ${ctx.completedTasks}/${ctx.totalTasks} tasks done, ${ctx.totalPomsDone}/${ctx.totalPomsTarget} pomodoros. Keep it up!`;
+      return `🔥 Halfway check: ${ctx.completedTasks}/${ctx.totalTasks} tasks done, ${ctx.totalPomsDone}/${ctx.totalPomsTarget} pomodoros. ${push}`;
     case 'evening_wrapup':
       return ctx.completedTasks === ctx.totalTasks
-        ? `🎉 ${ctx.name}, you crushed it today! ${ctx.totalTasks} tasks, all done. ${ctx.currentStreak}-day streak! Want to plan tomorrow?`
-        : `🌙 Day's wrapping up — ${ctx.completedTasks}/${ctx.totalTasks} tasks done. Solid effort! Want to plan tomorrow? Just text me.`;
+        ? `🎉 ${greet} — clean sweep! ${ctx.totalTasks} tasks, all done. ${ctx.currentStreak}-day streak! Want to plan tomorrow?`
+        : `🌙 Day's wrapping up — ${ctx.completedTasks}/${ctx.totalTasks} tasks done. Solid effort. Want to plan tomorrow?`;
     case 'streak_saver':
-      return `🔥 ${ctx.name}, your ${ctx.currentStreak}-day streak is at risk! One focused session keeps it alive. You've got this!`;
+      return `🔥 ${greet} — your ${ctx.currentStreak}-day streak is at risk. One focused session keeps it alive.`;
     case 'idle_detection':
-      return `⏰ Been a while since your last session. ${ctx.incompleteTasks.length} tasks waiting — pick one and do a quick pomodoro?`;
+      return `⏰ Been a while since your last session. ${ctx.incompleteTasks.length} tasks waiting — pick one and run a quick pomodoro?`;
     case 'goal_milestone':
-      return `🎯 Amazing — you hit ${ctx.activeGoal?.pct}% on "${ctx.activeGoal?.title}"! That's real progress. Keep going! 💪`;
+      return `🎯 ${greet} — you hit ${ctx.activeGoal?.pct}% on "${ctx.activeGoal?.title}". Real progress. ${push}`;
     case 'weekly_recap':
-      return `📊 Weekly recap: ${ctx.currentStreak}-day streak.${ctx.activeGoal ? ` "${ctx.activeGoal.title}" is at ${ctx.activeGoal.pct}%.` : ''} Great week — let's make next one even better!`;
+      return `📊 Weekly recap: ${ctx.currentStreak}-day streak.${ctx.activeGoal ? ` "${ctx.activeGoal.title}" is at ${ctx.activeGoal.pct}%.` : ''} ${push}`;
     case 'pace_warning':
       return `📎 Heads up on "${ctx.activeGoal?.title}" — you're a bit behind pace. Adding 1 extra session today could get you back on track.`;
     case 'bad_day_check':
-      return `Hey ${ctx.name} 👋 Haven't seen you in a few days — totally fine, everyone needs a break. Whenever you're ready, I'm here. No pressure.`;
+      // Empathy line — keep it consistent across personas; no push.
+      return `${greet} 👋 — haven't seen you in a few days. Totally fine, everyone needs a break. I'm here whenever you're ready.`;
     case 'welcome':
       return `🎉 Welcome to EffortOS Pro, ${ctx.name}! I'll check in with you throughout the day to keep you on track. Text "shh" anytime to pause coaching for 24h.`;
     case 'plan_tomorrow':
-      return `📝 Let's plan tomorrow! Just text me your tasks like: "Review docs 2 pomodoros, team meeting prep, design mockups 3 poms"`;
+      return `📝 Let's plan tomorrow. Text your tasks like: "Review docs 2 pomodoros, team meeting prep, design mockups 3 poms".`;
     case 'eod_summary':
       return ctx.incompleteTasks.length > 0
         ? `🌙 Day done: ${ctx.completedTasks}/${ctx.totalTasks} tasks, ${ctx.totalPomsDone} pomodoros. ${ctx.incompleteTasks.length} still open — reply "carry all" to move them to tomorrow.`
-        : `🌙 ${ctx.name}, clean sweep! ${ctx.totalTasks} tasks all done. ${ctx.currentStreak}-day streak. Rest up!`;
+        : `🌙 ${greet} — clean sweep! ${ctx.totalTasks} tasks all done. ${ctx.currentStreak}-day streak. Rest up.`;
     case 'streak_protection':
-      return `🔥 Heads up — your ${ctx.currentStreak}-day streak is at risk. No sessions today. Even one quick pomodoro saves it!`;
+      return `🔥 Heads up ${ctx.name} — your ${ctx.currentStreak}-day streak is at risk. No sessions today. Even one quick pomodoro saves it.`;
     case 'weekly_reflection':
-      return `📓 Sunday reflection: What went well this week? What would you change? Reply with your thoughts and I'll save them to your journal.`;
+      return `📓 Sunday reflection: what went well this week, what would you change? Reply and I'll save it to your journal.`;
   }
 }

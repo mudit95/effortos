@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { extractIncomingMessage, sendTextMessage, downloadWhatsAppMedia } from '@/lib/whatsapp';
 import { parseWhatsAppMessage, generateChatResponse, type WAIntent } from '@/lib/whatsapp-ai';
+import { resolvePersona } from '@/lib/persona-tone';
 import { getUserTimezone, todayKeyInTz, dateKeyInTz } from '@/lib/user-date';
 import {
   setPendingFlow,
@@ -211,7 +212,7 @@ export async function POST(req: NextRequest) {
     const supabase = createServiceClient();
     const { data: profile } = await supabase
       .from('profiles')
-      .select('id, name, phone_number, focus_duration')
+      .select('id, name, phone_number, focus_duration, bot_persona')
       .eq('phone_number', `+${from}`)
       .single();
 
@@ -530,6 +531,8 @@ interface UserProfile {
   name: string;
   phone_number: string;
   focus_duration: number;
+  /** Bot voice (Friend / Mentor / Boss / Colleague). Null = unset → 'friend'. */
+  bot_persona?: string | null;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1372,7 +1375,16 @@ async function handleChatAboutTasks(
     `\n` +
     `Focus time today: ${focusMinutesToday} minutes`;
 
-  const reply = await generateChatResponse(contextBlock, rawMessage);
+  // Pass the user's chosen persona so the chat reply matches the
+  // voice they picked during onboarding (or in Settings later).
+  // resolvePersona() narrows the loose `string | null` from the DB
+  // (the CHECK constraint guarantees a valid value, but the column
+  // type itself is plain TEXT) into the BotPersona union.
+  const reply = await generateChatResponse(
+    contextBlock,
+    rawMessage,
+    resolvePersona(profile.bot_persona),
+  );
 
   if (!reply) {
     // Either the API key is missing or the model errored — fall back to a

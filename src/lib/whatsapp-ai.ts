@@ -3,6 +3,8 @@
  * Takes a natural-language message and returns a structured intent.
  */
 import Anthropic from '@anthropic-ai/sdk';
+import type { BotPersona } from '@/types';
+import { personaSystemSnippet, resolvePersona } from '@/lib/persona-tone';
 
 export type WAIntent =
   | { type: 'add_tasks'; tasks: Array<{ title: string; pomodoros: number; tag?: string }> }
@@ -332,6 +334,8 @@ NEVER:
 export async function generateChatResponse(
   contextBlock: string,
   userMessage: string,
+  /** Optional persona — if omitted we default to 'friend' via resolvePersona. */
+  persona?: BotPersona | null,
 ): Promise<string | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -341,10 +345,16 @@ export async function generateChatResponse(
 
   try {
     const anthropic = new Anthropic({ apiKey });
+    // Compose persona-aware system prompt: base CHAT prompt (which
+    // sets scope, formatting, scope-discipline) plus the persona
+    // snippet (which sets voice). Persona shapes _how_ we reply; the
+    // base prompt still constrains _what_ we reply about.
+    const resolvedPersona = resolvePersona(persona);
+    const system = `${CHAT_SYSTEM_PROMPT}\n\n${personaSystemSnippet(resolvedPersona)}`;
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 250,
-      system: CHAT_SYSTEM_PROMPT,
+      system,
       messages: [
         {
           role: 'user',

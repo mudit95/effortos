@@ -5,8 +5,9 @@
  * module checks their local time, task state, streak, goals, and
  * coaching preferences, then returns a list of nudges that should fire.
  */
-import type { NudgeType, CoachingIntensity } from '@/types';
+import type { NudgeType, CoachingIntensity, BotPersona } from '@/types';
 import { todayKeyInTz, dateKeyInTz } from '@/lib/user-date';
+import { resolvePersona } from '@/lib/persona-tone';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseClient = any;
@@ -43,6 +44,8 @@ export interface UserContext {
   localHour: number;
   localDayOfWeek: number; // 0=Sun
   intensity: CoachingIntensity;
+  /** Bot voice (Friend / Mentor / Boss / Colleague). 'friend' if unset. */
+  persona: BotPersona;
 
   // Task state
   totalTasks: number;
@@ -87,6 +90,8 @@ export async function evaluateNudges(
     coaching_quiet_start: number;
     coaching_quiet_end: number;
     coaching_paused_until: string | null;
+    /** Optional — the chosen WhatsApp bot voice. Falls back to 'friend'. */
+    bot_persona?: BotPersona | null;
   },
 ): Promise<NudgeDecision | null> {
   const tz = user.timezone || 'Asia/Kolkata';
@@ -235,7 +240,13 @@ export async function evaluateNudges(
 // ── Helper: gather all context for a user ──
 async function gatherContext(
   supabase: SupabaseClient,
-  user: { id: string; name: string; phone_number: string; coaching_intensity: CoachingIntensity },
+  user: {
+    id: string;
+    name: string;
+    phone_number: string;
+    coaching_intensity: CoachingIntensity;
+    bot_persona?: BotPersona | null;
+  },
   tz: string,
   todayKey: string,
   localHour: number,
@@ -365,6 +376,7 @@ async function gatherContext(
     localHour,
     localDayOfWeek,
     intensity: user.coaching_intensity,
+    persona: resolvePersona(user.bot_persona),
     totalTasks,
     completedTasks,
     totalPomsDone,

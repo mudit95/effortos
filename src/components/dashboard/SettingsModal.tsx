@@ -4,7 +4,8 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
-import { X, Bell, Clock, Palette, Check, CreditCard, AlertTriangle, Mail, Globe, MessageCircle, Download, Trash2 } from 'lucide-react';
+import { X, Bell, Clock, Palette, Check, CreditCard, AlertTriangle, Mail, Globe, MessageCircle, Download, Trash2, Sparkles } from 'lucide-react';
+import type { BotPersona } from '@/types';
 import { createClient } from '@/lib/supabase/client';
 import * as storage from '@/lib/storage';
 import { DISPLAY_PRICE_PER_MONTH } from '@/lib/pricing';
@@ -511,6 +512,9 @@ export function SettingsModal() {
 
               {/* WhatsApp linking */}
               <WhatsAppLinking />
+
+              {/* Bot persona — voice for every WhatsApp message. */}
+              <BotPersonaPicker />
 
               {/* AI Coach preferences (Pro tier) */}
               <CoachingPreferences />
@@ -1142,6 +1146,104 @@ function WhatsAppLinking() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Bot persona picker — change WhatsApp voice anytime ───────────
+//
+// Persona drives the voice of every outgoing WhatsApp message: the
+// welcome on link, every coach nudge (cron), and every AI reply
+// (chat). Stored on profiles.bot_persona; resolvePersona() in
+// lib/persona-tone.ts treats NULL/unknown as 'friend'.
+//
+// Live update: writes via supabase, then mirrors into the local
+// store so any persona-aware UI (e.g. preview labels) updates
+// without a page refresh.
+const PERSONA_TILES: ReadonlyArray<{
+  value: BotPersona;
+  emoji: string;
+  label: string;
+  blurb: string;
+}> = [
+  { value: 'friend',    emoji: '🤝', label: 'Friend',    blurb: 'Casual, hyped, gentle banter' },
+  { value: 'mentor',    emoji: '🌱', label: 'Mentor',    blurb: 'Calm, growth-minded, asks great questions' },
+  { value: 'boss',      emoji: '🫡', label: 'Boss',      blurb: 'Direct, results-driven, no fluff' },
+  { value: 'colleague', emoji: '👋', label: 'Colleague', blurb: 'Helpful peer, dry pragmatism' },
+];
+
+function BotPersonaPicker() {
+  const user = useStore(s => s.user);
+  const current: BotPersona = (user?.bot_persona as BotPersona) || 'friend';
+  const [saving, setSaving] = React.useState<BotPersona | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function handlePick(persona: BotPersona) {
+    if (persona === current) return; // no-op tap on the active tile
+    setSaving(persona);
+    setError(null);
+    try {
+      const supabase = createClient();
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) throw new Error('Not signed in');
+      const { error: dbErr } = await supabase
+        .from('profiles')
+        .update({ bot_persona: persona })
+        .eq('id', authUser.id);
+      if (dbErr) throw dbErr;
+
+      // Mirror into local store so any UI reading user.bot_persona updates immediately.
+      const u = useStore.getState().user;
+      if (u) {
+        useStore.setState({ user: { ...u, bot_persona: persona } });
+      }
+    } catch (err) {
+      console.error('[BotPersonaPicker] save failed', err);
+      setError("Couldn't save. Try again?");
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  return (
+    <div className="pt-4 border-t border-white/[0.06]">
+      <div className="flex items-center gap-2 mb-2">
+        <Sparkles className="w-4 h-4 text-cyan-400" />
+        <h4 className="text-sm font-medium text-white/70">Bot personality</h4>
+      </div>
+      <p className="text-[10px] text-white/40 mb-3">
+        Sets the voice the WhatsApp bot uses for every message — welcomes, nudges, replies.
+      </p>
+      <div className="grid grid-cols-2 gap-2">
+        {PERSONA_TILES.map((p) => {
+          const selected = current === p.value;
+          const isSaving = saving === p.value;
+          return (
+            <button
+              key={p.value}
+              type="button"
+              disabled={!!saving}
+              onClick={() => handlePick(p.value)}
+              className={`text-left p-2.5 rounded-lg border transition-all ${
+                selected
+                  ? 'border-cyan-500/40 bg-cyan-500/[0.08] text-white'
+                  : 'border-white/[0.06] bg-white/[0.02] text-white/60 hover:text-white/80 hover:bg-white/[0.04]'
+              } ${saving && !isSaving ? 'opacity-40' : ''}`}
+            >
+              <div className="flex items-center gap-1.5 mb-0.5">
+                <span className="text-sm leading-none">{p.emoji}</span>
+                <span className="text-xs font-semibold">{p.label}</span>
+                {selected && <Check className="w-3 h-3 text-cyan-400 ml-auto" />}
+                {isSaving && (
+                  <span className="text-[9px] text-white/40 ml-auto">saving…</span>
+                )}
+              </div>
+              <p className="text-[10px] text-white/40 leading-snug">{p.blurb}</p>
+            </button>
+          );
+        })}
+      </div>
+      {error && <p className="text-[10px] text-red-400 mt-2">{error}</p>}
     </div>
   );
 }

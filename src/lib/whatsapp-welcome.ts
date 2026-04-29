@@ -12,6 +12,7 @@
  * switch personas later without losing the cheat sheet.
  */
 import type { BotPersona } from '@/types';
+export { resolvePersona } from '@/lib/persona-tone';
 
 interface WelcomeOpts {
   firstName: string;
@@ -112,14 +113,6 @@ export function buildWelcomeMessage({ firstName, goalTitle, persona }: WelcomeOp
   }
 }
 
-/**
- * Defensive default — if the persona column is somehow NULL (e.g.
- * a profile created before migration 020) treat them as a 'friend'.
- * Used at every read site instead of `?? 'friend'` so the fallback
- * is documented in one place.
- */
-export function resolvePersona(value: unknown): BotPersona {
-  if (value === 'mentor' || value === 'boss' || value === 'colleague') return value;
-  // Anything else, including 'friend', null, undefined, or unexpected → 'friend'.
-  return 'friend';
-}
+// resolvePersona() is re-exported from persona-tone.ts at the top of
+// this module so callers that already import from whatsapp-welcome
+// don't need to change their imports.
