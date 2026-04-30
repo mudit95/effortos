@@ -217,7 +217,11 @@ export function FlowView({
                     )}
 
                     <div className="flex-1 min-w-0">
+                      {/* `title` gives users a native browser tooltip when
+                          the column is too narrow for the full task title.
+                          Also helps a11y — screen readers will announce it. */}
                       <p
+                        title={task.title}
                         className={`text-xs leading-tight truncate ${
                           isFullyDone ? 'text-white/70' : 'text-white/80'
                         }`}
@@ -227,7 +231,7 @@ export function FlowView({
                       <div className="flex items-center gap-2 mt-0.5">
                         {tagInfo && (
                           <span
-                            className="text-[8px] font-medium px-1 py-0.5 rounded uppercase tracking-wider"
+                            className="text-[8px] font-medium px-1 py-0.5 rounded uppercase tracking-wider flex-shrink-0"
                             style={{
                               color: tagInfo.color,
                               backgroundColor: tagInfo.color + '15',
@@ -236,11 +240,15 @@ export function FlowView({
                             {tagInfo.label}
                           </span>
                         )}
-                        <span className="text-[10px] text-white/30 tabular-nums flex items-center gap-0.5">
+                        {/* Pomodoro count is the canonical unit — minutes
+                            were redundant info that ate horizontal space in
+                            this narrow column. Hover the row for the full
+                            title; the count tells the rest of the story. */}
+                        <span
+                          className="text-[10px] text-white/30 tabular-nums flex items-center gap-0.5 flex-shrink-0"
+                          title={`${mins} minutes — ${task.pomodoros_done} of ${task.pomodoros_target} pomodoros`}
+                        >
                           <Clock className="w-2.5 h-2.5" />
-                          {mins}m
-                        </span>
-                        <span className="text-[10px] text-white/25 tabular-nums">
                           {task.pomodoros_done}/{task.pomodoros_target}p
                         </span>
                       </div>

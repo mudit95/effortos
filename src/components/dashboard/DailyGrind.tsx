@@ -1533,16 +1533,26 @@ export function TaskRow({
       {/* Task content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <p className={`text-sm leading-tight truncate ${
-            completed ? 'text-white/30 line-through' : 'text-white/80'
-          }`}>
+          {/* `title` attribute gives a native browser tooltip — important
+              when the row is rendered in a narrow column (e.g. Flow view's
+              two-column split) where truncation kicks in fast. Also
+              picked up by screen readers. */}
+          <p
+            title={task.title}
+            className={`text-sm leading-tight truncate ${
+              completed ? 'text-white/30 line-through' : 'text-white/80'
+            }`}
+          >
             {task.title}
           </p>
           {task.repeating && !completed && (
             <Repeat className="w-2.5 h-2.5 text-white/15 flex-shrink-0" />
           )}
           {linkedGoal && !completed && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-400/80 flex-shrink-0 whitespace-nowrap truncate max-w-[100px]">
+            <span
+              title={linkedGoal.title}
+              className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-violet-400/80 flex-shrink-0 whitespace-nowrap truncate max-w-[100px]"
+            >
               {linkedGoal.title}
             </span>
           )}
