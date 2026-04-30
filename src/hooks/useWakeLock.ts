@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useCallback } from 'react';
+import * as Sentry from '@sentry/nextjs';
 
 /**
  * Keeps the screen awake while `active` is true using the Screen Wake Lock API.
@@ -22,9 +23,21 @@ export function useWakeLock(active: boolean) {
       wakeLockRef.current.addEventListener('release', () => {
         wakeLockRef.current = null;
       });
-    } catch {
-      // Wake lock request can fail (e.g., low battery, permissions).
-      // Silently degrade — the timer still works, screen just may sleep.
+    } catch (err) {
+      // Wake lock request can fail (e.g., low battery, permissions, locked
+      // tab in iOS). The timer still works — the screen just may sleep —
+      // but track the rate so we can tell the difference between "rare
+      // edge case" and "this device family always denies us". Logged as
+      // a Sentry breadcrumb (not an error event) so the volume stays
+      // sane; sendDefaultPii=false keeps user IDs out of these.
+      Sentry.addBreadcrumb({
+        category: 'wake-lock',
+        level: 'info',
+        message: 'wakeLock.request failed',
+        data: {
+          error: err instanceof Error ? err.message : String(err),
+        },
+      });
     }
   }, []);
 

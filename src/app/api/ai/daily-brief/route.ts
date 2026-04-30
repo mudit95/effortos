@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { requireActiveSub } from '@/lib/subscription-guard';
 import { rateLimitOrNull } from '@/lib/ratelimit';
+import { ensureAiQuota, recordAiUsage, getUserAiTier } from '@/lib/aiQuota';
+import { createClient } from '@/lib/supabase/server';
 
 // Node runtime — requireActiveSub uses Supabase SSR cookies which need Node APIs.
 export const runtime = 'nodejs';
@@ -24,7 +26,19 @@ export async function POST(req: Request) {
   const blocked = await rateLimitOrNull(gate.userId, 'light');
   if (blocked) return blocked;
 
-  // 3. Anthropic key required — fail loud rather than serving silent empties.
+  // 3. Per-user daily AI token cap. Daily-brief fires on every dashboard
+  //    load so it's a meaningful slice of the per-user Anthropic budget.
+  //    Soft-fail (200 + empty message) rather than 429 because the dashboard
+  //    is already designed to handle "no brief today" gracefully — surfacing
+  //    a quota error here would be alarming for what's a non-critical line.
+  const supabase = await createClient();
+  const aiTier = await getUserAiTier(supabase, gate.userId);
+  const quota = await ensureAiQuota(gate.userId, aiTier);
+  if (!quota.ok) {
+    return NextResponse.json({ message: '' }, { status: 200 });
+  }
+
+  // 4. Anthropic key required — fail loud rather than serving silent empties.
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json(
       { error: 'AI Coach not configured' },
@@ -67,6 +81,9 @@ Rules:
       max_tokens: 60,
       messages: [{ role: 'user', content: prompt }],
     });
+
+    // Record actual token usage against the user's daily bucket.
+    await recordAiUsage(gate.userId, msg.usage);
 
     const text = msg.content[0].type === 'text' ? msg.content[0].text.trim() : '';
 

@@ -6,6 +6,14 @@ import { Lock, Sparkles } from 'lucide-react';
 import { DISPLAY_PRICE_PER_MONTH } from '@/lib/pricing';
 
 /**
+ * Mirror of subscription-guard.PAST_DUE_GRACE_DAYS — kept here as a
+ * separate constant so the client doesn't depend on a server-only file.
+ * Bump both together if the policy changes.
+ */
+const PAST_DUE_GRACE_DAYS = 7;
+const PAST_DUE_GRACE_MS = PAST_DUE_GRACE_DAYS * 24 * 60 * 60 * 1000;
+
+/**
  * Wraps any UI that should only be visible to subscribed users.
  * - `trialing` / `active`  → renders children normally
  * - everything else        → renders children blurred + non-interactive,
@@ -29,18 +37,28 @@ export function PremiumGate({
   const setShowPaywall = useStore(s => s.setShowPaywall);
 
   // User has premium access if:
-  //   (a) status is active/past_due (grace) with a future period end, OR
+  //   (a) any status with a future current_period_end, OR
   //   (b) status is trialing with a future trial end, OR
-  //   (c) status is active (fallback when period end not yet set)
+  //   (c) status is active (fallback when period end not yet set), OR
+  //   (d) status is past_due AND we're inside the grace window past
+  //       current_period_end (Razorpay is retrying the failed charge —
+  //       give the user time to update their card before hard-blocking).
   const now = new Date();
-  const hasFuturePeriodEnd =
-    !!subscription.current_period_end && new Date(subscription.current_period_end) > now;
+  const periodEndMs = subscription.current_period_end
+    ? new Date(subscription.current_period_end).getTime()
+    : null;
+  const hasFuturePeriodEnd = periodEndMs != null && periodEndMs > now.getTime();
   const hasFutureTrial =
     !!subscription.trial_ends_at && new Date(subscription.trial_ends_at) > now;
+  const inPastDueGrace =
+    subscription.status === 'past_due' &&
+    periodEndMs != null &&
+    now.getTime() < periodEndMs + PAST_DUE_GRACE_MS;
   const isActive =
     hasFuturePeriodEnd ||
     (subscription.status === 'trialing' && hasFutureTrial) ||
-    subscription.status === 'active';
+    subscription.status === 'active' ||
+    inPastDueGrace;
 
   // While we're still figuring out subscription state, don't show a gate
   // (prevents flash of "Subscribe" for paying users).

@@ -105,7 +105,22 @@ export function TimeBoxView({
     if (!task) return;
     const current = task.time_block ?? null;
     if (current === next) return; // No-op drop onto same column.
-    onUpdateTask(taskId, { time_block: next ?? undefined });
+
+    // Assign a fresh `order` so the dropped task lands at the END of the
+    // destination column, not in some arbitrary slot inherited from its
+    // previous column. Without this, dragging a task with order=0 from
+    // Morning into Afternoon (whose tasks all have order > 5) would place
+    // it visually at the top of Afternoon — confusing UX.
+    const destTasks = tasks.filter(t =>
+      next === null ? !t.time_block : t.time_block === next,
+    );
+    const maxOrder = destTasks.reduce((max, t) => Math.max(max, t.order ?? 0), -1);
+    const nextOrder = maxOrder + 1;
+
+    onUpdateTask(taskId, {
+      time_block: next ?? undefined,
+      order: nextOrder,
+    });
   };
 
   return (

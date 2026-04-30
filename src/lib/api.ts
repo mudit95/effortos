@@ -3,6 +3,7 @@
 
 import { Goal, Session, User, FeedbackEntry, DailySession, UserSettings, DEFAULT_SETTINGS, DailyTask, RepeatingTaskTemplate, TaskTagId, Milestone, JournalEntry, JournalMoodId, ShadowGoal, TimeBlock } from '@/types';
 import { createClient } from './supabase/client';
+import { toLocalDateKey } from './utils';
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -204,6 +205,12 @@ export async function createGoal(data: Omit<Goal, 'id' | 'created_at' | 'updated
   if (data.deadline) insertData.deadline = data.deadline;
   if (data.paused_at) insertData.paused_at = data.paused_at;
   if (data.completed_at) insertData.completed_at = data.completed_at;
+  // Propagate caller-supplied id so the cloud row matches the local row.
+  // Without this the store's `activeGoal.id` (a locally-generated UUID)
+  // and Supabase's `goals.id` (auto-generated default) diverge — every
+  // subsequent api.updateGoal(localId, ...) silently no-ops in cloud
+  // until the next page reload re-fetches the real id.
+  if (data.id) insertData.id = data.id;
 
   const { data: row, error } = await supabase
     .from('goals')
@@ -375,15 +382,20 @@ export async function getDailySessions(goalId: string, days: number = 30): Promi
   const sessions = await getCompletedSessions(goalId);
   const result: Map<string, number> = new Map();
 
+  // Bucket by LOCAL date, not UTC. The previous version used
+  // `.toISOString().split('T')[0]` for both the bucket keys and the
+  // session lookup — both expressed in UTC — so a session completed at
+  // 1 AM IST landed under "yesterday" in the streak grid even though
+  // the rest of the app (daily tasks, dashboard) shows it under "today".
+  // Using toLocalDateKey aligns the streak grid with the user's calendar.
   for (let i = 0; i < days; i++) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    const key = d.toISOString().split('T')[0];
-    result.set(key, 0);
+    result.set(toLocalDateKey(d), 0);
   }
 
   sessions.forEach(s => {
-    const key = new Date(s.start_time).toISOString().split('T')[0];
+    const key = toLocalDateKey(new Date(s.start_time));
     if (result.has(key)) {
       result.set(key, (result.get(key) || 0) + 1);
     }

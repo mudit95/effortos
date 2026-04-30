@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { motion, useMotionValue, useTransform, animate, useInView, useScroll, useSpring, AnimatePresence } from 'framer-motion';
+import { motion, useMotionValue, useTransform, animate, useInView, useScroll, useSpring, AnimatePresence, useReducedMotion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
 import {
@@ -734,7 +734,13 @@ function GoalEstimationPreview() {
         <motion.div animate={{ rotate: stage > 0 && stage < 3 ? 360 : 0 }} transition={{ duration: 2, ease: 'linear' }}>
           <Brain size={16} className="text-cyan-400/60" />
         </motion.div>
-        <span className="text-xs font-semibold text-white/60 uppercase tracking-wider">AI Estimation</span>
+        {/*
+          Label intentionally says "Smart Estimation", not "AI" — the
+          underlying engine in src/lib/estimation.ts is rule-based pattern
+          matching, not an LLM call. Calling it AI would be product copy
+          drift; if/when /api/estimate is wired to Claude, change this back.
+        */}
+        <span className="text-xs font-semibold text-white/60 uppercase tracking-wider">Smart Estimation</span>
         {stage > 0 && stage < 3 && (
           <motion.span initial={{ opacity: 0 }} animate={{ opacity: [0.3, 1, 0.3] }} transition={{ duration: 1, repeat: Infinity }} className="text-[10px] text-cyan-400/60 ml-auto">
             Analyzing...
@@ -897,7 +903,7 @@ function Step({
 // ═════════════════════════════════════════════════════════════════════
 
 const FEATURE_PILLS = [
-  '25-min Focus Sessions', 'AI Goal Estimation', 'Daily Task Planner', 'WhatsApp Bot',
+  '25-min Focus Sessions', 'Smart Goal Estimation', 'Daily Task Planner', 'WhatsApp Bot',
   'Session Debrief', 'Streak Calendar', 'Weekly Insights', 'Smart Email Nudges',
   'Repeating Templates', 'Picture-in-Picture', 'Cross-Device Sync', '8 Custom Themes',
   'Admin Dashboard', 'Milestone Tracking', 'Pomodoro Counter', 'Effort Recalibration',
@@ -978,6 +984,14 @@ export function LandingPage() {
   const setView = useStore((s) => s.setView);
   const { scrollYProgress } = useScroll();
   const smoothProgress = useSpring(scrollYProgress, { stiffness: 100, damping: 30 });
+  // Honour `prefers-reduced-motion`. Vestibular-disorder users (and anyone
+  // who's just disabled animations system-wide) shouldn't see a 60-particle
+  // constellation, two morphing gradient blobs, infinite scrolling tickers,
+  // and a perma-rotating word. We bail out of the heaviest decorative
+  // animations entirely; the rest of the page still uses framer-motion
+  // for entrance fades, which framer-motion itself disables under reduced
+  // motion via its global `MotionConfig` defaults.
+  const reduceMotion = useReducedMotion();
 
   return (
     <div className="flex flex-col bg-[#080b10] min-h-screen overflow-hidden">
@@ -1012,12 +1026,17 @@ export function LandingPage() {
 
       {/* ── Hero ────────────────────────────────────────────────── */}
       <header className="relative pt-28 pb-8 sm:pt-36 sm:pb-12 px-4 min-h-[90vh] flex flex-col justify-center">
-        {/* Particle constellation background */}
-        <ParticleField />
+        {/* Decorative animations are skipped under prefers-reduced-motion. */}
+        {!reduceMotion && (
+          <>
+            {/* Particle constellation background */}
+            <ParticleField />
 
-        {/* Morphing gradient blobs */}
-        <MorphingBlob className="w-[600px] h-[600px] -top-40 -left-40 opacity-30" style={{ background: 'radial-gradient(circle, rgba(34,211,238,0.08) 0%, transparent 70%)' } as React.CSSProperties} />
-        <MorphingBlob className="w-[500px] h-[500px] top-20 -right-40 opacity-20" style={{ background: 'radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 70%)' } as React.CSSProperties} />
+            {/* Morphing gradient blobs */}
+            <MorphingBlob className="w-[600px] h-[600px] -top-40 -left-40 opacity-30" style={{ background: 'radial-gradient(circle, rgba(34,211,238,0.08) 0%, transparent 70%)' } as React.CSSProperties} />
+            <MorphingBlob className="w-[500px] h-[500px] top-20 -right-40 opacity-20" style={{ background: 'radial-gradient(circle, rgba(99,102,241,0.08) 0%, transparent 70%)' } as React.CSSProperties} />
+          </>
+        )}
 
         <div className="max-w-6xl mx-auto w-full relative z-10 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] lg:gap-12 lg:items-center">
           {/* ── LEFT: copy (centered ≤ md, left-aligned ≥ lg) ── */}
@@ -1124,15 +1143,20 @@ export function LandingPage() {
       </header>
 
       {/* ── Scrolling goal ticker ──────────────────────────────── */}
-      <div className="py-6 sm:py-8">
-        <p className="text-center text-[10px] text-white/20 uppercase tracking-[0.2em] mb-4">
-          What people are quietly working toward
-        </p>
-        <InfiniteTickerRow direction="left" speed={35} />
-        <div className="mt-3">
-          <InfiniteTickerRow direction="right" speed={40} />
+      {/* The ticker rows are pure decoration — replace them with a static
+          two-line list under reduced-motion so the message survives without
+          any infinite horizontal scroll. */}
+      {!reduceMotion && (
+        <div className="py-6 sm:py-8">
+          <p className="text-center text-[10px] text-white/20 uppercase tracking-[0.2em] mb-4">
+            What people are quietly working toward
+          </p>
+          <InfiniteTickerRow direction="left" speed={35} />
+          <div className="mt-3">
+            <InfiniteTickerRow direction="right" speed={40} />
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ── Timer + Daily Grind ────────────────────────────────── */}
       <Section className="py-16 sm:py-24 px-4" delay={0.1}>
@@ -1193,9 +1217,11 @@ export function LandingPage() {
       </Section>
 
       {/* ── Scrolling feature pills ────────────────────────────── */}
-      <div id="features">
-        <ScrollingPills />
-      </div>
+      {!reduceMotion && (
+        <div id="features">
+          <ScrollingPills />
+        </div>
+      )}
 
       {/* ── Features Grid ──────────────────────────────────────── */}
       <Section className="py-16 sm:py-24 px-4">

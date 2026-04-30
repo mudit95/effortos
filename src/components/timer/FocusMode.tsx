@@ -109,6 +109,16 @@ export function FocusMode() {
         return;
       }
 
+      // Spacebar inside a focused button — most commonly a sound option in
+      // the ambient-sound popover — shouldn't both pause the timer AND
+      // activate the button. Browsers natively translate Space-on-button
+      // into a click, so just bail and let that happen. We still honour
+      // Escape so the popover can be dismissed via the parent handler.
+      if (tag === 'BUTTON' && (e.key === ' ' || e.code === 'Space')) {
+        if (e.key === 'Escape') handleExit();
+        return;
+      }
+
       if (e.key === 'Escape') handleExit();
       if (e.key === ' ' || e.code === 'Space') {
         e.preventDefault();

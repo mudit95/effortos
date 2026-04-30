@@ -57,6 +57,11 @@ interface InsertedEvent {
   event_type: string;
   subscription_id: string | null;
   payment_id: string | null;
+  // Status field tracks the two-phase received → processed transition
+  // introduced in migration 023. The route inserts as 'received', then
+  // flips to 'processed' after the handler succeeds. Duplicate-event
+  // delivery looks up this status to decide skip-vs-reprocess.
+  status: 'received' | 'processed' | 'failed';
 }
 interface SubscriptionUpdate {
   subscription_id: string;
@@ -89,17 +94,22 @@ vi.mock('@supabase/supabase-js', () => {
 
 function buildTableChain(table: string) {
   return {
+    // The two-phase webhook handler now uses .insert() WITHOUT a chained
+    // .select() — it just returns the error result directly. Older code
+    // expected a .select().maybeSingle() chain. Support both shapes so a
+    // future revert doesn't silently break this test.
     insert: (row: Record<string, unknown>) => {
       if (table === 'webhook_events') {
         const eventId = row.event_id as string;
         if (duplicateEventIds.has(eventId)) {
           // Mimic Postgres unique-violation code 23505.
+          const dupResult = { data: null, error: { code: '23505', message: 'duplicate key' } };
+          // Bare-await path (current route): callers do `await supabase.insert(...)` and read .error.
+          // We expose `then` so awaiting the insert directly resolves to dupResult.
           return {
+            then: (cb: (v: typeof dupResult) => unknown) => Promise.resolve(dupResult).then(cb),
             select: () => ({
-              maybeSingle: async () => ({
-                data: null,
-                error: { code: '23505', message: 'duplicate key' },
-              }),
+              maybeSingle: async () => dupResult,
             }),
           };
         }
@@ -109,29 +119,55 @@ function buildTableChain(table: string) {
           event_type: row.event_type as string,
           subscription_id: (row.subscription_id as string) ?? null,
           payment_id: (row.payment_id as string) ?? null,
+          // The route inserts with status='received'; .update({status:'processed'})
+          // fires after handler success and is captured by the update branch below.
+          status: (row.status as 'received' | 'processed' | 'failed') ?? 'received',
         });
+        const okResult = { data: { event_id: eventId }, error: null };
         return {
+          then: (cb: (v: typeof okResult) => unknown) => Promise.resolve(okResult).then(cb),
           select: () => ({
-            maybeSingle: async () => ({ data: { event_id: eventId }, error: null }),
+            maybeSingle: async () => okResult,
           }),
         };
       }
       // email_log inserts — ignore
       return {
+        then: (cb: (v: { data: null; error: null }) => unknown) =>
+          Promise.resolve({ data: null, error: null }).then(cb),
         select: () => ({ maybeSingle: async () => ({ data: null, error: null }) }),
       };
     },
     update: (patch: Record<string, unknown>) => ({
-      eq: async (_col: string, value: string) => {
+      eq: async (col: string, value: string) => {
         if (table === 'subscriptions') {
           updatedSubscriptions.push({ subscription_id: value, patch });
+        }
+        if (table === 'webhook_events' && col === 'event_id') {
+          // The route flips status to 'processed' after handler success and
+          // to 'failed' on handler error. Track that so the post-23505
+          // select below returns the right status for the dedup decision.
+          const ev = insertedEvents.find((e) => e.event_id === value);
+          if (ev && typeof patch.status === 'string') {
+            ev.status = patch.status as 'received' | 'processed' | 'failed';
+          }
         }
         return { data: null, error: null };
       },
     }),
-    select: () => ({
-      eq: () => ({
-        maybeSingle: async () => ({ data: null, error: null }),
+    select: (_cols?: string) => ({
+      eq: (col: string, value: string) => ({
+        maybeSingle: async () => {
+          // Post-23505 dedup lookup: the route reads webhook_events.status
+          // by event_id to decide skip-vs-reprocess. Return the tracked
+          // status from insertedEvents so duplicates after handler success
+          // resolve to {duplicate: true}.
+          if (table === 'webhook_events' && col === 'event_id') {
+            const ev = insertedEvents.find((e) => e.event_id === value);
+            return { data: ev ? { status: ev.status } : null, error: null };
+          }
+          return { data: null, error: null };
+        },
       }),
     }),
   };

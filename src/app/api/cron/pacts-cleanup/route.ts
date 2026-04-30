@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { createServiceClient } from '@/lib/supabase/service';
 import { PENDING_PACT_TTL_DAYS } from '@/lib/pacts';
+import { recordCronRun } from '@/lib/cron-run-log';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -48,6 +49,7 @@ export async function GET(request: Request) {
 
   if (error) {
     console.error('[pacts-cleanup] update failed:', error);
+    await recordCronRun('pacts-cleanup', 'failure', { error: error.message });
     return NextResponse.json(
       { error: 'cleanup failed', detail: error.message },
       { status: 500 },
@@ -59,6 +61,7 @@ export async function GET(request: Request) {
     `[pacts-cleanup] expired ${count} pending pact(s) older than ${PENDING_PACT_TTL_DAYS}d`,
   );
 
+  await recordCronRun('pacts-cleanup', 'success', { expired: count });
   return NextResponse.json({
     expired: count,
     cutoff,

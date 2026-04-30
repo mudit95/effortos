@@ -159,10 +159,23 @@ export function OnboardingFlow() {
           <X className="w-5 h-5" />
         </button>
 
-        {/* Progress */}
-        <div className="flex items-center gap-2 mb-8">
+        {/*
+          Progress bar — exposed as a single ARIA progressbar role so screen
+          readers announce "Step N of M". Without this the dots were pure
+          visual divs; assistive tech got no hint that the user was inside
+          a multi-step flow at all.
+        */}
+        <div
+          className="flex items-center gap-2 mb-8"
+          role="progressbar"
+          aria-valuemin={1}
+          aria-valuemax={STEP_COUNT}
+          aria-valuenow={step + 1}
+          aria-valuetext={`Step ${step + 1} of ${STEP_COUNT}`}
+          aria-label="Onboarding progress"
+        >
           {Array.from({ length: STEP_COUNT }).map((_, i) => (
-            <div key={i} className="flex-1 flex items-center gap-2">
+            <div key={i} className="flex-1 flex items-center gap-2" aria-hidden="true">
               <div
                 className={`h-1 flex-1 rounded-full transition-all duration-500 ${
                   i <= step ? 'bg-cyan-500' : 'bg-white/10'
@@ -490,7 +503,7 @@ function StepUserPerception({ data, onChange }: {
 
       <div className="flex items-center gap-2 text-xs text-white/30">
         <Sparkles className="w-3 h-3 text-cyan-500/50" />
-        <span>We&apos;ll compare your estimate with our AI analysis and find the sweet spot</span>
+        <span>We&apos;ll compare your estimate with our model and find the sweet spot</span>
       </div>
     </div>
   );

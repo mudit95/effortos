@@ -1,0 +1,213 @@
+name: Cron
+
+# All app crons live here instead of vercel.json because the Vercel Hobby
+# plan caps cron frequency. GitHub Actions has no cron-count limit and
+# runs from your existing repo permissions — no third-party scheduler to
+# log into separately.
+#
+# Each schedule below maps 1:1 to a cron route under /api/cron/. The job
+# `if:` clauses pick which route(s) fire for each tick. GitHub Actions
+# can be 5-10 minutes late after :00 due to runner provisioning — that's
+# fine for our use case (the email cron filters by the user's local
+# hour, not the wall-clock minute).
+#
+# Required repository secrets:
+#   CRON_SECRET — same value as the Vercel CRON_SECRET env var.
+#   SITE_URL    — e.g. https://effortos-zeta.vercel.app (no trailing slash).
+
+on:
+  # The schedules listed here are the union of every cron's tick. Each
+  # job below uses `github.event.schedule` to decide whether it should
+  # run on this tick. This way we keep ONE workflow file rather than
+  # 11 separate ones, but each cron stays at its real cadence.
+  schedule:
+    # Hourly fan: morning-email, afternoon-email, nightly-email, coach
+    - cron: '0 * * * *'
+    # Watchdog (offset 15min so it sees the just-finished hourly runs)
+    - cron: '15 * * * *'
+    # Daily crons
+    - cron: '0 3 * * *'    # pacts-cleanup
+    - cron: '0 4 * * *'    # retention-sweep
+    - cron: '30 4 * * *'   # purge-deleted-accounts
+    - cron: '0 6 * * *'    # re-engagement
+    - cron: '30 7 * * *'   # pact-activity
+    - cron: '30 8 * * *'   # trial-ending
+
+  # Manual trigger from the Actions UI for one-off runs / debugging.
+  # Choose which cron to fire from the dropdown.
+  workflow_dispatch:
+    inputs:
+      cron:
+        description: 'Which cron to fire manually'
+        required: true
+        type: choice
+        options:
+          - morning-email
+          - afternoon-email
+          - nightly-email
+          - coach
+          - watchdog
+          - pacts-cleanup
+          - retention-sweep
+          - purge-deleted-accounts
+          - re-engagement
+          - pact-activity
+          - trial-ending
+
+# Don't queue overlapping runs — if a previous tick is still in flight
+# we'd rather skip than pile up.
+concurrency:
+  group: cron-${{ github.event.schedule || github.event.inputs.cron }}
+  cancel-in-progress: false
+
+jobs:
+  hourly-fan:
+    name: Hourly fan (4 endpoints)
+    if: github.event.schedule == '0 * * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Hit morning-email
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/cron/morning-email"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL:    ${{ secrets.SITE_URL }}
+      - name: Hit afternoon-email
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/cron/afternoon-email"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL:    ${{ secrets.SITE_URL }}
+      - name: Hit nightly-email
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/cron/nightly-email"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL:    ${{ secrets.SITE_URL }}
+      - name: Hit coach
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/cron/coach"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL:    ${{ secrets.SITE_URL }}
+
+  watchdog:
+    name: Watchdog (hourly +15)
+    if: github.event.schedule == '15 * * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/cron/watchdog"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL:    ${{ secrets.SITE_URL }}
+
+  pacts-cleanup:
+    name: Pacts cleanup (daily 03:00 UTC)
+    if: github.event.schedule == '0 3 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/cron/pacts-cleanup"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL:    ${{ secrets.SITE_URL }}
+
+  retention-sweep:
+    name: Retention sweep (daily 04:00 UTC)
+    if: github.event.schedule == '0 4 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/cron/retention-sweep"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL:    ${{ secrets.SITE_URL }}
+
+  purge-deleted-accounts:
+    name: Purge deleted accounts (daily 04:30 UTC)
+    if: github.event.schedule == '30 4 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/cron/purge-deleted-accounts"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL:    ${{ secrets.SITE_URL }}
+
+  re-engagement:
+    name: Re-engagement (daily 06:00 UTC)
+    if: github.event.schedule == '0 6 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/cron/re-engagement"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL:    ${{ secrets.SITE_URL }}
+
+  pact-activity:
+    name: Pact activity (daily 07:30 UTC)
+    if: github.event.schedule == '30 7 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/cron/pact-activity"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL:    ${{ secrets.SITE_URL }}
+
+  trial-ending:
+    name: Trial-ending email (daily 08:30 UTC)
+    if: github.event.schedule == '30 8 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/cron/trial-ending"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL:    ${{ secrets.SITE_URL }}
+
+  manual:
+    name: Manual fire — ${{ github.event.inputs.cron }}
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/cron/${{ github.event.inputs.cron }}"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL:    ${{ secrets.SITE_URL }}

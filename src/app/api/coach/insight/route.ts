@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { requireActiveSub } from '@/lib/subscription-guard';
 import { rateLimitOrNull } from '@/lib/ratelimit';
+import { ensureAiQuota, recordAiUsage, getUserAiTier } from '@/lib/aiQuota';
+import { createClient } from '@/lib/supabase/server';
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || '',
@@ -15,6 +17,24 @@ export async function POST(request: Request) {
     // Per-user rate limit: 20 insights/hour. Cheap call, called often on the dashboard.
     const blocked = await rateLimitOrNull(gate.userId, 'light');
     if (blocked) return blocked;
+
+    // Per-user daily AI token cap. Independent from the rate-limit above
+    // (which is requests/hour, not tokens/day) and meant to catch
+    // sustained abuse over 24h. See lib/aiQuota.ts for the pattern.
+    const supabase = await createClient();
+    const aiTier = await getUserAiTier(supabase, gate.userId);
+    const quota = await ensureAiQuota(gate.userId, aiTier);
+    if (!quota.ok) {
+      return NextResponse.json(
+        {
+          error: 'Daily AI quota reached',
+          resetAt: quota.resetAt,
+          used: quota.used,
+          limit: quota.limit,
+        },
+        { status: 429 },
+      );
+    }
 
     if (!process.env.ANTHROPIC_API_KEY) {
       return NextResponse.json({ error: 'AI Coach not configured' }, { status: 503 });
@@ -50,6 +70,10 @@ ${totalHoursInvested ? `Total hours invested: ${totalHoursInvested}` : ''}`,
         },
       ],
     });
+
+    // Record actual token usage against the user's daily bucket. Fire-and-
+    // forget: if the Redis write fails the call has already succeeded.
+    await recordAiUsage(gate.userId, message.usage);
 
     const text = message.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')

@@ -7,16 +7,17 @@
  *   WHATSAPP_VERIFY_TOKEN   – Arbitrary secret you choose for webhook verification
  */
 
-import { incrementMessageCountAndGet } from './whatsapp-state';
-
 const API_VERSION = 'v21.0';
 
-// The "Send 'help' for the full command list." footer is appended to the
-// first HELP_HINT_LIMIT outbound messages each user receives. After that,
-// the hint drops — by then the user knows the command exists. Counter is
-// per-phone and lives in Redis so it survives Vercel cold starts.
-const HELP_HINT_LIMIT = 50;
-const HELP_HINT_FOOTER = '\n\n_Send "help" for the full command list._';
+// NOTE: the "Send help for the full command list." footer logic lives
+// exclusively in `sendBotReply` (src/app/api/whatsapp/webhook/route.ts).
+// This low-level send used to ALSO append the footer + bump the counter,
+// which meant every reactive reply showed the footer twice and the
+// per-phone counter advanced 2× per message — so users escaped the hint
+// window after ~25 replies instead of the intended 50. Footer logic was
+// removed here on purpose; only conversational replies (sendBotReply)
+// should ever advertise commands. Coach nudges, payment-failed notices,
+// verify welcomes, and email companions don't carry it.
 
 function getBaseUrl(phoneId: string) {
   return `https://graph.facebook.com/${API_VERSION}/${phoneId}/messages`;
@@ -82,22 +83,9 @@ export async function sendTextMessage(to: string, body: string): Promise<boolean
     return false;
   }
 
-  // Append the help hint to the user's first HELP_HINT_LIMIT outbound
-  // messages so they learn that "help" exists. After 50 messages the
-  // hint drops away and replies are clean. Failure to read the counter
-  // (Redis down, etc.) silently skips the hint — better than spamming
-  // it on every message in degraded mode.
-  let finalBody = body;
-  try {
-    const count = await incrementMessageCountAndGet(to);
-    if (count <= HELP_HINT_LIMIT) {
-      finalBody = body + HELP_HINT_FOOTER;
-    }
-  } catch (err) {
-    console.error('[WhatsApp] Help-hint counter lookup failed:', err);
-  }
-
-  const chunks = splitForWhatsApp(finalBody);
+  // No footer / counter logic here — see the file-top NOTE. Callers that
+  // want the help hint use sendBotReply, which owns it.
+  const chunks = splitForWhatsApp(body);
   const url = getBaseUrl(phoneId);
 
   for (let i = 0; i < chunks.length; i++) {
@@ -177,8 +165,39 @@ export async function sendButtonMessage(
 
 /**
  * Download a media file from WhatsApp (voice note, image, etc.).
- * Returns the raw buffer. Uses two-step: get media URL, then download.
+ * Returns the raw buffer, or null on any failure (network, oversized, etc).
+ *
+ * Size cap: WhatsApp itself accepts voice notes up to 16 MB. We enforce a
+ * tighter 5 MB ceiling here because (a) anything larger blows past Vercel
+ * function memory + the 30s timeout once Whisper gets involved, and (b) it
+ * shuts off a cheap abuse vector — without a cap, an attacker could send
+ * hour-long voice notes repeatedly to rack up Groq + Vercel cost.
+ *
+ * SSRF defence: we only consume the URL Meta hands us (graph.facebook.com),
+ * but Meta has historically returned signed CDN URLs on lookaside.fbsbx.com
+ * and *.fbcdn.net. We allow the full Meta CDN family but reject anything
+ * outside it.
  */
+const MAX_MEDIA_BYTES = 5 * 1024 * 1024;
+const META_HOST_SUFFIXES = [
+  '.facebook.com',
+  '.fbcdn.net',
+  '.fbsbx.com',
+];
+
+function isMetaHosted(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:') return false;
+    const host = u.hostname.toLowerCase();
+    return META_HOST_SUFFIXES.some((suffix) =>
+      host === suffix.slice(1) || host.endsWith(suffix),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function downloadWhatsAppMedia(mediaId: string): Promise<Buffer | null> {
   const token = process.env.WHATSAPP_TOKEN;
   if (!token) return null;
@@ -189,15 +208,41 @@ export async function downloadWhatsAppMedia(mediaId: string): Promise<Buffer | n
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!metaRes.ok) return null;
-    const metaData = await metaRes.json() as { url?: string };
+    const metaData = await metaRes.json() as { url?: string; file_size?: number };
     if (!metaData.url) return null;
 
-    // Step 2: Download the actual file
+    // Pre-flight size check via the metadata response if Meta gave us one.
+    if (metaData.file_size != null && metaData.file_size > MAX_MEDIA_BYTES) {
+      console.warn('[WhatsApp] Media exceeds 5MB cap (meta):', metaData.file_size);
+      return null;
+    }
+
+    // Reject SSRF: only fetch URLs hosted on Meta's own CDN family.
+    if (!isMetaHosted(metaData.url)) {
+      console.error('[WhatsApp] Refusing to download from non-Meta host:', metaData.url);
+      return null;
+    }
+
+    // Step 2: Download the actual file. Inspect Content-Length BEFORE
+    // reading the body so we don't load a 16MB blob into lambda memory
+    // just to throw it away.
     const fileRes = await fetch(metaData.url, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!fileRes.ok) return null;
+
+    const declaredSize = Number(fileRes.headers.get('content-length') ?? '0');
+    if (declaredSize > MAX_MEDIA_BYTES) {
+      console.warn('[WhatsApp] Media exceeds 5MB cap (header):', declaredSize);
+      return null;
+    }
+
     const arrayBuf = await fileRes.arrayBuffer();
+    if (arrayBuf.byteLength > MAX_MEDIA_BYTES) {
+      // Belt-and-braces: some servers omit Content-Length.
+      console.warn('[WhatsApp] Media exceeds 5MB cap (body):', arrayBuf.byteLength);
+      return null;
+    }
     return Buffer.from(arrayBuf);
   } catch (err) {
     console.error('[WhatsApp] Media download failed:', err);

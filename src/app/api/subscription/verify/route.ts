@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { sendProWelcome } from '@/lib/coach-welcome';
+import { track } from '@/lib/analytics';
 
 /**
  * POST /api/subscription/verify
@@ -51,17 +53,55 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
     }
 
-    // Validate plan_tier — accept only known values, default to 'starter'.
-    const normalizedPlanTier: 'starter' | 'pro' =
+    // Validate plan_tier — but never trust the client. We will only use this
+    // as a fallback when the existing row has no plan_tier. The authoritative
+    // tier is whatever `subscription/create` wrote at checkout-time.
+    const fallbackPlanTier: 'starter' | 'pro' =
       plan_tier === 'pro' ? 'pro' : 'starter';
 
-    // Update subscription status — verified, trial is active. Always write
-    // plan_tier so downstream gating (cron coach, paywall) can rely on it.
-    await supabase
+    // Writes to `subscriptions`/`coupon_redemptions`/`coupons` go through
+    // the service-role client (post-migration 022, RLS denies authenticated
+    // mutations). We intentionally re-read the existing row first so we can
+    // (a) avoid downgrading a webhook-set 'active' back to 'trialing' and
+    // (b) preserve the server-stored plan_tier instead of trusting the body.
+    const service = createServiceClient();
+
+    const { data: existing } = await service
+      .from('subscriptions')
+      .select('id, status, plan_tier, current_period_end, applied_coupon_id')
+      .eq('user_id', user.id)
+      .eq('razorpay_subscription_id', razorpay_subscription_id)
+      .maybeSingle();
+
+    const authoritativeTier: 'starter' | 'pro' =
+      (existing?.plan_tier === 'pro' || existing?.plan_tier === 'starter')
+        ? existing.plan_tier
+        : fallbackPlanTier;
+
+    // Status precedence: never write a "lower" status over a higher one.
+    //   active (premium)  > past_due > trialing > cancelled > expired
+    // If the webhook already promoted the row to active/past_due before
+    // verify ran (or admin already granted), keep that.
+    const PRECEDENCE: Record<string, number> = {
+      active:    5,
+      past_due:  4,
+      trialing:  3,
+      cancelled: 2,
+      expired:   1,
+      none:      0,
+    };
+    const currentPrecedence = PRECEDENCE[existing?.status ?? 'none'] ?? 0;
+    const trialingPrecedence = PRECEDENCE.trialing;
+    const nextStatus =
+      currentPrecedence > trialingPrecedence ? existing!.status : 'trialing';
+
+    // Update subscription — verified payment, persist signed payment id.
+    // Don't clobber status unless we're moving up the precedence ladder.
+    await service
       .from('subscriptions')
       .update({
-        status: 'trialing',
-        plan_tier: normalizedPlanTier,
+        status: nextStatus,
+        plan_tier: authoritativeTier,
         razorpay_payment_id,
         verified_at: new Date().toISOString(),
       })
@@ -71,54 +111,64 @@ export async function POST(request: Request) {
     // If a coupon was applied at subscribe time, record the redemption now.
     // .maybeSingle() because a verify replay (idempotency) could leave us
     // querying a row that's already been processed; treat missing as no-op.
-    const { data: sub } = await supabase
-      .from('subscriptions')
-      .select('applied_coupon_id')
-      .eq('user_id', user.id)
-      .eq('razorpay_subscription_id', razorpay_subscription_id)
-      .maybeSingle();
-
-    if (sub?.applied_coupon_id) {
-      const { data: alreadyRedeemed } = await supabase
+    if (existing?.applied_coupon_id) {
+      const { data: alreadyRedeemed } = await service
         .from('coupon_redemptions')
         .select('id')
-        .eq('coupon_id', sub.applied_coupon_id)
+        .eq('coupon_id', existing.applied_coupon_id)
         .eq('user_id', user.id)
         .maybeSingle();
 
       if (!alreadyRedeemed) {
-        await supabase.from('coupon_redemptions').insert({
-          coupon_id: sub.applied_coupon_id,
-          user_id: user.id,
-        });
-        // Increment redemption_count via fetch-then-update.
-        // Use maybeSingle() for the same reason as above.
-        const { data: coupon } = await supabase
-          .from('coupons')
-          .select('redemption_count')
-          .eq('id', sub.applied_coupon_id)
-          .maybeSingle();
-        if (coupon) {
-          await supabase
+        const { error: insertErr } = await service
+          .from('coupon_redemptions')
+          .insert({
+            coupon_id: existing.applied_coupon_id,
+            user_id: user.id,
+          });
+        // Only bump the counter if the redemption was actually inserted —
+        // a race-loser sees a unique-constraint error and we must NOT count
+        // it (otherwise the counter overshoots).
+        if (!insertErr) {
+          const { data: coupon } = await service
             .from('coupons')
-            .update({ redemption_count: (coupon.redemption_count ?? 0) + 1 })
-            .eq('id', sub.applied_coupon_id);
+            .select('redemption_count')
+            .eq('id', existing.applied_coupon_id)
+            .maybeSingle();
+          if (coupon) {
+            await service
+              .from('coupons')
+              .update({ redemption_count: (coupon.redemption_count ?? 0) + 1 })
+              .eq('id', existing.applied_coupon_id);
+          }
         }
       }
     }
 
     // If this is a Pro tier subscription, send the welcome message
-    if (normalizedPlanTier === 'pro') {
+    if (authoritativeTier === 'pro') {
       // Fire and forget — don't block the verify response
       sendProWelcome(user.id).catch((err) =>
         console.error('[Coach] Welcome message failed:', err),
       );
     }
 
+    // Funnel: trial started or upgrade landed. The first-charge event
+    // fires later in the Razorpay webhook 'subscription.charged' handler.
+    void track({
+      distinctId: user.id,
+      event: 'subscription_started',
+      properties: {
+        plan_tier: authoritativeTier,
+        status: nextStatus,
+        razorpay_subscription_id,
+      },
+    });
+
     return NextResponse.json({
       success: true,
-      status: 'trialing',
-      plan_tier: normalizedPlanTier,
+      status: nextStatus,
+      plan_tier: authoritativeTier,
     });
   } catch (err) {
     console.error('Verify subscription error:', err);

@@ -307,7 +307,7 @@ async function handleConfirmOTP(
     const [{ data: profile }, { data: goal }] = await Promise.all([
       serviceClient
         .from('profiles')
-        .select('display_name, bot_persona')
+        .select('name, bot_persona')
         .eq('id', userId)
         .maybeSingle(),
       serviceClient
@@ -319,10 +319,10 @@ async function handleConfirmOTP(
         .limit(1)
         .maybeSingle(),
     ]);
-    if (profile?.display_name) {
+    if (profile?.name) {
       // Use only the first word — feels conversational on WhatsApp
       // ("Hey Mudit" vs the more formal "Hey Mudit Mohilay").
-      firstName = profile.display_name.trim().split(/\s+/)[0] || 'friend';
+      firstName = profile.name.trim().split(/\s+/)[0] || 'friend';
     }
     if (goal?.title) {
       activeGoalTitle = goal.title;

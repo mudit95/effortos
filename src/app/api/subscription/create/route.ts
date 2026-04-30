@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getRazorpay, TRIAL_DAYS, getPlanIdForTier } from '@/lib/razorpay';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitOrNull } from '@/lib/ratelimit';
 import type { PlanTier } from '@/types';
 
@@ -141,8 +142,12 @@ export async function POST(req: Request) {
     // and won the upsert. After upserting we read back the row; if the
     // razorpay_subscription_id doesn't match the one we just created, the
     // other request won — cancel ours at Razorpay and return its row.
+    //
+    // Writes to `subscriptions` go through the service-role client
+    // (post-migration 022, RLS denies authenticated INSERT/UPDATE).
+    const service = createServiceClient();
     const trialEndsAt = new Date(trialEnd * 1000).toISOString();
-    await supabase.from('subscriptions').upsert({
+    await service.from('subscriptions').upsert({
       user_id: user.id,
       razorpay_subscription_id: subscription.id,
       plan_id: planId,
@@ -153,7 +158,7 @@ export async function POST(req: Request) {
       ...(couponId ? { applied_coupon_id: couponId, applied_coupon_code: couponCode } : {}),
     }, { onConflict: 'user_id' });
 
-    const { data: settled } = await supabase
+    const { data: settled } = await service
       .from('subscriptions')
       .select('razorpay_subscription_id, plan_tier, status, trial_ends_at')
       .eq('user_id', user.id)

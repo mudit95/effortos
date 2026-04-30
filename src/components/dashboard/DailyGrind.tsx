@@ -487,27 +487,31 @@ function IdleTimerPlaceholder({
 
 /* ── Main DailyGrind Component ────────────────────────────────────── */
 export function DailyGrind() {
-  const {
-    dailyTasks,
-    activeDailyTaskId,
-    dailyViewDate,
-    user,
-    setActiveDailyTask,
-    addDailyTaskForDate,
-    toggleTaskComplete,
-    deleteDailyTask,
-    setDailyViewDate,
-    updateDailyTaskDetails,
-    setView,
-    addToast,
-    coachPlanLoading,
-    activeGoal,
-    dashboardStats,
-    goals,
-    setShowAIPlanWizard,
-    dailyGrindLayout,
-    setDailyGrindLayout,
-  } = useStore();
+  // Per-field selectors. The earlier `useStore()` destructure pulled
+  // every store update into this component's render path — including
+  // `timeRemaining` ticks every 250 ms. With a 100-task day that's a
+  // lot of wasted reconciliation. Splitting by selector caps re-renders
+  // to actual data dependencies; the journal+ subscription block below
+  // already used this pattern.
+  const dailyTasks = useStore(s => s.dailyTasks);
+  const activeDailyTaskId = useStore(s => s.activeDailyTaskId);
+  const dailyViewDate = useStore(s => s.dailyViewDate);
+  const user = useStore(s => s.user);
+  const setActiveDailyTask = useStore(s => s.setActiveDailyTask);
+  const addDailyTaskForDate = useStore(s => s.addDailyTaskForDate);
+  const toggleTaskComplete = useStore(s => s.toggleTaskComplete);
+  const deleteDailyTask = useStore(s => s.deleteDailyTask);
+  const setDailyViewDate = useStore(s => s.setDailyViewDate);
+  const updateDailyTaskDetails = useStore(s => s.updateDailyTaskDetails);
+  const setView = useStore(s => s.setView);
+  const addToast = useStore(s => s.addToast);
+  const coachPlanLoading = useStore(s => s.coachPlanLoading);
+  const activeGoal = useStore(s => s.activeGoal);
+  const dashboardStats = useStore(s => s.dashboardStats);
+  const goals = useStore(s => s.goals);
+  const setShowAIPlanWizard = useStore(s => s.setShowAIPlanWizard);
+  const dailyGrindLayout = useStore(s => s.dailyGrindLayout);
+  const setDailyGrindLayout = useStore(s => s.setDailyGrindLayout);
 
   // Journal subscriptions — kept as individual selectors so the grid doesn't
   // re-render when unrelated store slices change. `journalEntries` is a list

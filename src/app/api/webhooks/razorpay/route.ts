@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { createClient as createAdminClient, type SupabaseClient } from '@supabase/supabase-js';
+import { track } from '@/lib/analytics';
 import { paymentFailedEmail } from '@/lib/email-templates';
 import { sendEmail } from '@/lib/email';
 import {
@@ -118,8 +119,21 @@ export async function POST(request: Request) {
   }
   const supabase: SupabaseClient = createAdminClient(supabaseUrl, supabaseServiceKey);
 
-  // ── 4. Idempotency: record the event; if it already exists, skip ─
-  const { data: insertRow, error: insertErr } = await supabase
+  // ── 4. Idempotency: record-then-process (two-phase) ─────────────
+  //
+  // Insert with status='received' BEFORE running the handler. We only
+  // flip the row to 'processed' after the handler succeeds. This way:
+  //
+  //   - Handler succeeds → row=processed → future retries see processed
+  //     and return duplicate (correct skip).
+  //   - Handler throws (transient DB/network) → row=failed. If Razorpay
+  //     retries — or our /admin/replay-failed-webhooks runs — we look up
+  //     the existing row, see status != 'processed', and re-run.
+  //
+  // The earlier code wrote status='processed' BEFORE the handler ran,
+  // so any handler exception left a row that LOOKED done; subsequent
+  // retries short-circuited and the failed event was lost permanently.
+  const { error: insertErr } = await supabase
     .from('webhook_events')
     .insert({
       event_id: eventId,
@@ -127,39 +141,65 @@ export async function POST(request: Request) {
       subscription_id: subscriptionId ?? null,
       payment_id: paymentId ?? null,
       payload: event,
-      status: 'processed',
-    })
-    .select('event_id')
-    .maybeSingle();
+      status: 'received',
+    });
 
+  let alreadyProcessed = false;
   if (insertErr) {
     // Unique violation on event_id → we've already seen this event
     if (insertErr.code === '23505') {
-      return NextResponse.json({ received: true, duplicate: true });
+      // Look up the existing row's status. If it's 'processed' we skip;
+      // if it's 'received' or 'failed' we re-run the handler (a previous
+      // attempt either crashed mid-flight or its 200 never reached us).
+      const { data: existing } = await supabase
+        .from('webhook_events')
+        .select('status')
+        .eq('event_id', eventId)
+        .maybeSingle();
+
+      if (existing?.status === 'processed') {
+        return NextResponse.json({ received: true, duplicate: true });
+      }
+      // Re-process: the prior attempt didn't finish.
+      alreadyProcessed = true; // skip the follow-up insert/update if needed
+      console.warn('[razorpay-webhook] Re-processing event with prior status:', existing?.status, eventId);
+    } else {
+      console.error('[razorpay-webhook] Failed to record event:', insertErr);
+      // Don't return 500 — Razorpay will retry and we'd loop. Log and continue.
     }
-    console.error('[razorpay-webhook] Failed to record event:', insertErr);
-    // Don't return 500 — Razorpay will retry and we'd loop. Log and continue.
   }
 
   // ── 5. If the event has no subscription id, ack and move on ────
   if (!subscriptionId) {
+    // Mark the recorded row as processed so we don't re-run it.
+    await supabase
+      .from('webhook_events')
+      .update({ status: 'processed', error: null })
+      .eq('event_id', eventId);
     return NextResponse.json({ received: true, noop: true });
   }
 
   try {
     await handleEvent({ supabase, eventType, subscriptionId, paymentId, subEntity });
-    return NextResponse.json({ received: true, eventType });
+    // Handler succeeded — flip the row from 'received' to 'processed'.
+    await supabase
+      .from('webhook_events')
+      .update({ status: 'processed', error: null })
+      .eq('event_id', eventId);
+    return NextResponse.json({ received: true, eventType, replayed: alreadyProcessed });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'unknown error';
     console.error('[razorpay-webhook] Handler failed:', eventType, msg);
-    // Mark the event as failed so ops can see it
-    if (insertRow) {
-      await supabase
-        .from('webhook_events')
-        .update({ status: 'failed', error: msg })
-        .eq('event_id', eventId);
-    }
-    // Return 200 to prevent infinite retry loops; error logged for ops review.
+    // Mark the event as failed so ops can see it AND so a future retry
+    // can re-process it (we only short-circuit when status='processed').
+    await supabase
+      .from('webhook_events')
+      .update({ status: 'failed', error: msg })
+      .eq('event_id', eventId);
+    // Return 200 to prevent infinite retry loops on permanent errors.
+    // For transient errors, the 'failed' row above lets a manual replay
+    // (or the next event for the same subscription if it triggers a
+    // re-fetch) recover state.
     return NextResponse.json({ received: true, error: msg }, { status: 200 });
   }
 }
@@ -229,6 +269,23 @@ async function handleEvent({
           ...(paymentId ? { razorpay_payment_id: paymentId } : {}),
         })
         .eq('razorpay_subscription_id', subscriptionId);
+      // Funnel: real money landed. Look up the user_id so distinct_id
+      // matches every other event for this account.
+      const { data: subRow } = await supabase
+        .from('subscriptions')
+        .select('user_id, plan_tier')
+        .eq('razorpay_subscription_id', subscriptionId)
+        .maybeSingle();
+      if (subRow?.user_id) {
+        void track({
+          distinctId: subRow.user_id as string,
+          event: 'subscription_charged',
+          properties: {
+            plan_tier: subRow.plan_tier,
+            razorpay_subscription_id: subscriptionId,
+          },
+        });
+      }
       return;
     }
 

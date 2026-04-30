@@ -108,9 +108,14 @@ describe('lib/email — sendEmail', () => {
     });
     const sent = captured.single[0];
     expect(sent.headers).toBeDefined();
-    expect(sent.headers!['List-Unsubscribe']).toContain(
-      'https://effortos.com/unsubscribe?email=user%40example.com',
-    );
+    // The header now points at the signed-token endpoint instead of a
+    // bare-email query string — see lib/unsubscribe-token.ts and the
+    // Day-1 audit fix that closed the cross-user-unsubscribe vulnerability.
+    // The token itself varies per call (HMAC of email|exp), so we assert
+    // shape: the URL prefix + query-key, and the mailto fallback.
+    const listUnsub = sent.headers!['List-Unsubscribe'];
+    expect(listUnsub).toContain('https://effortos.com/api/unsubscribe?t=');
+    expect(listUnsub).toContain('<mailto:unsubscribe@effortos.com?subject=unsubscribe>');
     // RFC 8058 — required for Gmail/Apple one-click unsubscribe.
     expect(sent.headers!['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
   });

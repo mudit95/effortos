@@ -21,6 +21,8 @@
 import { sendTextMessage } from './whatsapp';
 import { getAdminSupabase } from './cron-helpers';
 import type { TaskSummary, GoalSummary, DaySummary } from './email-templates';
+import { personaGreeting, resolvePersona } from './persona-tone';
+import type { BotPersona } from '@/types';
 
 // ── Eligibility ────────────────────────────────────────────────────────
 
@@ -93,18 +95,79 @@ function firstName(name: string): string {
   return name.split(' ')[0] || 'there';
 }
 
+// Persona-aware opening lines. Each persona has its own voice for
+// "good morning" / "midday check" / "wrap up", consistent with the
+// AI coach prompts in coach-ai.ts. Unrecognised persona values fall
+// through resolvePersona() to 'friend'.
+function morningHeader(persona: BotPersona, fn: string, dayOfWeek: string): string {
+  const greet = personaGreeting(persona, fn);
+  switch (persona) {
+    case 'boss':      return `${greet} — ${dayOfWeek} stand-up.`;
+    case 'mentor':    return `${greet}. Hope ${dayOfWeek} starts well.`;
+    case 'colleague': return `${greet} — fresh ${dayOfWeek}, fresh queue.`;
+    case 'friend':    return `☀️ *Good morning, ${fn}* — happy ${dayOfWeek}.`;
+  }
+}
+
+function afternoonHeader(persona: BotPersona, fn: string): string {
+  switch (persona) {
+    case 'boss':      return `${personaGreeting(persona, fn)} — midday check-in. 📈`;
+    case 'mentor':    return `${personaGreeting(persona, fn)} — checking in mid-afternoon.`;
+    case 'colleague': return `${personaGreeting(persona, fn)} — quick midday peek at the queue.`;
+    case 'friend':    return `👋 Mid-day check, ${fn}.`;
+  }
+}
+
+function nightlyHeader(persona: BotPersona, fn: string): string {
+  switch (persona) {
+    case 'boss':      return `*${fn}*, day-end report. ✅`;
+    case 'mentor':    return `${personaGreeting(persona, fn)} — winding down.`;
+    case 'colleague': return `${personaGreeting(persona, fn)} — closing the queue for the day.`;
+    case 'friend':    return `🌙 *That's a wrap, ${fn}.*`;
+  }
+}
+
+function morningPrompt(persona: BotPersona): string {
+  switch (persona) {
+    case 'boss':      return `Top 3 deliverables for today? Reply to commit them.`;
+    case 'mentor':    return `What three things would make today feel like a win? Reply to log them.`;
+    case 'colleague': return `What's on the queue today? Reply to add it.`;
+    case 'friend':    return `What are today's 3 priorities? Reply to add tasks.`;
+  }
+}
+
+function afternoonPrompt(persona: BotPersona): string {
+  switch (persona) {
+    case 'boss':      return `Reply *"plan"* to pull today's deliverables.`;
+    case 'mentor':    return `Reply *"what's my plan?"* if you want to revisit today's list.`;
+    case 'colleague': return `Reply *"what's my plan?"* and I'll show the queue.`;
+    case 'friend':    return `Reply *"what's my plan?"* to see today's list.`;
+  }
+}
+
+function nightlyPrompt(persona: BotPersona, tomorrowDay: string): string {
+  switch (persona) {
+    case 'boss':      return `Log a retro line, or reply *"plan tomorrow"* to scope ${tomorrowDay}.`;
+    case 'mentor':    return `What's one thing today taught you? Reply to journal, or *"plan tomorrow"* for ${tomorrowDay}.`;
+    case 'colleague': return `Reply with a journal line, or *"plan tomorrow"* to queue up ${tomorrowDay}.`;
+    case 'friend':    return `How did today go? Reply to log a journal entry, or *"plan tomorrow"* to set up ${tomorrowDay}.`;
+  }
+}
+
 export function morningWhatsAppMessage(opts: {
   userName: string;
   yesterdayTasks: TaskSummary[];
   activeGoal?: GoalSummary;
   dayOfWeek: string;
+  persona?: BotPersona | string | null;
 }): string {
   const { userName, yesterdayTasks, activeGoal, dayOfWeek } = opts;
+  const persona = resolvePersona(opts.persona);
   const fn = firstName(userName);
   const completedYesterday = yesterdayTasks.filter(t => t.completed).length;
   const carriedForward = yesterdayTasks.filter(t => !t.completed).length;
 
-  const lines: string[] = [`☀️ *Good morning, ${fn}* — happy ${dayOfWeek}.`];
+  const lines: string[] = [morningHeader(persona, fn, dayOfWeek)];
 
   if (yesterdayTasks.length > 0) {
     lines.push(
@@ -120,7 +183,7 @@ export function morningWhatsAppMessage(opts: {
     );
   }
 
-  lines.push(`What are today's 3 priorities? Reply to add tasks.`);
+  lines.push(morningPrompt(persona));
   return lines.join('\n');
 }
 
@@ -129,8 +192,10 @@ export function afternoonWhatsAppMessage(opts: {
   todayTasks: TaskSummary[];
   sessionsToday: number;
   focusMinutesToday: number;
+  persona?: BotPersona | string | null;
 }): string {
   const { userName, todayTasks, sessionsToday, focusMinutesToday } = opts;
+  const persona = resolvePersona(opts.persona);
   const fn = firstName(userName);
   const done = todayTasks.filter(t => t.completed).length;
   const total = todayTasks.length;
@@ -138,7 +203,7 @@ export function afternoonWhatsAppMessage(opts: {
   const mins = focusMinutesToday % 60;
   const focusStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
 
-  const lines: string[] = [`👋 Mid-day check, ${fn}.`];
+  const lines: string[] = [afternoonHeader(persona, fn)];
 
   if (sessionsToday > 0) {
     lines.push(
@@ -152,7 +217,7 @@ export function afternoonWhatsAppMessage(opts: {
     );
   }
 
-  lines.push(`Reply *"what's my plan?"* to see today's list.`);
+  lines.push(afternoonPrompt(persona));
   return lines.join('\n');
 }
 
@@ -169,8 +234,10 @@ export function nightlyWhatsAppMessage(opts: {
    * daily-grind item, so we don't push them. Default 0 = omit the line.
    */
   openOtherTodosCount?: number;
+  persona?: BotPersona | string | null;
 }): string {
   const { userName, todayTasks, daySummary, activeGoal, tomorrowDay, openOtherTodosCount = 0 } = opts;
+  const persona = resolvePersona(opts.persona);
   const fn = firstName(userName);
   const done = todayTasks.filter(t => t.completed).length;
   const total = todayTasks.length;
@@ -178,7 +245,7 @@ export function nightlyWhatsAppMessage(opts: {
   const mins = daySummary.total_focus_minutes % 60;
   const focusStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
 
-  const lines: string[] = [`🌙 *That's a wrap, ${fn}.*`];
+  const lines: string[] = [nightlyHeader(persona, fn)];
   lines.push(
     `Today: ${done}/${total} tasks · ${daySummary.total_sessions} session${daySummary.total_sessions === 1 ? '' : 's'} · ${focusStr} focused` +
     (daySummary.streak > 0 ? ` · 🔥 ${daySummary.streak} day streak` : ''),
@@ -195,9 +262,7 @@ export function nightlyWhatsAppMessage(opts: {
     );
   }
 
-  lines.push(
-    `How did today go? Reply to log a journal entry, or *"plan tomorrow"* to set up ${tomorrowDay}.`,
-  );
+  lines.push(nightlyPrompt(persona, tomorrowDay));
   return lines.join('\n');
 }
 

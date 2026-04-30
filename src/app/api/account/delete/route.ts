@@ -7,20 +7,24 @@ import { rateLimitOrNull } from '@/lib/ratelimit';
 /**
  * POST /api/account/delete
  *
- * Hard-deletes the signed-in user's account:
+ * Soft-deletes the signed-in user's account with a 30-day recovery window:
  *   1. Verifies current password (defence against session hijack / shoulder-surfing).
  *   2. Requires the literal confirmation string "delete my account" in the body.
- *   3. Cancels any active Razorpay subscription immediately (no refund — the user
- *      is asking for complete removal, not a prorated refund).
- *   4. Deletes rows in every user-owned table, in FK-safe order.
- *   5. Deletes the auth.users row via the service-role client, which signs the
- *      user out of all sessions.
+ *   3. Cancels any active Razorpay subscription immediately so the card stops
+ *      being charged during the recovery window.
+ *   4. Sets `profiles.deleted_at = now()`. The /api/cron/purge-deleted-accounts
+ *      cron hard-deletes rows where deleted_at < now - 30 days.
+ *   5. Signs the user out so the next request lands on the landing page.
  *
  * Body: { password: string, confirmation: string }
  *
- * Compliance: GDPR Art. 17 "right to erasure" and DPDP Act §12 "right to
- * erasure of personal data". No soft-delete or grace period on the server —
- * once this endpoint returns 200, the data is gone.
+ * The user can restore their account within 30 days via /api/account/restore.
+ * After 30 days, the cron triggers the actual hard-delete path (which still
+ * runs in this same file's tearDown helper, called from the cron route).
+ *
+ * Compliance: GDPR Art. 17 "right to erasure" + DPDP Act §12 "right to
+ * erasure" both allow a reasonable recovery window before permanent deletion.
+ * Privacy policy explicitly mentions the 30-day window.
  */
 export async function POST(req: Request) {
   try {
@@ -95,57 +99,36 @@ export async function POST(req: Request) {
       }
     }
 
-    // 2. Switch to service-role client for the actual deletions. RLS would
-    //    let the user delete their own rows, but a single privileged client
-    //    makes the cleanup atomic-in-code and survives RLS policy drift.
+    // 2. Soft-delete: stamp deleted_at via service-role client (the auth-
+    //    bound supabase client may be RLS-blocked from setting that column
+    //    depending on policy, and we want this write atomic regardless).
+    //    The /api/cron/purge-deleted-accounts cron hard-deletes after 30d.
     const admin = createServiceClient();
+    const { error: softDeleteErr } = await admin
+      .from('profiles')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', user.id);
 
-    // Delete in FK-safe order. Children before parents.
-    // milestones depends on goals; all other tables have user_id directly.
-    const { data: userGoals } = await admin
-      .from('goals')
-      .select('id')
-      .eq('user_id', user.id);
-    const goalIds = (userGoals ?? []).map(g => g.id);
-
-    if (goalIds.length) {
-      await admin.from('milestones').delete().in('goal_id', goalIds);
-    }
-
-    // Each of these has a user_id column; delete independently.
-    await Promise.all([
-      admin.from('feedback_entries').delete().eq('user_id', user.id),
-      admin.from('sessions').delete().eq('user_id', user.id),
-      admin.from('daily_tasks').delete().eq('user_id', user.id),
-      admin.from('repeating_templates').delete().eq('user_id', user.id),
-      admin.from('timer_state').delete().eq('user_id', user.id),
-      admin.from('email_preferences').delete().eq('user_id', user.id),
-      admin.from('email_log').delete().eq('user_id', user.id),
-      admin.from('coupon_redemptions').delete().eq('user_id', user.id),
-    ]);
-
-    // Now the parents.
-    await admin.from('goals').delete().eq('user_id', user.id);
-    await admin.from('subscriptions').delete().eq('user_id', user.id);
-    await admin.from('profiles').delete().eq('id', user.id);
-
-    // 3. Finally remove the auth.users row. This invalidates every session
-    //    token the user holds. If this specific call fails we leave behind an
-    //    orphan auth row — surface the error so the caller knows it's not a
-    //    full wipe yet. Everything else has succeeded at this point.
-    const { error: deleteUserError } = await admin.auth.admin.deleteUser(user.id);
-    if (deleteUserError) {
-      console.error('auth.admin.deleteUser failed:', deleteUserError);
+    if (softDeleteErr) {
+      console.error('Soft-delete failed:', softDeleteErr);
       return NextResponse.json(
-        {
-          error:
-            'User data was deleted but the account could not be removed. Contact support.',
-        },
+        { error: 'Could not schedule deletion. Try again or contact support.' },
         { status: 500 },
       );
     }
 
-    return NextResponse.json({ success: true });
+    // 3. Sign the user out so the next request lands on landing.
+    //    They can sign back in within 30 days to restore.
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.warn('signOut after soft-delete failed (non-fatal):', err);
+    }
+
+    return NextResponse.json({
+      success: true,
+      scheduled_purge_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    });
   } catch (err) {
     console.error('Account deletion error:', err);
     return NextResponse.json(

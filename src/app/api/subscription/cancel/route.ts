@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getRazorpay } from '@/lib/razorpay';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitOrNull } from '@/lib/ratelimit';
 
 /**
@@ -23,6 +24,7 @@ export async function POST() {
 
     // `maybeSingle` with order+limit — `.single()` would 500 if the
     // user ends up with zero or multiple active rows. Take the newest.
+    // Read can use the auth-bound client (SELECT policy permits own rows).
     const { data: sub } = await supabase
       .from('subscriptions')
       .select('*')
@@ -39,7 +41,10 @@ export async function POST() {
     // Cancel at end of cycle so user keeps access until period ends
     await getRazorpay().subscriptions.cancel(sub.razorpay_subscription_id, true);
 
-    await supabase
+    // Writes to `subscriptions` go through the service-role client
+    // (post-migration 022, RLS denies authenticated UPDATEs).
+    const service = createServiceClient();
+    await service
       .from('subscriptions')
       .update({
         status: 'cancelled',

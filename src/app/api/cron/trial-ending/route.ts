@@ -3,6 +3,8 @@ import { verifyCronAuth } from '@/lib/cron-auth';
 import { getAdminSupabase, logEmail, listAllAuthUsers } from '@/lib/cron-helpers';
 import { trialEndingEmail } from '@/lib/email-templates';
 import { sendEmail } from '@/lib/email';
+import { STARTER_PRICE_PER_MONTH, PRO_PRICE_PER_MONTH } from '@/lib/pricing';
+import { recordCronRun } from '@/lib/cron-run-log';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -32,12 +34,17 @@ export async function GET(request: Request) {
   const windowStart = new Date(now.getTime() + 24 * 60 * 60 * 1000);
   const windowEnd = new Date(now.getTime() + 48 * 60 * 60 * 1000);
 
+  // FILTER ON `trial_ends_at`, NOT `current_period_end`.
+  // During the 3-day trial, `current_period_end` is NULL — that field is
+  // only written when subscription.activated/charged fires post-trial. The
+  // earlier filter on `current_period_end` matched zero rows; nobody ever
+  // received a trial-ending notice. trial_ends_at is set at create-time.
   const { data: subs, error: subsErr } = await supabase
     .from('subscriptions')
-    .select('id, user_id, current_period_end, razorpay_subscription_id')
+    .select('id, user_id, trial_ends_at, plan_tier, razorpay_subscription_id')
     .eq('status', 'trialing')
-    .gte('current_period_end', windowStart.toISOString())
-    .lt('current_period_end', windowEnd.toISOString());
+    .gte('trial_ends_at', windowStart.toISOString())
+    .lt('trial_ends_at', windowEnd.toISOString());
 
   if (subsErr) {
     console.error('[trial-ending] Subs query failed:', subsErr);
@@ -92,9 +99,14 @@ export async function GET(request: Request) {
       if (prior) { skipped++; continue; }
 
       const userName = profileMap.get(sub.user_id) || 'there';
+      // Tier-aware amount label so Pro trial users see ₹999, not ₹499.
+      // Default to Starter when plan_tier is missing/unknown.
+      const amountLabel =
+        sub.plan_tier === 'pro' ? PRO_PRICE_PER_MONTH : STARTER_PRICE_PER_MONTH;
       const { subject, html } = trialEndingEmail({
         userName: userName as string,
-        trialEndsAt: new Date(sub.current_period_end),
+        trialEndsAt: new Date(sub.trial_ends_at),
+        amountLabel,
       });
 
       const result = await sendEmail({
@@ -113,7 +125,7 @@ export async function GET(request: Request) {
         emailType: 'trial_ending',
         subject,
         resendId: result?.id,
-        metadata: { subscription_id: sub.id, trial_ends_at: sub.current_period_end },
+        metadata: { subscription_id: sub.id, trial_ends_at: sub.trial_ends_at },
       });
 
       sent++;
@@ -124,6 +136,7 @@ export async function GET(request: Request) {
     }
   }
 
+  await recordCronRun('trial-ending', 'success', { sent, skipped, considered: subs.length });
   return NextResponse.json({
     sent,
     skipped,

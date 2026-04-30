@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import Script from 'next/script';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,6 +10,20 @@ import { createClient } from '@/lib/supabase/client';
 import { Mail, ArrowRight, Sparkles, Zap, Eye, EyeOff, LogIn, UserPlus, Loader2 } from 'lucide-react';
 
 type AuthMode = 'landing' | 'signup' | 'signin';
+
+// Cloudflare Turnstile — only rendered when NEXT_PUBLIC_TURNSTILE_SITE_KEY
+// is set. The hidden honeypot input below works regardless and catches the
+// majority of cheap bot signups by itself.
+declare global {
+  interface Window {
+    turnstile?: {
+      render: (el: HTMLElement, opts: Record<string, unknown>) => string;
+      reset: (id?: string) => void;
+    };
+  }
+}
+
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
 export function AuthScreen() {
   const [mode, setMode] = useState<AuthMode>('landing');
@@ -20,6 +35,40 @@ export function AuthScreen() {
   const [loading, setLoading] = useState(false);
   const [confirmationSent, setConfirmationSent] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+  // Honeypot value — bound to a hidden input. Real users never touch it;
+  // bots that scan the form and auto-fill every input give themselves away.
+  const [honeypot, setHoneypot] = useState('');
+  // Turnstile token — populated by the widget callback when configured.
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const turnstileMountRef = useRef<HTMLDivElement | null>(null);
+
+  // Render the Turnstile widget when the script has loaded and the user is
+  // on the signup screen. Reset on mode changes so each visit gets a fresh
+  // token (Cloudflare flags reused tokens).
+  useEffect(() => {
+    if (!TURNSTILE_SITE_KEY) return;
+    if (mode !== 'signup') return;
+    const tryRender = () => {
+      if (!window.turnstile || !turnstileMountRef.current) {
+        // Script may not have loaded yet — try again on the next tick.
+        return false;
+      }
+      turnstileMountRef.current.innerHTML = '';
+      window.turnstile.render(turnstileMountRef.current, {
+        sitekey: TURNSTILE_SITE_KEY,
+        size: 'flexible',
+        theme: 'dark',
+        callback: (token: string) => setTurnstileToken(token),
+        'error-callback': () => setTurnstileToken(''),
+        'expired-callback': () => setTurnstileToken(''),
+      });
+      return true;
+    };
+    if (!tryRender()) {
+      const id = setInterval(() => { if (tryRender()) clearInterval(id); }, 250);
+      return () => clearInterval(id);
+    }
+  }, [mode]);
 
   const loginAsDemo = useStore(s => s.loginAsDemo);
   const initializeApp = useStore(s => s.initializeApp);
@@ -32,10 +81,56 @@ export function AuthScreen() {
 
     if (!name.trim()) return setError('Please enter your name');
     if (!email.trim() || !emailRegex.test(email)) return setError('Please enter a valid email');
-    if (password.length < 6) return setError('Password must be at least 6 characters');
+    // 8-char minimum aligned with NIST guidance and the server-side
+    // /api/auth/signup check; old 6-char threshold was too brute-forceable.
+    if (password.length < 8) return setError('Password must be at least 8 characters');
+    // If Turnstile is configured but the user hasn't solved it yet, hold.
+    if (TURNSTILE_SITE_KEY && !turnstileToken) {
+      return setError('Please complete the verification challenge below.');
+    }
 
     setLoading(true);
     try {
+      // Route through the server-side bot-protected endpoint when at least
+      // one signal is configured (TURNSTILE_SITE_KEY OR the honeypot is
+      // populated). Otherwise fall through to the legacy client-side
+      // Supabase signup so dev environments without env vars still work.
+      const useServerSignup = !!TURNSTILE_SITE_KEY;
+      if (useServerSignup) {
+        const res = await fetch('/api/auth/signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: email.trim(),
+            password,
+            name: name.trim(),
+            honeypot,
+            turnstileToken,
+          }),
+        });
+        if (res.status === 409) {
+          setError('An account with this email already exists. Try signing in instead.');
+          setMode('signin');
+          return;
+        }
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: 'Signup failed' }));
+          setError(err.error || 'Signup failed');
+          // Reset Turnstile so the user can retry without a stale token.
+          if (typeof window !== 'undefined' && window.turnstile) {
+            window.turnstile.reset();
+            setTurnstileToken('');
+          }
+          return;
+        }
+        // Server signup creates the user; Supabase email-confirmation
+        // pipeline still fires its own email. Mirror the legacy flow:
+        // if no session was returned (it isn't, on the server path),
+        // show the "check your email" UI.
+        setConfirmationSent(true);
+        return;
+      }
+
       const supabase = createClient();
       const { data, error: authError } = await supabase.auth.signUp({
         email: email.trim(),
@@ -53,7 +148,26 @@ export function AuthScreen() {
         return;
       }
 
-      // If email confirmation is required
+      // Detect the "email already exists" ghost-user response.
+      //
+      // Supabase deliberately doesn't error on duplicate-signup (to prevent
+      // account enumeration). Instead it returns a stub user with an empty
+      // `identities` array and no session, which the previous code happily
+      // treated as a fresh "Check your email" flow — so existing users sat
+      // there waiting for an email that would never arrive. We catch the
+      // empty-identities marker explicitly and nudge them to sign in.
+      const isExistingEmail =
+        !!data.user && !data.session &&
+        Array.isArray(data.user.identities) && data.user.identities.length === 0;
+
+      if (isExistingEmail) {
+        setError('An account with this email already exists. Try signing in instead.');
+        // Pre-fill sign-in mode for them — saves the click.
+        setMode('signin');
+        return;
+      }
+
+      // Real new account, awaiting email confirmation.
       if (data.user && !data.session) {
         setConfirmationSent(true);
         return;
@@ -169,6 +283,15 @@ export function AuthScreen() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
+      {/* Turnstile script — only loaded when configured. lazyOnload keeps it
+          off the critical signin path; the signup form polls for window.turnstile
+          for up to a few seconds before rendering the widget (see useEffect). */}
+      {TURNSTILE_SITE_KEY && (
+        <Script
+          src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
+          strategy="lazyOnload"
+        />
+      )}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -230,7 +353,7 @@ export function AuthScreen() {
                 className="w-full justify-center gap-3 h-12"
                 onClick={handleGoogleSignIn}
               >
-                <svg className="w-4 h-4" viewBox="0 0 24 24">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
                   <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
                   <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
@@ -298,7 +421,7 @@ export function AuthScreen() {
                 <Input
                   label="Password"
                   type={showPassword ? 'text' : 'password'}
-                  placeholder="At least 6 characters"
+                  placeholder="At least 8 characters"
                   value={password}
                   onChange={(e) => { setPassword(e.target.value); setError(''); }}
                 />
@@ -306,13 +429,46 @@ export function AuthScreen() {
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-[34px] text-white/30 hover:text-white/60 transition-colors"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-pressed={showPassword}
                 >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showPassword ? <EyeOff className="w-4 h-4" aria-hidden="true" /> : <Eye className="w-4 h-4" aria-hidden="true" />}
                 </button>
               </div>
 
+              {/* HONEYPOT: invisible to humans, irresistible to bots that auto-
+                  fill every form field. Wrapper has aria-hidden + tabIndex=-1
+                  so keyboard + screen-reader users skip past it cleanly. */}
+              <div aria-hidden="true" style={{ position: 'absolute', left: '-9999px', top: 'auto', width: 1, height: 1, overflow: 'hidden' }}>
+                <label htmlFor="hp-website">Website</label>
+                <input
+                  id="hp-website"
+                  name="website"
+                  type="text"
+                  tabIndex={-1}
+                  autoComplete="off"
+                  value={honeypot}
+                  onChange={(e) => setHoneypot(e.target.value)}
+                />
+              </div>
+
+              {/* Cloudflare Turnstile mount point. Hidden when site key isn't
+                  configured — the honeypot above plus per-IP rate limiting on
+                  /api/auth/signup is the second-best line of defence. */}
+              {TURNSTILE_SITE_KEY && (
+                <div ref={turnstileMountRef} className="flex justify-center" />
+              )}
+
+              {/* role=alert + aria-live ensures screen readers announce
+                  validation/auth errors instead of leaving them silent. */}
               {error && (
-                <p className="text-red-400 text-xs text-center">{error}</p>
+                <p
+                  className="text-red-400 text-xs text-center"
+                  role="alert"
+                  aria-live="polite"
+                >
+                  {error}
+                </p>
               )}
 
               <Button
@@ -343,7 +499,7 @@ export function AuthScreen() {
                 onClick={handleGoogleSignIn}
                 className="w-full flex items-center justify-center gap-2.5 h-11 rounded-lg border border-white/[0.08] hover:border-white/20 hover:bg-white/[0.03] transition-colors text-sm text-white/70"
               >
-                <svg className="w-4 h-4" viewBox="0 0 24 24">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
                   <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
                   <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
@@ -406,8 +562,10 @@ export function AuthScreen() {
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-[34px] text-white/30 hover:text-white/60 transition-colors"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-pressed={showPassword}
                 >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showPassword ? <EyeOff className="w-4 h-4" aria-hidden="true" /> : <Eye className="w-4 h-4" aria-hidden="true" />}
                 </button>
               </div>
 
@@ -424,8 +582,16 @@ export function AuthScreen() {
                 </button>
               )}
 
+              {/* role=alert + aria-live ensures screen readers announce
+                  validation/auth errors instead of leaving them silent. */}
               {error && (
-                <p className="text-red-400 text-xs text-center">{error}</p>
+                <p
+                  className="text-red-400 text-xs text-center"
+                  role="alert"
+                  aria-live="polite"
+                >
+                  {error}
+                </p>
               )}
 
               <Button
@@ -456,7 +622,7 @@ export function AuthScreen() {
                 onClick={handleGoogleSignIn}
                 className="w-full flex items-center justify-center gap-2.5 h-11 rounded-lg border border-white/[0.08] hover:border-white/20 hover:bg-white/[0.03] transition-colors text-sm text-white/70"
               >
-                <svg className="w-4 h-4" viewBox="0 0 24 24">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
                   <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
                   <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>

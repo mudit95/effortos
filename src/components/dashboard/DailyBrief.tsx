@@ -4,6 +4,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store/useStore';
 import { Sparkles, X, Flame, AlertCircle, TrendingUp } from 'lucide-react';
+import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
  * Personalized "Welcome back" card shown at the top of the dashboard
@@ -149,7 +150,10 @@ export function DailyBrief() {
               {aiLine ? (
                 <p className="text-xs text-white/40 mt-0.5 italic">{aiLine}</p>
               ) : loadingAi ? (
-                <p className="text-xs text-white/20 mt-0.5 animate-pulse">...</p>
+                // Shimmer placeholder for the AI one-liner. Real prose
+                // resolution feels much faster when the line slot is
+                // already styled rather than a tiny "..." cursor.
+                <Skeleton className="h-3 mt-1.5" style={{ width: '78%' }} ariaLabel="Loading AI brief" />
               ) : null}
             </div>
           </div>

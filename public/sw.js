@@ -1,5 +1,16 @@
-// EffortOS Service Worker — cache-first for static, network-first for pages
-const CACHE_NAME = 'effortos-v1';
+// EffortOS Service Worker — cache-first for static, network-only for APIs
+//
+// SECURITY: never cache /api/* or /auth/*.
+//
+// The previous v1 used cache-first for everything that wasn't HTML, which
+// meant authenticated /api/* responses (subscription status, daily tasks,
+// reports, etc.) got stored in the cache. After a logout — or a different
+// user signing in on the same device — the cache could serve the previous
+// user's private data because the cache key is just the URL.
+//
+// Bumping CACHE_NAME forces the activate handler to wipe the v1 cache
+// (which may already contain /api/* entries from prior visits).
+const CACHE_NAME = 'effortos-v2';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -27,9 +38,34 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   // Skip non-GET and external requests
   if (request.method !== 'GET') return;
-  if (!request.url.startsWith(self.location.origin)) return;
 
-  // Network-first for HTML pages
+  let url;
+  try {
+    url = new URL(request.url);
+  } catch {
+    return;
+  }
+  if (url.origin !== self.location.origin) return;
+
+  // ── HARD BYPASS for sensitive paths ─────────────────────────────────
+  // Never read from cache, never write to cache. The browser handles
+  // these directly so credentials/cookies always go to the network.
+  //
+  // - /api/*    : authenticated JSON. Caching = cross-user data leak.
+  // - /auth/*   : OAuth callbacks, session exchange. Must hit network.
+  // - /admin/*  : admin pages must always re-validate.
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/auth/') ||
+    url.pathname.startsWith('/admin/')
+  ) {
+    return; // fall through to default browser handling — no SW intervention
+  }
+
+  // ── Network-first for HTML pages (with cache fallback for offline) ──
+  // Caching the HTML shell is OK because it doesn't contain user data —
+  // the React app re-hydrates state by calling /api/* (which we never
+  // cache), and any unauthenticated render shows the landing/auth UI.
   if (request.headers.get('accept')?.includes('text/html')) {
     event.respondWith(
       fetch(request)
@@ -43,7 +79,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Cache-first for everything else
+  // ── Cache-first for static assets (CSS/JS/fonts/images/sw worker) ──
   event.respondWith(
     caches.match(request).then((cached) => {
       if (cached) return cached;

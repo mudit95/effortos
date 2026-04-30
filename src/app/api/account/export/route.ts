@@ -31,6 +31,10 @@ export async function GET() {
 
     // Every table that stores user-owned data. Keep in sync with the deletion
     // endpoint so export and delete cover the same surface area.
+    //
+    // The earlier export omitted journal_entries, shadow_goals, coach_log,
+    // pacts, and other_todos — incomplete under GDPR Art. 20 / DPDP right
+    // to portability. All five are included now.
     const [
       profile,
       subscription,
@@ -43,6 +47,12 @@ export async function GET() {
       emailLog,
       timerState,
       couponRedemptions,
+      journalEntries,
+      shadowGoals,
+      coachLog,
+      pactsAsOwner,
+      pactsAsPartner,
+      otherTodos,
     ] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', user.id).maybeSingle(),
       supabase.from('subscriptions').select('*').eq('user_id', user.id).maybeSingle(),
@@ -55,6 +65,14 @@ export async function GET() {
       supabase.from('email_log').select('*').eq('user_id', user.id),
       supabase.from('timer_state').select('*').eq('user_id', user.id).maybeSingle(),
       supabase.from('coupon_redemptions').select('*').eq('user_id', user.id),
+      supabase.from('journal_entries').select('*').eq('user_id', user.id),
+      supabase.from('shadow_goals').select('*').eq('user_id', user.id),
+      supabase.from('coach_log').select('*').eq('user_id', user.id),
+      // Pacts have two foreign keys (user_id and partner_user_id). The user is
+      // entitled to a copy of any row they participate in, on either side.
+      supabase.from('pacts').select('*').eq('user_id', user.id),
+      supabase.from('pacts').select('*').eq('partner_user_id', user.id),
+      supabase.from('other_todos').select('*').eq('user_id', user.id),
     ]);
 
     // Milestones are joined via goal_id, not user_id — pull them with the goal set
@@ -63,9 +81,20 @@ export async function GET() {
       ? await supabase.from('milestones').select('*').in('goal_id', goalIds)
       : { data: [] as Record<string, unknown>[] };
 
+    // Merge pacts from both directions, dedup by id (a self-pact would
+    // otherwise appear twice).
+    const allPacts = [...(pactsAsOwner.data ?? []), ...(pactsAsPartner.data ?? [])];
+    const seenPactIds = new Set<string>();
+    const pacts = allPacts.filter(p => {
+      const id = p.id as string;
+      if (seenPactIds.has(id)) return false;
+      seenPactIds.add(id);
+      return true;
+    });
+
     const archive = {
       export_generated_at: new Date().toISOString(),
-      export_format_version: 1,
+      export_format_version: 2,
       account: {
         id: user.id,
         email: user.email,
@@ -83,6 +112,11 @@ export async function GET() {
       repeating_templates: repeatingTemplates.data ?? [],
       email_log: emailLog.data ?? [],
       coupon_redemptions: couponRedemptions.data ?? [],
+      journal_entries: journalEntries.data ?? [],
+      shadow_goals: shadowGoals.data ?? [],
+      coach_log: coachLog.data ?? [],
+      pacts,
+      other_todos: otherTodos.data ?? [],
     };
 
     const filename = `effortos-export-${new Date().toISOString().slice(0, 10)}.json`;

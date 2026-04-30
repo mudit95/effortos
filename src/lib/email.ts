@@ -1,4 +1,5 @@
 import { Resend } from 'resend';
+import { signUnsubscribeToken } from './unsubscribe-token';
 
 let _resend: Resend | null = null;
 
@@ -41,20 +42,29 @@ export interface SendEmailOpts {
 }
 
 /**
- * Resolve `{{email}}` placeholders in HTML to the recipient's address. We do
- * this server-side because Resend does not perform Mustache substitution by
- * default — without this step the unsubscribe link in emailLayout shipped as
- * a literal `{{email}}` and broke for every recipient.
+ * Resolve placeholders in HTML at send time:
+ *   {{email}}            → the recipient address (URL-encoded)
+ *   {{unsubscribe_url}}  → /unsubscribe?t=<HMAC-signed token>
+ *
+ * We sign the unsubscribe target so an attacker can't iterate through other
+ * users' addresses to silently unsubscribe them. The legacy `{{email}}`
+ * substitution is still expanded for any embedded copy that uses it.
  */
 function injectRecipient(html: string, recipient: string): string {
-  // URL-encode so `+` aliases and unusual characters in the address survive
-  // the round-trip through the unsubscribe page's query parser.
-  const encoded = encodeURIComponent(recipient);
-  return html.split('{{email}}').join(encoded);
+  const encodedEmail = encodeURIComponent(recipient);
+  const token = signUnsubscribeToken(recipient);
+  const unsubscribeUrl = `${APP_URL}/unsubscribe?t=${token}`;
+  return html
+    .split('{{unsubscribe_url}}').join(unsubscribeUrl)
+    .split('{{email}}').join(encodedEmail);
 }
 
 function unsubscribeHeaders(recipient: string) {
-  const url = `${APP_URL}/unsubscribe?email=${encodeURIComponent(recipient)}`;
+  // RFC 8058 one-click unsubscribe: Gmail/Apple Mail can POST to this URL
+  // and expect 2xx without interactive UI. The signed token in `?t=` is
+  // what authenticates the action.
+  const token = signUnsubscribeToken(recipient);
+  const url = `${APP_URL}/api/unsubscribe?t=${token}`;
   return {
     'List-Unsubscribe': `<${url}>, <mailto:unsubscribe@effortos.com?subject=unsubscribe>`,
     'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
@@ -178,7 +188,7 @@ export function emailLayout(body: string, opts?: { preheader?: string }): string
     <div class="logo">EFFORTOS</div>
     ${body}
     <div class="footer">
-      <p>You received this because you have an EffortOS account. <a href="${APP_URL}/settings">Manage email preferences</a> or <a href="${APP_URL}/unsubscribe?email={{email}}">unsubscribe</a>.</p>
+      <p>You received this because you have an EffortOS account. <a href="${APP_URL}/settings">Manage email preferences</a> or <a href="{{unsubscribe_url}}">unsubscribe</a>.</p>
     </div>
   </div>
 </body>

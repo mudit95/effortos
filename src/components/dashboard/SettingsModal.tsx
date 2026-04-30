@@ -8,7 +8,7 @@ import { X, Bell, Clock, Palette, Check, CreditCard, AlertTriangle, Mail, Globe,
 import type { BotPersona } from '@/types';
 import { createClient } from '@/lib/supabase/client';
 import * as storage from '@/lib/storage';
-import { DISPLAY_PRICE_PER_MONTH } from '@/lib/pricing';
+import { STARTER_PRICE_PER_MONTH, PRO_PRICE_PER_MONTH } from '@/lib/pricing';
 import { PactsSection } from './PactsSection';
 import { TimezoneClock } from './TimezoneClock';
 
@@ -119,6 +119,7 @@ export function SettingsModal() {
   const subscription = useStore(s => s.subscription);
   const subscriptionLoading = useStore(s => s.subscriptionLoading);
   const cancelSubscription = useStore(s => s.cancelSubscription);
+  const setShowPaywall = useStore(s => s.setShowPaywall);
 
   const [focusMin, setFocusMin] = useState(
     Math.round((user?.settings?.focus_duration || 1500) / 60)
@@ -453,16 +454,20 @@ export function SettingsModal() {
                   <CreditCard className="w-4 h-4 text-cyan-400" />
                   <h4 className="text-sm font-medium text-white/70">Subscription</h4>
                 </div>
-                {subscriptionLoading ? (
-                  <p className="text-xs text-white/30">Loading...</p>
-                ) : subscription.status === 'active' ? (
-                  <div className="space-y-2">
-                    <p className="text-xs text-green-400/70">Active subscription — {DISPLAY_PRICE_PER_MONTH}</p>
-                    {subscription.current_period_end && (
-                      <p className="text-[11px] text-white/25">
-                        Next billing: {new Date(subscription.current_period_end).toLocaleDateString()}
-                      </p>
-                    )}
+                {(() => {
+                  // Tier-aware price label. Earlier we always rendered the
+                  // Starter price for both tiers, so Pro subscribers were
+                  // told they were paying ₹499 while actually being charged ₹999.
+                  const tierPrice =
+                    subscription.plan_tier === 'pro'
+                      ? PRO_PRICE_PER_MONTH
+                      : STARTER_PRICE_PER_MONTH;
+
+                  // Cancel button — visible for BOTH active and trialing.
+                  // Trialing users need an in-product opt-out before the
+                  // first auto-charge; without this they'd have to go to
+                  // Razorpay directly (or eat the surprise charge).
+                  const cancelButton = (
                     <button
                       onClick={() => {
                         if (confirm('Are you sure you want to cancel? You will retain access until the end of your billing period.')) {
@@ -474,28 +479,96 @@ export function SettingsModal() {
                     >
                       Cancel subscription
                     </button>
-                  </div>
-                ) : subscription.status === 'trialing' ? (
-                  <div className="space-y-2">
-                    <p className="text-xs text-cyan-400/70">Free trial active</p>
-                    {subscription.trial_ends_at && (
-                      <p className="text-[11px] text-white/25">
-                        Trial ends: {new Date(subscription.trial_ends_at).toLocaleDateString()}
-                      </p>
-                    )}
-                  </div>
-                ) : subscription.status === 'cancelled' ? (
-                  <div className="space-y-2">
-                    <p className="text-xs text-yellow-400/70">Subscription cancelled</p>
-                    {subscription.current_period_end && (
-                      <p className="text-[11px] text-white/25">
-                        Access until: {new Date(subscription.current_period_end).toLocaleDateString()}
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-xs text-white/30">No active subscription</p>
-                )}
+                  );
+
+                  if (subscriptionLoading) {
+                    return <p className="text-xs text-white/30">Loading...</p>;
+                  }
+                  if (subscription.status === 'active') {
+                    return (
+                      <div className="space-y-2">
+                        <p className="text-xs text-green-400/70">Active subscription — {tierPrice}</p>
+                        {subscription.current_period_end && (
+                          <p className="text-[11px] text-white/25">
+                            Next billing: {new Date(subscription.current_period_end).toLocaleDateString()}
+                          </p>
+                        )}
+                        {cancelButton}
+                      </div>
+                    );
+                  }
+                  if (subscription.status === 'trialing') {
+                    return (
+                      <div className="space-y-2">
+                        <p className="text-xs text-cyan-400/70">Free trial active</p>
+                        {subscription.trial_ends_at && (
+                          <p className="text-[11px] text-white/25">
+                            Trial ends: {new Date(subscription.trial_ends_at).toLocaleDateString()} — first charge {tierPrice}
+                          </p>
+                        )}
+                        {cancelButton}
+                      </div>
+                    );
+                  }
+                  if (subscription.status === 'past_due') {
+                    // Mirrors PAST_DUE_GRACE_DAYS in lib/subscription-guard.ts +
+                    // components/subscription/PremiumGate.tsx. Keep all three in sync.
+                    const PAST_DUE_GRACE_DAYS = 7;
+                    const periodEndMs = subscription.current_period_end
+                      ? new Date(subscription.current_period_end).getTime()
+                      : null;
+                    const graceEndMs =
+                      periodEndMs != null
+                        ? periodEndMs + PAST_DUE_GRACE_DAYS * 24 * 60 * 60 * 1000
+                        : null;
+                    const inGrace =
+                      graceEndMs != null && Date.now() < graceEndMs;
+                    const graceDaysLeft =
+                      graceEndMs != null
+                        ? Math.max(
+                            0,
+                            Math.ceil((graceEndMs - Date.now()) / (24 * 60 * 60 * 1000)),
+                          )
+                        : 0;
+
+                    return (
+                      <div className="space-y-2 rounded-lg border border-amber-400/20 bg-amber-400/5 p-3">
+                        <p className="text-xs font-medium text-amber-300">
+                          Payment failed — please update your card
+                        </p>
+                        <p className="text-[11px] text-white/55 leading-relaxed">
+                          Razorpay couldn&rsquo;t charge your card. {inGrace ? (
+                            <>
+                              You have <strong className="text-amber-200">{graceDaysLeft} day{graceDaysLeft === 1 ? '' : 's'}</strong> of grace access left.
+                              After that, premium features pause until you update your payment method.
+                            </>
+                          ) : (
+                            <>The grace window has ended; premium features are paused until you update your payment method.</>
+                          )}
+                        </p>
+                        <button
+                          onClick={() => setShowPaywall(true)}
+                          className="text-xs font-medium text-amber-300 hover:text-amber-200 transition-colors underline-offset-2 hover:underline"
+                        >
+                          Update payment method →
+                        </button>
+                      </div>
+                    );
+                  }
+                  if (subscription.status === 'cancelled') {
+                    return (
+                      <div className="space-y-2">
+                        <p className="text-xs text-yellow-400/70">Subscription cancelled</p>
+                        {subscription.current_period_end && (
+                          <p className="text-[11px] text-white/25">
+                            Access until: {new Date(subscription.current_period_end).toLocaleDateString()}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  }
+                  return <p className="text-xs text-white/30">No active subscription</p>;
+                })()}
               </div>
 
               {/* Time & Location */}

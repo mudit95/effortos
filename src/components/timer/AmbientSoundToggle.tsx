@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useStore } from '@/store/useStore';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Volume2, VolumeX, CloudRain, Coffee, Flame, Waves, Wind,
@@ -260,6 +261,19 @@ export function AmbientSoundToggle() {
   const [volume, setVolume] = useState(0.4);
   const [open, setOpen] = useState(false);
   const [unavailable, setUnavailable] = useState<Set<SoundKind>>(new Set());
+
+  // iOS Safari is strict about user-gesture audio. The first attempt at
+  // audio.play() inside the canplay-await chain often falls outside the
+  // gesture window and rejects with NotAllowedError. We use this ref to
+  // distinguish "first failure (give iOS another chance on the next click)"
+  // from "second failure (permanently mark unavailable)".
+  const transientFailuresRef = useRef<Set<SoundKind>>(new Set());
+  const isIOS = useMemo(() => {
+    if (typeof navigator === 'undefined') return false;
+    return /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+      // iPadOS 13+ reports as Mac with touch — distinguish via maxTouchPoints.
+      (navigator.userAgent.includes('Mac') && (navigator.maxTouchPoints ?? 0) > 1);
+  }, []);
   const [loadingId, setLoadingId] = useState<SoundKind | null>(null);
 
   const ctxRef = useRef<AudioContext | null>(null);
@@ -385,6 +399,10 @@ export function AmbientSoundToggle() {
             await audio.play();
             if (cancelled) { try { audio.pause(); } catch {} return; }
             playingRef.current = { kind: 'media', audio, src };
+            // Successful play — clear any transient-failure marker so a
+            // later one-off blip starts fresh from the iOS-friendly
+            // "first failure is recoverable" path again.
+            transientFailuresRef.current.delete(selected);
             setLoadingId(null);
             return;
           } catch {
@@ -394,6 +412,27 @@ export function AmbientSoundToggle() {
         setLoadingId(null);
 
         if (!option.synthFallback) {
+          // On iOS the first failure is usually a NotAllowedError (the
+          // user-gesture window already closed by the time we got here).
+          // Don't permanently disable the option on the first attempt —
+          // surface a one-time toast and give the next click a fresh
+          // chance. After a second consecutive failure we mark unavailable
+          // (real file/decoder issue, not a gesture-window edge case).
+          const seenBefore = transientFailuresRef.current.has(selected);
+          if (!seenBefore && isIOS) {
+            transientFailuresRef.current.add(selected);
+            try {
+              useStore.getState().addToast(
+                'iOS blocked audio for a moment. Tap the sound again to play it.',
+                'info',
+              );
+            } catch {
+              // store may not be available in the AmbientSoundToggle's
+              // mount context (rare); fail soft.
+            }
+            setSelected('none');
+            return;
+          }
           setUnavailable(s => {
             if (s.has(selected)) return s;
             const next = new Set(s);

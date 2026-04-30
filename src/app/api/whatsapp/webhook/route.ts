@@ -1,8 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { createServiceClient } from '@/lib/supabase/service';
 import { extractIncomingMessage, sendTextMessage, downloadWhatsAppMedia } from '@/lib/whatsapp';
+
+// Vercel function knobs.
+//
+// The handler runs Anthropic intent parse, optional Groq Whisper
+// transcription, multiple Supabase round-trips, and an outbound Meta send.
+// Default function timeout is 10s, which is too tight for the worst case
+// (voice + AI). Bumping to 30s so we don't return 504 to Meta on slow
+// upstreams; Meta retries any non-2xx, and the dedup table below is what
+// keeps those retries from double-executing actions.
+export const runtime = 'nodejs';
+export const maxDuration = 30;
 import { parseWhatsAppMessage, generateChatResponse, type WAIntent } from '@/lib/whatsapp-ai';
+import { getUserAiTier, type AiTier } from '@/lib/aiQuota';
 import { resolvePersona } from '@/lib/persona-tone';
 import { getUserTimezone, todayKeyInTz, dateKeyInTz } from '@/lib/user-date';
 import {
@@ -50,6 +63,79 @@ async function sendBotReply(
       ? body + HELP_FOOTER
       : body;
   return sendTextMessage(phone, finalBody);
+}
+
+// ── Inbound dedup ─────────────────────────────────────────────────────────
+// Meta retries webhooks aggressively on 5xx, on socket close, and on any
+// missed 200 — and our handler can take 10+ seconds for voice notes. Without
+// dedup, a single user message could trigger duplicate task inserts, double
+// "carry all" (which would shift tomorrow's tasks TWO days forward), and
+// double Anthropic / Groq spend.
+//
+// We claim the Meta message_id at the top of the handler. The unique PK on
+// `wa_processed_messages` serialises retries: the first call inserts and
+// proceeds; any retry returns true here and we 200 immediately as a dup.
+//
+// Trade-off: if the first call crashes mid-processing, the claim row is
+// already there — the retry sees it and returns 200, so the action is
+// LOST. Acceptable for launch (avoids double-execute, which is worse) and
+// fixable later by moving processing to a real job queue / waitUntil.
+async function claimMessageId(
+  supabase: SupabaseClient,
+  messageId: string,
+  phoneFrom: string | null,
+): Promise<{ alreadySeen: boolean; claimError?: string }> {
+  const { error } = await supabase
+    .from('wa_processed_messages')
+    .insert({ message_id: messageId, phone_from: phoneFrom });
+
+  if (!error) return { alreadySeen: false };
+  // 23505 = unique_violation → another delivery already claimed it.
+  if (error.code === '23505') return { alreadySeen: true };
+
+  // Any other error (DB outage etc.): log and treat as "not seen" so we
+  // still attempt processing — losing dedup is preferable to losing the
+  // user's message entirely.
+  console.error('[WhatsApp] claimMessageId failed (continuing without dedup):', error);
+  return { alreadySeen: false, claimError: error.message };
+}
+
+// ── Subscription gate ────────────────────────────────────────────────────
+// The reactive WhatsApp bot is a paid feature (Starter+). A user whose
+// trial expired (or who never converted) shouldn't keep getting AI parses
+// and outbound replies — that's both a cost issue and a value-prop issue.
+//
+// Allowed statuses: trialing, active, past_due (grace).
+// Rejected: cancelled, expired, none.
+// Brand-new accounts with no subscriptions row are treated as in implicit
+// trial if auth.users.created_at < 3 days ago — matching the logic in
+// /api/subscription/status. This keeps the WhatsApp linking flow working
+// for users who haven't yet been through the paywall.
+async function isSubscribedForBot(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<boolean> {
+  const { data: sub } = await supabase
+    .from('subscriptions')
+    .select('status, current_period_end, trial_ends_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (sub) {
+    if (sub.status === 'trialing' || sub.status === 'active' || sub.status === 'past_due') {
+      return true;
+    }
+    return false;
+  }
+
+  // No row yet — fall back to the implicit-trial window.
+  const { data: authUser } = await supabase.auth.admin.getUserById(userId);
+  const createdAt = authUser?.user?.created_at;
+  if (!createdAt) return false;
+  const ageMs = Date.now() - new Date(createdAt).getTime();
+  return ageMs < 3 * 24 * 60 * 60 * 1000;
 }
 
 // ── Text normalization helpers ────────────────────────────────────────────
@@ -206,10 +292,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: 'ok' });
     }
 
-    const { from, text, buttonReplyId, audioId } = msg;
+    const { from, text, buttonReplyId, audioId, messageId } = msg;
+    const supabase = createServiceClient();
+
+    // ── 0. Dedup by Meta message_id ─────────────────────────────────
+    // Claim the message before doing any work. Meta retries on any
+    // non-2xx / timeout, and our handler is too slow for the default
+    // 10s window. Without this, retries would re-execute the whole
+    // intent (duplicate task inserts, double "carry all" shifting
+    // tasks TWO days forward, etc.).
+    const claim = await claimMessageId(supabase, messageId, from);
+    if (claim.alreadySeen) {
+      // Silent 200: Meta will stop retrying.
+      return NextResponse.json({ status: 'ok', dedup: true });
+    }
 
     // ── 1. Look up user by phone number ──
-    const supabase = createServiceClient();
     const { data: profile } = await supabase
       .from('profiles')
       .select('id, name, phone_number, focus_duration, bot_persona')
@@ -222,10 +320,28 @@ export async function POST(req: NextRequest) {
       // body is already a step-by-step nudge to the next action.
       await sendTextMessage(
         from,
-        `👋 Hey! I don't recognize this number yet.\n\nTo link your WhatsApp to EffortOS:\n1. Open EffortOS → Settings\n2. Add your WhatsApp number\n3. Send me a message again!\n\nNeed an account? Sign up at effortos-zeta.vercel.app`,
+        `👋 Hey! I don't recognize this number yet.\n\nTo link your WhatsApp to EffortOS:\n1. Open EffortOS → Settings\n2. Add your WhatsApp number\n3. Send me a message again!\n\nNeed an account? Sign up at ${process.env.NEXT_PUBLIC_SITE_URL || 'https://effortos.com'}`,
       );
       return NextResponse.json({ status: 'ok' });
     }
+
+    // ── 1a. Subscription gate ──
+    // The reactive bot is a paid feature. Block users whose trial has
+    // expired or who never subscribed; let them know how to come back.
+    // We do this AFTER profile lookup so unrecognized phones (handled
+    // above) still get the friendlier sign-up greeting.
+    if (!(await isSubscribedForBot(supabase, profile.id))) {
+      await sendTextMessage(
+        from,
+        `🔒 Your EffortOS subscription is inactive — the WhatsApp bot needs a Starter or Pro plan.\n\nResume at ${process.env.NEXT_PUBLIC_SITE_URL || 'https://effortos.com'}/settings`,
+      );
+      return NextResponse.json({ status: 'ok', gated: 'no_subscription' });
+    }
+
+    // Resolve AI tier once. Used to size the per-user daily token quota
+    // for every parseWhatsAppMessage / generateChatResponse call below.
+    // See lib/aiQuota.ts — Pro gets 200k tokens/day, Starter 50k, free 5k.
+    const aiTier: AiTier = await getUserAiTier(supabase, profile.id);
 
     // ── 1b. Check for pending multi-step flow (e.g., journal entry) ──
     // consumePendingFlow uses GETDEL so two near-simultaneous deliveries
@@ -397,7 +513,7 @@ export async function POST(req: NextRequest) {
       if (match) {
         intent = { type: 'edit_task', query: match[1].trim(), newPomodoros: parseInt(match[2], 10) };
       } else {
-        intent = await parseWhatsAppMessage(text);
+        intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier });
       }
     }
     // Rename task — "rename X to Y"
@@ -406,7 +522,7 @@ export async function POST(req: NextRequest) {
       if (match) {
         intent = { type: 'edit_task', query: match[1].trim(), newTitle: match[2].trim() };
       } else {
-        intent = await parseWhatsAppMessage(text);
+        intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier });
       }
     }
     // Help / greeting
@@ -438,7 +554,7 @@ export async function POST(req: NextRequest) {
           todos: titles.map(t => ({ title: t.slice(0, 200), estimated_minutes: null })),
         };
       } else {
-        intent = await parseWhatsAppMessage(text);
+        intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier });
       }
     }
     // "Remind me to X" — single errand. AI handles multi-errand parsing
@@ -452,7 +568,7 @@ export async function POST(req: NextRequest) {
           todos: [{ title: title.slice(0, 200), estimated_minutes: null }],
         };
       } else {
-        intent = await parseWhatsAppMessage(text);
+        intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier });
       }
     }
     // List tasks — exact or contains keywords
@@ -502,13 +618,13 @@ export async function POST(req: NextRequest) {
       if (q) {
         intent = { type: 'complete_task', query: q };
       } else {
-        intent = await parseWhatsAppMessage(text);
+        intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier });
       }
     }
     else {
       // Fall through to AI parsing
       console.log('[WhatsApp] No quick-match, falling through to AI for:', lowerText.slice(0, 80));
-      intent = await parseWhatsAppMessage(text);
+      intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier });
     }
 
     // ── 4. Execute intent ──
@@ -535,9 +651,8 @@ interface UserProfile {
   bot_persona?: string | null;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type SupabaseClient = any;
-
+// SupabaseClient is now imported at the top of the file (was previously
+// shadowed here as `any` before the dedup helpers needed a real type).
 async function executeIntent(
   supabase: SupabaseClient,
   profile: UserProfile,
@@ -1380,10 +1495,15 @@ async function handleChatAboutTasks(
   // resolvePersona() narrows the loose `string | null` from the DB
   // (the CHECK constraint guarantees a valid value, but the column
   // type itself is plain TEXT) into the BotPersona union.
+  // Pull the AI tier so generateChatResponse can enforce the daily token
+  // cap. One extra subscription read per chat — acceptable given chat is
+  // the most expensive Anthropic call in the WhatsApp path.
+  const aiTier = await getUserAiTier(supabase, profile.id);
   const reply = await generateChatResponse(
     contextBlock,
     rawMessage,
     resolvePersona(profile.bot_persona),
+    { userId: profile.id, tier: aiTier },
   );
 
   if (!reply) {
@@ -1527,7 +1647,10 @@ async function transcribeVoiceNote(audioId: string): Promise<TranscriptionResult
   const blob = new Blob([uint8], { type: 'audio/ogg' });
   formData.append('file', blob, 'voice.ogg');
   formData.append('model', 'whisper-large-v3-turbo');
-  formData.append('language', 'en');
+  // Drop the `language: 'en'` hint so Whisper auto-detects. With it forced
+  // to English, Hindi/Tamil/etc. voice notes (a big chunk of the India
+  // user base this app is built for) come back as garbage transliteration.
+  // Whisper Large v3 Turbo has strong multilingual detection.
 
   const whisperRes = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
     method: 'POST',

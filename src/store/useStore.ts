@@ -16,6 +16,8 @@ import { playSound } from '@/lib/sounds';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { resetProvider as resetDataLayerProvider } from '@/lib/dataLayer';
 import * as api from '@/lib/api';
+import { STARTER_PRICE_PER_MO, PRO_PRICE_PER_MO } from '@/lib/pricing';
+import { track } from '@/lib/analytics';
 import {
   buildCoachContext,
   fetchPlanMyDay,
@@ -33,7 +35,15 @@ import { enqueueOffline, initOfflineSync } from '@/lib/offline-queue';
 // succession after a fresh login; without this guard, two parallel inits
 // race on store writes and the user sees flaky "logged in / logged out"
 // flicker. See initializeApp() below for the read/clear logic.
+//
+// `_initPromise` covers the in-flight case. `_lastInitFinishedAt` adds a
+// short grace window AFTER an init completes — Supabase's auth burst can
+// land additional events 50–200 ms after the first one, and re-running the
+// whole init on each is wasted work that also briefly flickers the UI.
+// Within INIT_DEBOUNCE_MS we treat the just-completed init as authoritative.
 let _initPromise: Promise<void> | null = null;
+let _lastInitFinishedAt = 0;
+const INIT_DEBOUNCE_MS = 500;
 
 /** Fire-and-forget Supabase write. Logs errors but never blocks.
  *  If the call fails while offline, optionally queues it for replay. */
@@ -54,6 +64,55 @@ function cloudSync(
 // Initialize offline sync on module load (flushes queue when online)
 if (typeof window !== 'undefined') {
   initOfflineSync();
+}
+
+// ── Onboarding draft persistence ──────────────────────────────────────────
+//
+// Without this, closing the tab mid-onboarding (or hitting the X button)
+// wipes every entered field and the user is dropped back at step 0 with
+// nothing pre-filled. For ProductHunt traffic that's a high-impact drop-off
+// point. We mirror onboardingStep + onboardingData to localStorage on every
+// edit and re-hydrate on app boot. Cleared at completion or logout.
+const ONBOARDING_DRAFT_KEY = 'effortos_onboarding_draft';
+
+function persistOnboardingDraft(state: { onboardingStep: number; onboardingData: unknown }): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const data = state.onboardingData as Record<string, unknown>;
+    // If the draft is empty (just stepped to 0 with nothing entered) and
+    // we're at step 0, drop the key — no point keeping a no-op stub.
+    if (state.onboardingStep === 0 && (!data || Object.keys(data).length === 0)) {
+      localStorage.removeItem(ONBOARDING_DRAFT_KEY);
+      return;
+    }
+    localStorage.setItem(
+      ONBOARDING_DRAFT_KEY,
+      JSON.stringify({ step: state.onboardingStep, data: state.onboardingData }),
+    );
+  } catch {
+    // localStorage may be unavailable (private mode quotas, etc.) — fail
+    // soft, the worst case is the user has to re-enter on tab reopen.
+  }
+}
+
+function readOnboardingDraft(): { step: number; data: Record<string, unknown> } | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(ONBOARDING_DRAFT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.step !== 'number' || typeof parsed?.data !== 'object') return null;
+    return { step: parsed.step, data: parsed.data ?? {} };
+  } catch {
+    return null;
+  }
+}
+
+function clearOnboardingDraft(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(ONBOARDING_DRAFT_KEY);
+  } catch { /* ignore */ }
 }
 
 interface AppState {
@@ -380,6 +439,16 @@ export const useStore = create<AppState>((set, get) => ({
       return _initPromise;
     }
 
+    // Debounce: if a previous init JUST finished, treat its output as
+    // authoritative and skip. Supabase fires INITIAL_SESSION + SIGNED_IN
+    // back-to-back at OAuth callback time and only the first call needs
+    // to hit the wire. Without this guard, the second event triggers a
+    // full re-init that sometimes briefly flickers `isLoading` true and
+    // can clobber an in-progress UI transition.
+    if (_lastInitFinishedAt && Date.now() - _lastInitFinishedAt < INIT_DEBOUNCE_MS) {
+      return;
+    }
+
     // If user explicitly logged out (currentView === 'landing' and not loading), skip re-init
     const currentState = get();
     if (currentState.currentView === 'landing' && !currentState.isLoading && !currentState.isAuthenticated) {
@@ -663,6 +732,20 @@ export const useStore = create<AppState>((set, get) => ({
         currentView: activeGoal ? 'dashboard' : (goals.length > 0 ? 'dashboard' : 'onboarding'),
       });
 
+      // Hydrate any pending onboarding draft (saved if the user closed the
+      // tab mid-flow). Only relevant if we're routing to 'onboarding' —
+      // for users who already have a goal we deliberately ignore the
+      // draft so a stale partial fill doesn't reappear weeks later.
+      if (!activeGoal && goals.length === 0) {
+        const draft = readOnboardingDraft();
+        if (draft) {
+          set({
+            onboardingStep: draft.step,
+            onboardingData: draft.data as Partial<OnboardingData>,
+          });
+        }
+      }
+
       if (activeGoal) get().refreshDashboard();
     } else {
       set({ isLoading: false, currentView: 'landing' });
@@ -679,7 +762,11 @@ export const useStore = create<AppState>((set, get) => ({
     } finally {
       // Always clear the in-flight handle so the next legitimate trigger
       // (e.g. SIGNED_IN after the user returns from another tab) can run.
+      // We also stamp _lastInitFinishedAt for the debounce-grace check at
+      // the top of this function — that's what neutralises the auth-event
+      // burst that fires right after OAuth callback completes.
       _initPromise = null;
+      _lastInitFinishedAt = Date.now();
     }
   },
 
@@ -749,6 +836,9 @@ export const useStore = create<AppState>((set, get) => ({
 
     // Then clear storage and sign out in background
     try { storage.clearAllData(); } catch {}
+    // Drop any half-finished onboarding draft so the next user on this
+    // device doesn't see the previous user's pre-filled goal title.
+    clearOnboardingDraft();
     if (isSupabaseConfigured()) try {
       const supabase = createClient();
       await supabase.auth.signOut();
@@ -757,12 +847,17 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  setOnboardingStep: (step) => set({ onboardingStep: step }),
+  setOnboardingStep: (step) => {
+    set({ onboardingStep: step });
+    // Persist so closing the tab mid-flow doesn't lose the user's place.
+    persistOnboardingDraft(get());
+  },
 
   updateOnboardingData: (data) => {
     set(state => ({
       onboardingData: { ...state.onboardingData, ...data },
     }));
+    persistOnboardingDraft(get());
   },
 
   completeOnboarding: () => {
@@ -777,6 +872,7 @@ export const useStore = create<AppState>((set, get) => ({
       // the user didn't actually consume the shelf entry, so it should
       // still be there waiting if they free up a slot.
       set({ currentView: 'dashboard', onboardingStep: 0, onboardingData: {} });
+      clearOnboardingDraft();
       return;
     }
     storage.updateUser({ onboarding_completed: true });
@@ -818,6 +914,7 @@ export const useStore = create<AppState>((set, get) => ({
       onboardingData: {},
       pendingShadowGoalId: null,
     });
+    clearOnboardingDraft();
 
     get().refreshDashboard();
   },
@@ -883,7 +980,11 @@ export const useStore = create<AppState>((set, get) => ({
       lsGoals.push(goal);
       localStorage.setItem('effortos_goals', JSON.stringify(lsGoals));
     } catch { /* localStorage may be unavailable */ }
-    cloudSync(() => api.createGoal(goalData));
+    // CRITICAL: pass the local id so Supabase doesn't auto-generate a
+    // different one. Without this, every subsequent api.updateGoal(goal.id, ...)
+    // — milestone bumps, sessions_completed increments, status changes —
+    // targets a non-existent row in cloud and silently no-ops until reload.
+    cloudSync(() => api.createGoal({ ...goalData, id: goal.id }));
 
     return goal;
   },
@@ -1131,6 +1232,12 @@ export const useStore = create<AppState>((set, get) => ({
 
     const focusDuration = user.settings?.focus_duration || 25 * 60;
 
+    // Funnel: detect first-ever session BEFORE the insert. We count
+    // existing sessions in localStorage; cloud sync replays this count
+    // on next init, so a returning user who's already completed sessions
+    // doesn't incorrectly trip first_pomodoro_started again.
+    const isFirstSession = storage.getCompletedSessions('').length === 0;
+
     // Create a session (use activeGoal if available, or a placeholder for daily grind)
     const goalId = activeGoal?.id || '__daily__';
     const session = storage.createSession({
@@ -1140,6 +1247,14 @@ export const useStore = create<AppState>((set, get) => ({
       duration: 0,
       status: 'active',
     });
+
+    if (isFirstSession) {
+      void track({
+        distinctId: user.id,
+        event: 'first_pomodoro_started',
+        properties: { mode: dashboardMode },
+      });
+    }
 
     storage.saveTimerState({
       goalId,
@@ -1209,6 +1324,13 @@ export const useStore = create<AppState>((set, get) => ({
     set({ timerState: 'running' });
   },
 
+  // tickTimer: legacy ticker, kept for type compatibility but no longer
+  // called by the timer engine. Both the Web Worker path AND the fallback
+  // path in TimerEngine.tsx now compute remaining from `Date.now()` against
+  // a captured `endsAt` timestamp, so background-tab throttling can't drift
+  // the countdown. Anything that calls this directly will silently no-op
+  // unless the user is in `running` state — leave it that way; if you need
+  // to manually decrement, write directly to the store with `setState`.
   tickTimer: () => {
     const { timeRemaining, timerState, isBreak, user } = get();
     if (timerState !== 'running') return;
@@ -1242,6 +1364,13 @@ export const useStore = create<AppState>((set, get) => ({
       if (user?.settings?.sound_enabled !== false) {
         playSound('pomodoro_complete');
       }
+      // Funnel: anonymous landing-page Quick Pomodoro completion. Use the
+      // anon-cookie id so sign-up later joins this trace.
+      void track({
+        distinctId: 'guest', // overridden by getAnonymousId on browser side
+        event: 'first_pomodoro_completed',
+        properties: { mode: 'quick' },
+      });
       set({
         timerState: 'idle',
         timeRemaining: focusDuration,
@@ -1251,6 +1380,11 @@ export const useStore = create<AppState>((set, get) => ({
       });
       return;
     }
+
+    // Funnel: was this the user's first-ever real session? Detect BEFORE
+    // we mark the in-progress session complete, so the count reflects
+    // "completed before now" not "completed including this one."
+    const wasFirstEver = !!user && storage.getCompletedSessions('').length === 0;
 
     if (currentSessionId) {
       storage.completeSession(currentSessionId, focusDuration);
@@ -1264,6 +1398,17 @@ export const useStore = create<AppState>((set, get) => ({
         () => api.completeSession(currentSessionId, focusDuration),
         { url: '/api/sessions/complete', method: 'POST', body: { sessionId: currentSessionId, duration: focusDuration } },
       );
+
+      // Funnel: first-ever completion is the Day-1 activation event.
+      // We fire it AFTER persistence so a refreshed page reflects the
+      // same state PostHog will see.
+      if (wasFirstEver && user) {
+        void track({
+          distinctId: user.id,
+          event: 'first_pomodoro_completed',
+          properties: { mode: dashboardMode },
+        });
+      }
     }
 
     // If in daily grind mode with an active task, increment its pomodoro count
@@ -1549,6 +1694,19 @@ export const useStore = create<AppState>((set, get) => ({
   addDailyTaskForDate: (title, date, pomodorosTarget = 1, repeating = false, tag, goalId) => {
     const now = new Date().toISOString();
 
+    // Compute the order from tasks that ALREADY exist for the target date,
+    // not from the currently-viewed date's task count. The earlier code
+    // used `get().dailyTasks.length` — fine when the user is adding to
+    // today, broken when they use PlanTomorrow to seed a different date
+    // (every new tomorrow-task collided on the same `order`). For dates
+    // not in the in-memory store we fall back to the localStorage count,
+    // which is the authoritative offline copy and a good-enough proxy for
+    // cloud (race-tolerant: cloud-side sort_order can be re-derived later).
+    const existingForDate = date === get().dailyViewDate
+      ? get().dailyTasks
+      : storage.getDailyTasksForDate(date);
+    const nextOrder = existingForDate.length;
+
     // Build task object in memory
     const newTask: DailyTask = {
       id: generateId(),
@@ -1561,7 +1719,7 @@ export const useStore = create<AppState>((set, get) => ({
       tag: tag || undefined,
       goal_id: goalId || undefined,
       created_at: now,
-      order: get().dailyTasks.length,
+      order: nextOrder,
     };
 
     // If the task is for the currently viewed date, append to store
@@ -1955,13 +2113,43 @@ export const useStore = create<AppState>((set, get) => ({
       }
       const data = await res.json();
 
-      const priceLabel = tier === 'pro' ? '₹999/mo' : '₹499/mo';
+      // Pull from pricing.ts so the Razorpay checkout description stays in
+      // sync if the env-driven prices change. Earlier this was hardcoded
+      // as '₹499/mo' / '₹999/mo' — out of sync with pricing.ts is a real
+      // bait-and-switch risk on launch day.
+      const priceLabel = tier === 'pro' ? PRO_PRICE_PER_MO : STARTER_PRICE_PER_MO;
       const description = isUpgrade
         ? `Upgrade to Pro — ${priceLabel}`
         : `3-day free trial, then ${priceLabel}`;
 
-      // Open Razorpay checkout
-      if (typeof window !== 'undefined' && (window as unknown as Record<string, unknown>).Razorpay) {
+      // Open Razorpay checkout — wait up to 5 s for the lazy-loaded
+      // checkout.js to attach window.Razorpay. Without this, a fast clicker
+      // who hits Subscribe before the script finishes loading sees nothing
+      // happen (silent no-op) — the API call already created the Razorpay
+      // subscription server-side, so they're "in trial" but with no UI cue.
+      if (typeof window !== 'undefined') {
+        const ready = await new Promise<boolean>((resolve) => {
+          const check = () => Boolean((window as unknown as Record<string, unknown>).Razorpay);
+          if (check()) return resolve(true);
+          let elapsed = 0;
+          const tickMs = 200;
+          const id = setInterval(() => {
+            if (check()) {
+              clearInterval(id);
+              resolve(true);
+            } else if ((elapsed += tickMs) >= 5000) {
+              clearInterval(id);
+              resolve(false);
+            }
+          }, tickMs);
+        });
+        if (!ready) {
+          get().addToast(
+            'Checkout is taking a while to load. Refresh and try again.',
+            'error',
+          );
+          return;
+        }
         const RazorpayConstructor = (window as unknown as Record<string, new (opts: Record<string, unknown>) => { open: () => void }>).Razorpay;
         const rzp = new RazorpayConstructor({
           key: data.key_id,

@@ -67,6 +67,19 @@ vi.mock('@/lib/supabase/server', () => ({
   }),
 }));
 
+// The subscription-create route (post-RLS-hardening migration 022) writes
+// to `subscriptions` via the service-role client to bypass the now-strict
+// RLS policy. We mock both clients with the same chain builder — the test
+// state is shared, so it doesn't matter which path the route takes.
+vi.mock('@/lib/supabase/service', () => ({
+  createServiceClient: () => ({
+    auth: {
+      getUser: async () => ({ data: { user: state.authUser } }),
+    },
+    from: (_table: string) => buildFromChain(),
+  }),
+}));
+
 vi.mock('@/lib/ratelimit', () => ({
   // Always allow — these tests aren't about the rate limiter.
   rateLimitOrNull: async () => null,

@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RefreshCw } from 'lucide-react';
+import { Skeleton } from '@/components/ui/Skeleton';
 
 // Fallback insights when API fails
 const FALLBACK_INSIGHTS = [
@@ -132,8 +133,10 @@ export function AIInsightCard({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="w-full h-8 bg-gradient-to-r from-white/[0.05] to-transparent rounded animate-pulse"
-            />
+              className="w-full"
+            >
+              <Skeleton.Text lines={2} />
+            </motion.div>
           ) : (
             <motion.p
               key={insight}
@@ -245,8 +248,10 @@ export function AIMotivationCard({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="w-full h-8 bg-gradient-to-r from-white/[0.05] to-transparent rounded animate-pulse"
-            />
+              className="w-full"
+            >
+              <Skeleton.Text lines={2} />
+            </motion.div>
           ) : (
             <motion.p
               key={motivation}

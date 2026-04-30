@@ -28,6 +28,19 @@ function getTodayKey(): string {
   return getLocalTodayKey();
 }
 
+/**
+ * Local-time YYYY-MM-DD for an arbitrary Date. Replaces the previous
+ * `d.toISOString().split('T')[0]` calls below, which silently shifted
+ * dates by the user's UTC offset — for IST users a session at 1 AM local
+ * landed on the wrong day in the report grid (UTC = previous evening).
+ */
+function localDateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function getWeekStart(date: Date): Date {
   const d = new Date(date);
   const day = d.getDay();
@@ -66,7 +79,10 @@ function getDatesInRange(start: Date, end: Date): string[] {
   const dates: string[] = [];
   const current = new Date(start);
   while (current <= end) {
-    dates.push(current.toISOString().split('T')[0]);
+    // Use local-day keys (YYYY-MM-DD in the browser timezone), not UTC.
+    // localDateKey() formats from current.getFullYear/Month/Date so the
+    // returned string matches the user's calendar day regardless of zone.
+    dates.push(localDateKey(current));
     current.setDate(current.getDate() + 1);
   }
   return dates;
@@ -148,11 +164,15 @@ function aggregatePeriod(dates: string[], focusDuration: number, tasksByDate: Re
     });
   });
 
-  // Tasks summary — deduplicate by title
+  // Tasks summary — collapse same-title-same-goal-same-tag rows so a
+  // recurring "Standup" task across days reads as one line, but two
+  // distinct ad-hoc tasks both called "Email" under different goals
+  // stay separate. Earlier the key was just lowercased title, which
+  // silently merged unrelated tasks across goals.
   const taskMap: Record<string, { title: string; tag?: string; pomodoros: number; completed: boolean }> = {};
   days.forEach(d => {
     d.tasks.forEach(t => {
-      const key = t.title.toLowerCase();
+      const key = `${t.title.toLowerCase()}|${t.tag ?? ''}|${t.goal_id ?? ''}`;
       if (!taskMap[key]) {
         taskMap[key] = { title: t.title, tag: t.tag, pomodoros: 0, completed: false };
       }
@@ -229,7 +249,9 @@ export function Reports() {
     if (period === 'daily') {
       const d = new Date(today);
       d.setDate(d.getDate() + offset);
-      const key = d.toISOString().split('T')[0];
+      // local-day key — matches dailyTasks' `date` column which is filed
+      // in the user's local zone, not UTC.
+      const key = localDateKey(d);
       const label = offset === 0 ? 'Today' : offset === -1 ? 'Yesterday' :
         d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
       return { dateRange: [key], periodLabel: label };
@@ -250,17 +272,20 @@ export function Reports() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period, offset]);
 
-  // Fetch tasks for all dates in range from API (cloud-first)
+  // Fetch tasks for OTHER dates in range from API (cloud-first). Today's
+  // tasks come from the store via the merge below — they update on every
+  // edit without triggering a fresh fetch of the whole date range.
+  //
+  // The earlier effect was keyed on `[dateRange, dailyTasks]`, which meant
+  // every task add/complete/delete in the live store kicked off another
+  // round-trip per non-today date. On a monthly view that was ~30 fetches
+  // per keystroke. Splitting "non-today fetch" from "today merge" caps the
+  // network work to once per dateRange/period change.
   useEffect(() => {
     let cancelled = false;
-    const todayKey = new Date().toISOString().split('T')[0];
-    async function fetchTasks() {
+    const todayKey = getTodayKey();
+    async function fetchOtherDates() {
       const result: Record<string, DailyTask[]> = {};
-      // For today, use store's dailyTasks
-      if (dateRange.includes(todayKey)) {
-        result[todayKey] = dailyTasks;
-      }
-      // Fetch other dates from API, fall back to localStorage
       const otherDates = dateRange.filter(d => d !== todayKey);
       await Promise.all(otherDates.map(async (date) => {
         try {
@@ -271,11 +296,19 @@ export function Reports() {
       }));
       if (!cancelled) setTasksByDate(result);
     }
-    fetchTasks();
+    fetchOtherDates();
     return () => { cancelled = true; };
-  }, [dateRange, dailyTasks]);
+  }, [dateRange]);
 
-  const report = useMemo(() => aggregatePeriod(dateRange, focusDuration, tasksByDate), [dateRange, focusDuration, tasksByDate]);
+  // Merge today's live tasks into the fetched map at aggregation time, so
+  // task edits show up immediately without re-fetching everything.
+  const report = useMemo(() => {
+    const todayKey = getTodayKey();
+    const merged = dateRange.includes(todayKey)
+      ? { ...tasksByDate, [todayKey]: dailyTasks }
+      : tasksByDate;
+    return aggregatePeriod(dateRange, focusDuration, merged);
+  }, [dateRange, focusDuration, tasksByDate, dailyTasks]);
 
   const focusHours = Math.floor(report.totalFocusMinutes / 60);
   const focusMins = Math.round(report.totalFocusMinutes % 60);

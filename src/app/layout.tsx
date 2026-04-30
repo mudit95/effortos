@@ -1,4 +1,6 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
+import { ConsentBanner } from "@/components/legal/ConsentBanner";
 import "./globals.css";
 
 // Used for resolving relative OpenGraph URLs (the opengraph-image.tsx file
@@ -78,7 +80,9 @@ export const viewport: Viewport = {
   themeColor: "#0B0F14",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  // Intentionally NOT setting maximumScale — pinning to 1 blocks pinch-zoom,
+  // which is a WCAG 1.4.4 accessibility violation (low-vision users need
+  // to be able to zoom). Default `maximumScale` of 10 is correct.
 };
 
 export default function RootLayout({
@@ -96,7 +100,24 @@ export default function RootLayout({
       </head>
       <body className="bg-[#0B0F14] text-white font-sans">
         {children}
-        <script src="https://checkout.razorpay.com/v1/checkout.js" async />
+        {/* DPDP / GDPR consent banner — first-visit only, decision durable
+            via localStorage snapshot + consent_log row on the server. See
+            src/components/legal/ConsentBanner.tsx for the full flow. */}
+        <ConsentBanner />
+        {/*
+          Razorpay checkout.js — lazy-loaded so it doesn't block first paint.
+          Earlier this was a plain `async` <script> in layout, which fetched
+          ~30 KB on every page (landing, signin, legal pages — none of which
+          ever open a checkout). next/script with strategy="lazyOnload"
+          defers loading until after the page is idle, while still making
+          window.Razorpay available before a user can realistically click
+          Subscribe. We poll for window.Razorpay in useStore.startTrial as a
+          belt-and-braces against very-fast clickers.
+        */}
+        <Script
+          src="https://checkout.razorpay.com/v1/checkout.js"
+          strategy="lazyOnload"
+        />
       </body>
     </html>
   );

@@ -21,7 +21,13 @@ import { warmUpAudio } from '@/lib/sounds';
 import { Sparkles } from 'lucide-react';
 
 export function AppShell() {
-  const { currentView, isLoading, initializeApp } = useStore();
+  // Per-field selectors. `useStore()` (no selector) subscribes to every
+  // store change including timer ticks, which would force AppShell to
+  // re-render every 250 ms even though its render output doesn't depend
+  // on timeRemaining.
+  const currentView = useStore(s => s.currentView);
+  const isLoading = useStore(s => s.isLoading);
+  const initializeApp = useStore(s => s.initializeApp);
   const dashboardMode = useStore(s => s.dashboardMode);
   // TimerEngine controls document.title while a session is active so the
   // browser tab shows the live countdown. We listen on timerState here so

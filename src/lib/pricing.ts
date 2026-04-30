@@ -39,7 +39,7 @@ export const DISPLAY_PRICE_PER_MO = STARTER_PRICE_PER_MO;
 
 // Feature lists for the pricing cards
 export const STARTER_FEATURES = [
-  'AI goal estimation & recalibration',
+  'Smart goal estimation & recalibration',
   'Pomodoro focus timer',
   'Daily task management',
   'Streak tracking & reports',

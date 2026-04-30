@@ -1,7 +1,7 @@
 // Local Storage Persistence Layer
 
 import { Goal, Session, User, FeedbackEntry, DailySession, UserSettings, DEFAULT_SETTINGS, DailyTask, RepeatingTaskTemplate, TaskTagId, DashboardMode, JournalEntry, JournalMoodId, ShadowGoal, DailyGrindLayout } from '@/types';
-import { generateId, getLocalTodayKey } from './utils';
+import { generateId, getLocalTodayKey, toLocalDateKey } from './utils';
 
 const STORAGE_KEYS = {
   USER: 'effortos_user',
@@ -212,15 +212,17 @@ export function getDailySessions(goalId: string, days: number = 30): DailySessio
   const sessions = getCompletedSessions(goalId);
   const result: Map<string, number> = new Map();
 
+  // Bucket by LOCAL date — see lib/api.ts for the matching cloud-side fix
+  // and the rationale (UTC bucketing mis-attributes 1-AM-IST sessions to
+  // the wrong day in the streak grid).
   for (let i = 0; i < days; i++) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    const key = d.toISOString().split('T')[0];
-    result.set(key, 0);
+    result.set(toLocalDateKey(d), 0);
   }
 
   sessions.forEach(s => {
-    const key = new Date(s.start_time).toISOString().split('T')[0];
+    const key = toLocalDateKey(new Date(s.start_time));
     if (result.has(key)) {
       result.set(key, (result.get(key) || 0) + 1);
     }

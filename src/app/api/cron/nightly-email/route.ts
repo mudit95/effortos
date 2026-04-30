@@ -4,6 +4,8 @@ import { getEligibleUsers, getUserTasks, getUserGoalSummary, getUserDaySummary, 
 import { nightlyEmail } from '@/lib/email-templates';
 import { sendEmail } from '@/lib/email';
 import { nightlyWhatsAppMessage, sendCronNudge } from '@/lib/whatsapp-nudge';
+import { concurrentMap } from '@/lib/concurrency';
+import { recordCronRun } from '@/lib/cron-run-log';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -28,64 +30,68 @@ export async function GET(request: Request) {
     let skipped = 0;
     const errors: string[] = [];
 
-    for (const user of users) {
-      try {
-        // Idempotency — see morning-email for rationale.
-        if (await wasEmailSentRecently(user.user_id, 'nightly')) {
-          skipped++;
-          continue;
-        }
-        const now = new Date();
-        const userNow = new Date(now.toLocaleString('en-US', { timeZone: user.timezone }));
-        const todayStr = userNow.toISOString().slice(0, 10);
+    // Parallel fan-out — see morning-email and lib/concurrency.ts for rationale.
+    const EMAIL_CONCURRENCY = 8;
 
-        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-        const tomorrow = new Date(userNow);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        const tomorrowDay = dayNames[tomorrow.getDay()];
+    const results = await concurrentMap(users, EMAIL_CONCURRENCY, async (user) => {
+      // Idempotency — see morning-email for rationale.
+      if (await wasEmailSentRecently(user.user_id, 'nightly')) {
+        return { kind: 'skipped' as const };
+      }
+      const now = new Date();
+      const userNow = new Date(now.toLocaleString('en-US', { timeZone: user.timezone }));
+      const todayStr = userNow.toISOString().slice(0, 10);
 
-        const [todayTasks, daySummary, goalSummary, openOtherTodosCount] = await Promise.all([
-          getUserTasks(user.user_id, todayStr),
-          getUserDaySummary(user.user_id, todayStr),
-          getUserGoalSummary(user.user_id),
-          countOpenOtherTodosForUser(user.user_id),
-        ]);
+      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const tomorrow = new Date(userNow);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowDay = dayNames[tomorrow.getDay()];
 
-        const { subject, html } = nightlyEmail({
-          userName: user.name,
-          todayTasks,
-          daySummary,
-          activeGoal: goalSummary,
-          tomorrowDay,
-          openOtherTodosCount,
-        });
+      const [todayTasks, daySummary, goalSummary, openOtherTodosCount] = await Promise.all([
+        getUserTasks(user.user_id, todayStr),
+        getUserDaySummary(user.user_id, todayStr),
+        getUserGoalSummary(user.user_id),
+        countOpenOtherTodosForUser(user.user_id),
+      ]);
 
-        const result = await sendEmail({ to: user.email, subject, html, tags: [{ name: 'type', value: 'nightly' }] });
+      const { subject, html } = nightlyEmail({
+        userName: user.name,
+        todayTasks,
+        daySummary,
+        activeGoal: goalSummary,
+        tomorrowDay,
+        openOtherTodosCount,
+      });
 
-        await logEmail({
-          userId: user.user_id,
-          emailTo: user.email,
-          emailType: 'nightly',
-          subject,
-          resendId: result?.id,
-        });
+      const result = await sendEmail({ to: user.email, subject, html, tags: [{ name: 'type', value: 'nightly' }] });
 
-        sent++;
+      await logEmail({
+        userId: user.user_id,
+        emailTo: user.email,
+        emailType: 'nightly',
+        subject,
+        resendId: result?.id,
+      });
 
-        // Companion WhatsApp nudge — best-effort.
-        const waMessage = nightlyWhatsAppMessage({
-          userName: user.name,
-          todayTasks,
-          daySummary,
-          activeGoal: goalSummary,
-          tomorrowDay,
-          openOtherTodosCount,
-        });
-        if (await sendCronNudge({ userId: user.user_id, nudgeType: 'nightly', message: waMessage })) {
-          waSent++;
-        }
-      } catch (err) {
-        const msg = `${user.email}: ${err instanceof Error ? err.message : 'unknown'}`;
+      // Companion WhatsApp nudge — best-effort.
+      const waMessage = nightlyWhatsAppMessage({
+        userName: user.name,
+        todayTasks,
+        daySummary,
+        activeGoal: goalSummary,
+        tomorrowDay,
+        openOtherTodosCount,
+        persona: user.bot_persona,
+      });
+      const waOk = await sendCronNudge({ userId: user.user_id, nudgeType: 'nightly', message: waMessage });
+      return { kind: 'sent' as const, waOk };
+    });
+
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      const user = users[i];
+      if (!r.ok) {
+        const msg = `${user.email}: ${r.error instanceof Error ? r.error.message : 'unknown'}`;
         errors.push(msg);
         await logEmail({
           userId: user.user_id,
@@ -94,13 +100,22 @@ export async function GET(request: Request) {
           subject: 'Nightly email (failed)',
           status: 'failed',
           error: msg,
-        });
+        }).catch(() => {});
+        continue;
+      }
+      if (r.value.kind === 'skipped') {
+        skipped++;
+      } else {
+        sent++;
+        if (r.value.waOk) waSent++;
       }
     }
 
+    await recordCronRun('nightly-email', 'success', { sent, wa_sent: waSent, skipped_dedup: skipped, total: users.length });
     return NextResponse.json({ sent, wa_sent: waSent, skipped_dedup: skipped, total: users.length, errors: errors.length > 0 ? errors : undefined });
   } catch (err) {
     console.error('[cron/nightly-email] Fatal:', err);
+    await recordCronRun('nightly-email', 'failure', { error: err instanceof Error ? err.message : String(err) });
     return NextResponse.json({ error: 'Cron failed' }, { status: 500 });
   }
 }

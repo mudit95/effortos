@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitOrNull } from '@/lib/ratelimit';
 
 /**
@@ -82,7 +83,11 @@ export async function POST(req: Request) {
   // connection). We log loudly so ops can spot the rare drift and refund
   // by hand. Wrapping both into a single transaction would require moving
   // the subscription update into the RPC too — a worthwhile future step.
-  const { data: existing } = await supabase
+  //
+  // Subscription writes go through the service-role client (post-migration
+  // 022, RLS denies authenticated INSERT/UPDATE on `subscriptions`).
+  const service = createServiceClient();
+  const { data: existing } = await service
     .from('subscriptions')
     .select('*')
     .eq('user_id', user.id)
@@ -99,10 +104,10 @@ export async function POST(req: Request) {
     const newTrialEnd = new Date(baseMs + days * 86400000).toISOString();
 
     const { error: subErr } = existing
-      ? await supabase.from('subscriptions')
+      ? await service.from('subscriptions')
           .update({ status: 'trialing', trial_ends_at: newTrialEnd })
           .eq('user_id', user.id)
-      : await supabase.from('subscriptions')
+      : await service.from('subscriptions')
           .insert({ user_id: user.id, status: 'trialing', trial_ends_at: newTrialEnd });
 
     if (subErr) {
@@ -125,10 +130,10 @@ export async function POST(req: Request) {
     const newPeriodEnd = end.toISOString();
 
     const { error: subErr } = existing
-      ? await supabase.from('subscriptions')
+      ? await service.from('subscriptions')
           .update({ status: 'active', current_period_end: newPeriodEnd, cancelled_at: null })
           .eq('user_id', user.id)
-      : await supabase.from('subscriptions')
+      : await service.from('subscriptions')
           .insert({ user_id: user.id, status: 'active', current_period_end: newPeriodEnd });
 
     if (subErr) {

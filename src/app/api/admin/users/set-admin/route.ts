@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/admin';
+import { createServiceClient } from '@/lib/supabase/service';
+import { logAdminAction } from '@/lib/adminAudit';
 
 export async function POST(req: Request) {
   const check = await requireAdmin();
@@ -21,10 +23,25 @@ export async function POST(req: Request) {
     }
   }
 
-  const { error } = await check.supabase
+  // The is_admin flip is privileged enough that going through service
+  // role here is consistent with extend-trial / grant-premium. Auth-bound
+  // updates may also work via the existing profiles policies, but using
+  // service-role keeps the audit-with-elevated-write story uniform.
+  const service = createServiceClient();
+  const { error } = await service
     .from('profiles')
     .update({ is_admin: isAdmin })
     .eq('id', userId);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  await logAdminAction({
+    service,
+    actorUserId: check.user.id,
+    actionType: 'USER_ADMIN_TOGGLED',
+    targetUserId: userId,
+    payload: { is_admin: isAdmin },
+    request: req,
+  });
+
   return NextResponse.json({ ok: true });
 }

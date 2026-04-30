@@ -26,6 +26,9 @@ import { StreakCalendar } from './StreakCalendar';
 import { AIMotivationCard } from './AICards';
 import { PaywallModal } from '@/components/subscription/PaywallModal';
 import { TrialBanner } from '@/components/subscription/TrialBanner';
+import { RemoteTimerBanner } from '@/components/timer/RemoteTimerBanner';
+import { DemoModeBanner } from './DemoModeBanner';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { PremiumGate } from '@/components/subscription/PremiumGate';
 import { FreeDashboardCallout } from '@/components/subscription/FreeDashboardCallout';
 import { TimerDisplay } from '@/components/timer/TimerDisplay';
@@ -44,13 +47,26 @@ const fadeUp = (delay = 0) => ({
 });
 
 export function Dashboard() {
-  const {
-    user, activeGoal, dashboardStats, dashboardMode,
-    setView, refreshDashboard, logout,
-    setShowSettings, setShowGoalHistory, setShowEditGoal, setShowManualSession,
-    requestNotificationPermission,
-    subscription, subscriptionLoading, setShowPaywall,
-  } = useStore();
+  // Per-field selectors instead of `useStore()` (which subscribes to the
+  // entire store). The timer engine writes `timeRemaining` every 250 ms;
+  // with the destructured form, every TICK forced this big component to
+  // re-render even though it doesn't use timeRemaining at all. Splitting
+  // by field caps re-renders to actual dependencies.
+  const user = useStore(s => s.user);
+  const activeGoal = useStore(s => s.activeGoal);
+  const dashboardStats = useStore(s => s.dashboardStats);
+  const dashboardMode = useStore(s => s.dashboardMode);
+  const setView = useStore(s => s.setView);
+  const refreshDashboard = useStore(s => s.refreshDashboard);
+  const logout = useStore(s => s.logout);
+  const setShowSettings = useStore(s => s.setShowSettings);
+  const setShowGoalHistory = useStore(s => s.setShowGoalHistory);
+  const setShowEditGoal = useStore(s => s.setShowEditGoal);
+  const setShowManualSession = useStore(s => s.setShowManualSession);
+  const requestNotificationPermission = useStore(s => s.requestNotificationPermission);
+  const subscription = useStore(s => s.subscription);
+  const subscriptionLoading = useStore(s => s.subscriptionLoading);
+  const setShowPaywall = useStore(s => s.setShowPaywall);
 
   const [showMeditation, setShowMeditation] = useState(false);
 
@@ -153,6 +169,14 @@ export function Dashboard() {
   return (
     <div className="min-h-screen pb-8">
       <TrialBanner />
+      {/* Multi-device awareness — surfaces a remote timer that's currently
+          running on another device. Reads from useStore.remoteTimerInfo,
+          which useRealtimeSync (mounted in AppShell) populates via
+          Supabase Realtime postgres_changes on timer_state. Without this
+          the data is collected but invisible to the user. */}
+      <RemoteTimerBanner />
+      {/* Demo-mode nudge — only renders for the localStorage-only demo user. */}
+      <DemoModeBanner />
       <DashboardHeader
         user={user}
         onLogout={logout}
@@ -338,11 +362,16 @@ function LongTermView({
           />
 
           {/* Progress caption — streak lives in the calendar card below, so
-              this line only carries sessions + invested hours. */}
-          {dashboardStats && (
+              this line only carries sessions + invested hours. Skeleton
+              placeholder during the brief window between mount and the
+              refreshDashboard() resolution; without this, cold loads
+              showed an empty <p> slot for ~600ms which read as broken. */}
+          {dashboardStats ? (
             <p className="text-xs text-white/30">
               {dashboardStats.sessions_done}/{activeGoal.estimated_sessions_current} sessions &middot; {dashboardStats.total_hours}h invested
             </p>
+          ) : (
+            <Skeleton className="h-3" style={{ width: '40%' }} ariaLabel="Loading session count" />
           )}
 
           {/* Streak Calendar — flush (no inner card chrome) so it reads as a

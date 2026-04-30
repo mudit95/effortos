@@ -9,6 +9,7 @@
  *   SENTRY_TRACES_SAMPLE_RATE — 0..1, default 0.1
  */
 import * as Sentry from '@sentry/nextjs';
+import { scrubEvent, scrubBreadcrumb } from '@/lib/sentry-scrub';
 
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 
@@ -22,6 +23,11 @@ if (dsn) {
     // Keep PII out of breadcrumbs by default. Flip on per-event via setUser
     // in a route handler when useful.
     sendDefaultPii: false,
+    // Application-level PII scrub. sendDefaultPii=false handles auto-attached
+    // headers/IP only; this catches request bodies (Razorpay payloads, journal
+    // text, OAuth codes) plus emails buried in error messages.
+    beforeSend: scrubEvent,
+    beforeBreadcrumb: scrubBreadcrumb,
     // Release is auto-detected by the Sentry Next.js plugin from Vercel env
     // (VERCEL_GIT_COMMIT_SHA). No need to set manually.
   });

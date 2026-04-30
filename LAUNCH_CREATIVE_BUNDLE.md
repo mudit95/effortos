@@ -95,7 +95,7 @@ Quietly cut my morning ramp-up time in half.
 **5/**
 Built it for the Indian work-rhythm specifically. UPSC. CA articleship. Indie hacking on the side of a day job. Sales hustle.
 
-Pricing in INR (₹399/mo starter, ₹699/mo pro, annual at 2 months free).
+Pricing in INR (₹499/mo starter, ₹999/mo pro, annual at 2 months free).
 
 Razorpay checkout. UPI on file. No "global" friction.
 
@@ -129,7 +129,7 @@ Genuine ask: if you try it and it doesn't click in the first 48 hours, reply to 
 ### Reply-bank (for accounts that QT)
 - "Built it specifically because I bounced off Sunsama and Notion in the same week. Carry-forward is the unlock."
 - "Try the WhatsApp bot first. Easiest way to feel the difference."
-- "₹399/mo starter, INR-only, no global pricing tax."
+- "₹499/mo starter, INR-only, no global pricing tax."
 
 ---
 
@@ -147,7 +147,7 @@ Genuine ask: if you try it and it doesn't click in the first 48 hours, reply to 
 > A WhatsApp bot that lets you complete tasks by replying "1" — no app to open, no context switch.
 > A morning brief at 6am that's actually specific to your week, not generic LinkedIn-motivational copy.
 >
-> Built for Indian work-rhythms specifically. UPSC prep. CA articleship. Indie hacking on a day-job. Sales hustle. INR-priced from day one (₹399 starter, ₹699 pro), 3-day free trial, no card to start.
+> Built for Indian work-rhythms specifically. UPSC prep. CA articleship. Indie hacking on a day-job. Sales hustle. INR-priced from day one (₹499 starter, ₹999 pro), 3-day free trial, no card to start.
 >
 > If you're someone who's tried Notion templates, bought a Pomodoro app, paid for a habit tracker, and still end Sunday with the same five things on a sticky note — try EffortOS for a week and tell me what didn't click.
 >
@@ -173,7 +173,7 @@ Genuine ask: if you try it and it doesn't click in the first 48 hours, reply to 
 > 2. WhatsApp-first. I'm in WhatsApp 80 times a day anyway. Mark a task done by replying "1". Voice-note a journal entry, it transcribes.
 > 3. A morning brief at 6am that's specific to the topics you said you'd cover, not generic motivation.
 >
-> Pricing is ₹399 starter, ₹699 pro, annual is 2 months free. INR only, Razorpay checkout, 3-day trial no card.
+> Pricing is ₹499 starter, ₹999 pro, annual is 2 months free. INR only, Razorpay checkout, 3-day trial no card.
 >
 > Honest feedback welcome — including "this is just X with extra steps" if that's how it lands. I'd rather know.
 >

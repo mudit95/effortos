@@ -1,20 +1,25 @@
 name: CI
 
 on:
+  # Trigger on every branch push so feature work catches type/lint/test
+  # regressions before review, not just on the eventual PR.
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
     branches: [main]
+
+# Workflow-level concurrency cancels superseded runs (a fast follow-up
+# push doesn't pile up runners). Per-job concurrency was inside the job
+# which doesn't cancel the install step early.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-test:
     name: Build, type-check, lint, test
     runs-on: ubuntu-latest
-
-    # Cancel in-flight runs on the same ref when a new commit lands.
-    concurrency:
-      group: ci-${{ github.ref }}
-      cancel-in-progress: true
+    timeout-minutes: 15
 
     steps:
       - name: Check out repo

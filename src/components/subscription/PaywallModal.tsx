@@ -1,17 +1,18 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store/useStore';
 import { Button } from '@/components/ui/button';
 import { Sparkles, X, Shield, Zap, Brain, BarChart3, Clock, Ticket, MessageCircle, Check } from 'lucide-react';
 import { STARTER_PRICE, PRO_PRICE } from '@/lib/pricing';
 import type { PlanTier } from '@/types';
+import { track, getAnonymousId } from '@/lib/analytics';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
 const STARTER_FEATURES = [
-  { icon: Brain, label: 'AI Goal Estimation' },
+  { icon: Brain, label: 'Smart Goal Estimation' },
   { icon: Zap, label: 'Pomodoro Focus Timer' },
   { icon: BarChart3, label: 'Reports & Streaks' },
   { icon: Clock, label: 'Daily Task Management' },
@@ -31,6 +32,19 @@ export function PaywallModal() {
   const setShowPaywall = useStore(s => s.setShowPaywall);
   const startTrial = useStore(s => s.startTrial);
   const subscription = useStore(s => s.subscription);
+  const userId = useStore(s => s.user?.id);
+
+  // Funnel: paywall opened. Distinct id is the user's id when signed in,
+  // otherwise the anon-cookie id from getAnonymousId(). Fires once per
+  // open transition, not on every re-render.
+  useEffect(() => {
+    if (!showPaywall) return;
+    void track({
+      distinctId: userId || getAnonymousId(),
+      event: 'paywall_shown',
+      properties: { source: 'modal' },
+    });
+  }, [showPaywall, userId]);
   const [loading, setLoading] = useState(false);
   const [selectedTier, setSelectedTier] = useState<PlanTier>('starter');
   const [couponCode, setCouponCode] = useState('');

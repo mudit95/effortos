@@ -17,7 +17,7 @@ export function getAdminSupabase() {
 export async function getEligibleUsers(
   emailType: 'morning_email' | 'afternoon_email' | 'nightly_email',
   targetHour: number, // e.g., 8 for 8 AM
-): Promise<{ user_id: string; email: string; name: string; timezone: string }[]> {
+): Promise<{ user_id: string; email: string; name: string; timezone: string; bot_persona: string | null }[]> {
   const supabase = getAdminSupabase();
 
   // Get all users with this email enabled
@@ -44,16 +44,26 @@ export async function getEligibleUsers(
 
   if (eligible.length === 0) return [];
 
-  // Get user emails and names
+  // Get user emails and names.
+  // Note: profiles is keyed by `id` (= auth.users.id) and the display name
+  // column is `name`, not `display_name`. The earlier `display_name` query
+  // returned no rows (column doesn't exist), so every email/WhatsApp nudge
+  // fell through to the "there"/"friend" fallback.
   const userIds = eligible.map(e => e.user_id);
   const { data: profiles } = await supabase
     .from('profiles')
-    .select('user_id, display_name')
-    .in('user_id', userIds);
+    .select('id, name, bot_persona')
+    .in('id', userIds);
 
   const authUsers = await listAllAuthUsers(supabase);
 
-  const profileMap = new Map(profiles?.map(p => [p.user_id, p.display_name]) || []);
+  // Pull both name AND persona out of profiles so cron handlers can pass
+  // persona through to the WhatsApp companion message builders. Without
+  // this, every nudge ignored the user's chosen voice and shipped the
+  // hardcoded "friend" template — a regression of the persona feature.
+  const profileMap = new Map(
+    profiles?.map(p => [p.id, { name: p.name, bot_persona: p.bot_persona ?? null }]) || [],
+  );
   const tzMap = new Map(eligible.map(e => [e.user_id, e.timezone]));
   const authUserMap = new Map(authUsers.map(u => [u.id, u]));
 
@@ -61,11 +71,13 @@ export async function getEligibleUsers(
     .map(uid => {
       const authUser = authUserMap.get(uid);
       if (!authUser?.email) return null;
+      const profileEntry = profileMap.get(uid);
       return {
         user_id: uid,
         email: authUser.email,
-        name: profileMap.get(uid) || authUser.user_metadata?.name || 'there',
+        name: profileEntry?.name || authUser.user_metadata?.name || 'there',
         timezone: tzMap.get(uid) || 'Asia/Kolkata',
+        bot_persona: profileEntry?.bot_persona ?? null,
       };
     })
     .filter((u): u is NonNullable<typeof u> => u !== null);

@@ -8,6 +8,16 @@ import { createClient } from '@/lib/supabase/server';
  * 2. Increments the goal's sessions_completed
  * 3. Checks and completes milestones
  * 4. Optionally increments daily task pomodoro count
+ *
+ * IDEMPOTENCY:
+ *   The offline queue replays failed completions on reconnect, and the
+ *   client may also re-issue the request after a transient timeout. The
+ *   earlier version blindly performed the update + increments every time,
+ *   so a single completion could be counted twice (or more). We now do a
+ *   conditional update — `status='completed' WHERE status != 'completed'`
+ *   — and only run the goal/task increments when a row was actually
+ *   transitioned. A replay of an already-completed session returns 200
+ *   with `{ alreadyCompleted: true }` and is a no-op.
  */
 export async function POST(request: Request) {
   try {
@@ -24,8 +34,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'sessionId and duration are required' }, { status: 400 });
     }
 
-    // 1. Complete the session
-    const { data: session, error: sessionError } = await supabase
+    // 1. Conditional complete: only flip status if it wasn't already completed.
+    //
+    // Postgres-via-PostgREST returns the affected rows in `data`. When the
+    // .neq('status','completed') filter rules everyone out (the row is
+    // already completed), `data` is an empty array — that's our signal to
+    // bail out and skip the increments below.
+    const { data: transitionedRows, error: sessionError } = await supabase
       .from('sessions')
       .update({
         status: 'completed',
@@ -35,12 +50,20 @@ export async function POST(request: Request) {
       })
       .eq('id', sessionId)
       .eq('user_id', user.id)
-      .select()
-      .single();
+      .neq('status', 'completed')
+      .select();
 
     if (sessionError) {
       return NextResponse.json({ error: 'Failed to complete session' }, { status: 500 });
     }
+
+    if (!transitionedRows || transitionedRows.length === 0) {
+      // Either the session doesn't exist for this user, or it was already
+      // completed by an earlier request. Treat both as a no-op success so
+      // the offline queue can drop the item without retry.
+      return NextResponse.json({ success: true, alreadyCompleted: true });
+    }
+    const session = transitionedRows[0];
 
     // 2. Increment goal sessions_completed (if goal-based session)
     //
@@ -98,22 +121,33 @@ export async function POST(request: Request) {
     if (dailyTaskId) {
       const { data: task } = await supabase
         .from('daily_tasks')
-        .select('pomodoros_done, pomodoros_target, completed')
+        // include completed_at so we can preserve the original timestamp
+        // when we're not transitioning incomplete→complete.
+        .select('pomodoros_done, pomodoros_target, completed, completed_at')
         .eq('id', dailyTaskId)
         .eq('user_id', user.id)
         .maybeSingle();
 
       if (task) {
         const newDone = (task.pomodoros_done as number) + 1;
+        const wasCompleted = task.completed as boolean;
         const autoComplete = newDone >= (task.pomodoros_target as number);
+
+        // Only set completed_at when transitioning incomplete→complete.
+        // The previous code wrote `completed_at: null` for the no-op
+        // branch, which silently wiped the original completion timestamp
+        // on every replay (corrupting streak / report data).
+        const update: Record<string, unknown> = {
+          pomodoros_done: newDone,
+          completed: autoComplete ? true : wasCompleted,
+        };
+        if (autoComplete && !wasCompleted) {
+          update.completed_at = new Date().toISOString();
+        }
 
         await supabase
           .from('daily_tasks')
-          .update({
-            pomodoros_done: newDone,
-            completed: autoComplete ? true : task.completed,
-            completed_at: autoComplete && !(task.completed as boolean) ? new Date().toISOString() : null,
-          })
+          .update(update)
           .eq('id', dailyTaskId)
           .eq('user_id', user.id);
       }

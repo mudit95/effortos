@@ -45,6 +45,13 @@ function formatTitleTime(seconds: number): string {
 export function TimerEngine() {
   const workerRef = useRef<Worker | null>(null);
   const fallbackRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Timestamp at which the current run should hit zero. Captured at START /
+  // RESUME, used by the fallback loop to recompute `remaining` from
+  // `Date.now()`. This is the timestamp-based pattern the Web Worker uses,
+  // re-implemented for the no-worker fallback path so background-tab
+  // throttling can't drift the countdown — the next un-throttled tick just
+  // re-derives the right value from wall clock.
+  const fallbackEndsAtRef = useRef<number | null>(null);
   // Tracks the previous timerState so we can distinguish 'paused→running'
   // (a RESUME, worker should keep its remaining) from 'idle→running' (a
   // fresh START). Without this, RESUME would restart the worker from
@@ -146,12 +153,67 @@ export function TimerEngine() {
         });
       }
     } else {
-      // Fallback: setInterval ticking via the store's tickTimer action.
-      if (fallbackRef.current) clearInterval(fallbackRef.current);
+      // ── Fallback loop (no Web Worker) ──────────────────────────────
+      // Earlier this called `tickTimer()` once per second, which (a) was
+      // throttled along with the rest of the tab when backgrounded, and
+      // (b) early-returned during 'break' state — so the break countdown
+      // never advanced in the fallback path.
+      //
+      // We now mirror the worker's timestamp model: capture an `endsAt`
+      // wall-clock at START / RESUME, and on every tick recompute
+      // `remaining = ceil((endsAt - Date.now()) / 1000)`. Background
+      // throttling can't drift the value because each tick re-reads
+      // Date.now(); when the tab un-throttles, the next tick simply jumps
+      // to the correct truth.
+      if (fallbackRef.current) {
+        clearInterval(fallbackRef.current);
+        fallbackRef.current = null;
+      }
+
+      if (timerState === 'running' && prev === 'paused') {
+        // Resume — re-anchor endsAt from the (paused) remaining.
+        fallbackEndsAtRef.current = Date.now() + useStore.getState().timeRemaining * 1000;
+      } else if (timerState === 'running' || timerState === 'break') {
+        // Fresh start (idle→running) OR entering break: anchor from the
+        // current remaining.
+        fallbackEndsAtRef.current = Date.now() + useStore.getState().timeRemaining * 1000;
+      } else {
+        fallbackEndsAtRef.current = null;
+      }
+
       if (timerState === 'running' || timerState === 'break') {
         fallbackRef.current = setInterval(() => {
-          useStore.getState().tickTimer();
-        }, 1000);
+          const endsAt = fallbackEndsAtRef.current;
+          if (endsAt == null) return;
+          const remaining = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+          // Only write to the store when the integer value actually changes
+          // — without this we'd cause re-renders 4× per second with the
+          // 250 ms tick interval below.
+          if (useStore.getState().timeRemaining !== remaining) {
+            useStore.setState({ timeRemaining: remaining });
+          }
+          if (remaining === 0) {
+            // Match the worker COMPLETE branch exactly so behaviour is
+            // identical regardless of which path drove the countdown.
+            const state = useStore.getState();
+            if (state.isBreak) {
+              if (state.user?.settings?.sound_enabled !== false) {
+                playSound('break_complete');
+              }
+              dispatchAmbientEvent('resume');
+              const focusDuration = state.user?.settings?.focus_duration || 25 * 60;
+              useStore.setState({
+                timerState: 'idle',
+                timeRemaining: focusDuration,
+                isBreak: false,
+              });
+            } else {
+              state.completeTimerSession();
+            }
+            // The state transition above will re-trigger this effect and
+            // tear down the interval.
+          }
+        }, 250);
       }
     }
   }, [timerState]);
