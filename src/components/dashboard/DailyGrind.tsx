@@ -11,7 +11,7 @@ import {
   Plus, Trash2, Play, Pause, RotateCcw, SkipForward,
   Repeat, ChevronLeft, ChevronRight, Maximize2, Circle, PictureInPicture2,
   CheckCircle2, Clock, Flame, PlusCircle, X, Calendar, Sparkles,
-  CalendarPlus, List, LayoutGrid, ListTodo,
+  CalendarPlus, List, LayoutGrid, ListTodo, Columns2,
 } from 'lucide-react';
 import { PiPButton } from '@/components/timer/PiPButton';
 import { usePiP } from '@/hooks/usePiP';
@@ -29,6 +29,7 @@ import { StreakCalendar } from './StreakCalendar';
 // redundant "motivate the user" real estate.
 import { AIMotivationCard } from './AICards';
 import { TimeBoxView } from './TimeBoxView';
+import { FlowView } from './FlowView';
 import { OtherTodosDrawer } from './OtherTodosDrawer';
 import { countOpenOtherTodos, listOtherTodos, toggleOtherTodoComplete } from '@/lib/other-todos';
 
@@ -854,6 +855,19 @@ export function DailyGrind() {
                   <LayoutGrid className="w-3 h-3" />
                   Schedule
                 </button>
+                <button
+                  onClick={() => setDailyGrindLayout('flow')}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-all ${
+                    dailyGrindLayout === 'flow'
+                      ? 'bg-white/[0.08] text-white/80'
+                      : 'text-white/30 hover:text-white/60'
+                  }`}
+                  title="Flow view — plan on the left, completed sessions ledger on the right"
+                  aria-pressed={dailyGrindLayout === 'flow'}
+                >
+                  <Columns2 className="w-3 h-3" />
+                  Flow
+                </button>
               </div>
               {isToday && (
                 <button
@@ -948,12 +962,16 @@ export function DailyGrind() {
         </HintBanner>
 
         {/* Task list — framed panel so the day's plan reads as a distinct block.
-            The `list` layout uses the classic ordered pending list. The
-            `schedule` layout hands rendering off to <TimeBoxView/>, which
-            splits tasks by time_block into drag-and-drop columns. We pass
-            the full visibleTasks (not just pendingTasks) to TimeBoxView so
-            completed tasks stay visible in their original column — that way
-            the schedule reads as a record of the day, not just a plan. */}
+            Three lenses over the same visibleTasks:
+              - `list`     — classic ordered pending list (default).
+              - `schedule` — TimeBoxView splits tasks into morning/afternoon/
+                             evening drag-and-drop columns.
+              - `flow`     — FlowView is a Plan/Done split: pending tasks on
+                             the left, the day's completed-pomodoros ledger
+                             on the right.
+            We pass the full visibleTasks (not just pendingTasks) to TimeBoxView
+            and FlowView so completed tasks stay visible in their lane — that
+            way each layout reads as a record of the day, not just a plan. */}
         {dailyGrindLayout === 'schedule' ? (
           visibleTasks.length > 0 && (
             <TimeBoxView
@@ -964,6 +982,27 @@ export function DailyGrind() {
               canRollForward={canRollForward}
               goals={goals}
               onUpdateTask={(taskId, updates) => updateDailyTaskDetails(taskId, updates)}
+              onToggleComplete={(taskId) => toggleTaskComplete(taskId)}
+              onDelete={(taskId) => deleteDailyTask(taskId)}
+              onStart={(taskId) => handleStartPomodoro(taskId)}
+              onExtend={(taskId) => {
+                const t = visibleTasks.find(x => x.id === taskId);
+                if (!t) return;
+                updateDailyTaskDetails(taskId, { pomodoros_target: t.pomodoros_target + 1 });
+              }}
+              onRollToTomorrow={(task) => handleRollToTomorrow(task)}
+            />
+          )
+        ) : dailyGrindLayout === 'flow' ? (
+          visibleTasks.length > 0 && (
+            <FlowView
+              tasks={visibleTasks}
+              activeTaskId={activeDailyTaskId}
+              isTimerActive={isTimerActive}
+              isToday={isToday}
+              canRollForward={canRollForward}
+              goals={goals}
+              focusDurationSeconds={user?.settings?.focus_duration ?? 25 * 60}
               onToggleComplete={(taskId) => toggleTaskComplete(taskId)}
               onDelete={(taskId) => deleteDailyTask(taskId)}
               onStart={(taskId) => handleStartPomodoro(taskId)}
@@ -1140,8 +1179,9 @@ export function DailyGrind() {
           )}
         </AnimatePresence>
 
-        {/* Completed */}
-        {completedTasks.length > 0 && (
+        {/* Completed — hidden in Flow view because the Done ledger already
+            renders these on the right side. */}
+        {completedTasks.length > 0 && dailyGrindLayout !== 'flow' && (
           <div className="mt-4 rounded-2xl border border-white/[0.05] bg-white/[0.01] p-2">
             <p className="text-[10px] text-white/25 uppercase tracking-widest mb-2 px-2 pt-1">
               Done ({completedTasks.length})
@@ -1406,7 +1446,9 @@ export function DailyGrind() {
 }
 
 /* ── TaskRow ──────────────────────────────────────────────────────── */
-function TaskRow({
+// Shared with FlowView (and any future lens) so all layouts render the same
+// row component — keeps the active/completed treatments consistent.
+export function TaskRow({
   task,
   isActive,
   isToday,

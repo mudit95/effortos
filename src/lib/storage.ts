@@ -264,7 +264,10 @@ export function setDashboardMode(mode: DashboardMode): void {
 export function getDailyGrindLayout(): DailyGrindLayout {
   if (typeof window === 'undefined') return 'list';
   const raw = localStorage.getItem(STORAGE_KEYS.DAILY_GRIND_LAYOUT);
-  return raw === 'schedule' ? 'schedule' : 'list';
+  // Defensive whitelist — clamp unknown values to 'list' so users on a build
+  // that doesn't recognise their stored layout still get a working render.
+  if (raw === 'schedule' || raw === 'flow') return raw;
+  return 'list';
 }
 
 export function setDailyGrindLayout(layout: DailyGrindLayout): void {

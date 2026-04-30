@@ -171,9 +171,11 @@ export interface Toast {
 // Daily Grind types
 export type DashboardMode = 'daily' | 'longterm' | 'reports';
 
-// Layout for the Daily Grind view. 'list' is the classic ordered task list;
-// 'schedule' is the 4-column drag-and-drop time-box grid.
-export type DailyGrindLayout = 'list' | 'schedule';
+// Layout for the Daily Grind view.
+//   'list'     — classic ordered task list
+//   'schedule' — 4-column drag-and-drop time-box grid
+//   'flow'     — split: today's plan on the left, completed-session ledger on the right
+export type DailyGrindLayout = 'list' | 'schedule' | 'flow';
 
 export const TASK_TAGS = [
   { id: 'startup', label: 'Startup', color: '#c026d3' },
