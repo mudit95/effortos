@@ -61,7 +61,33 @@ export function FocusBackgroundLayer({
 
   if (!bg) return null;
 
-  const dim = Math.max(0, Math.min(100, dimPercent ?? 35)) / 100;
+  // Effective dim: explicit prop takes priority (user override),
+  // then the background's per-entry recommendedDim (per-content
+  // tuning), and finally a 35% default for entries that don't
+  // declare one. Clamped so a stale stored value can't force
+  // the scrim to negative or > 100%.
+  const effectiveDim =
+    typeof dimPercent === 'number'
+      ? dimPercent
+      : (typeof bg.recommendedDim === 'number' ? bg.recommendedDim : 35);
+  const dim = Math.max(0, Math.min(100, effectiveDim)) / 100;
+
+  // Vignette behind the timer area. The flat dim scrim alone can't
+  // make centered white timer text legible on a bright video — a
+  // radial gradient ellipse darkens the middle of the viewport
+  // while leaving the edges of the background vivid. Strength is
+  // per-content (bright videos get 'strong', dark ones get 'subtle'
+  // or 'none').
+  const vignetteIntensity =
+    bg.vignette ?? (bg.type === 'video' ? 'normal' : 'none');
+  const vignetteCss =
+    vignetteIntensity === 'subtle'
+      ? 'radial-gradient(ellipse 600px 380px at 50% 50%, rgba(0,0,0,0.30) 0%, rgba(0,0,0,0.15) 45%, rgba(0,0,0,0) 75%)'
+      : vignetteIntensity === 'normal'
+      ? 'radial-gradient(ellipse 700px 440px at 50% 50%, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0.22) 45%, rgba(0,0,0,0) 75%)'
+      : vignetteIntensity === 'strong'
+      ? 'radial-gradient(ellipse 800px 500px at 50% 50%, rgba(0,0,0,0.60) 0%, rgba(0,0,0,0.30) 45%, rgba(0,0,0,0) 80%)'
+      : null;
 
   return (
     <>
@@ -129,6 +155,24 @@ export function FocusBackgroundLayer({
           aria-hidden="true"
           className="absolute inset-0 z-[1] pointer-events-none"
           style={{ backgroundColor: `rgba(0, 0, 0, ${dim})` }}
+        />
+      )}
+
+      {/* Timer-area vignette — same z layer as the flat dim scrim
+          (z-[1]). Lives ABOVE the visual but BELOW the timer + other
+          content (which sit at z-10 via FocusMode's controls).
+          Radial dark ellipse centered where the timer renders so
+          white digits stay legible regardless of how bright the
+          underlying video is. The flat scrim alone would have to go
+          to ~70% to be safe on a snowfield, which would also mute
+          the rest of the frame; this two-layer approach keeps the
+          edges vivid while fixing the centre legibility. Painted
+          AFTER the flat scrim in DOM order so it sits on top of it. */}
+      {vignetteCss && (
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 z-[1] pointer-events-none"
+          style={{ backgroundImage: vignetteCss }}
         />
       )}
 

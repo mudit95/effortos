@@ -51,7 +51,22 @@ export function BackgroundPicker() {
 
   const handlePick = useCallback(
     (id: string | null) => {
-      setFocusBackground({ id });
+      // When the user picks a background, also apply its
+      // recommendedDim so a bright video doesn't immediately render
+      // with a too-low scrim and an unreadable timer. The user can
+      // still drag the slider to override afterwards. We DON'T apply
+      // recommendedDim when the user is clearing the selection (id
+      // is null) — that would write a dim value with no background
+      // selected, and the user would see it next time they pick one.
+      if (id === null) {
+        setFocusBackground({ id: null });
+        return;
+      }
+      const next = BUNDLED_BACKGROUNDS.find((b) => b.id === id);
+      const wantsDim = typeof next?.recommendedDim === 'number'
+        ? next.recommendedDim
+        : undefined;
+      setFocusBackground(wantsDim != null ? { id, dim: wantsDim } : { id });
     },
     [setFocusBackground],
   );
@@ -59,12 +74,16 @@ export function BackgroundPicker() {
   // Shuffle: pick a random bundled background that's NOT the current
   // selection. Falls back gracefully when fewer than 2 backgrounds
   // exist (early days when the seed script hasn't run — only
-  // gradients are present).
+  // gradients are present). Mirrors handlePick so the shuffled
+  // background's recommendedDim also lands.
   const handleShuffle = useCallback(() => {
     const others = BUNDLED_BACKGROUNDS.filter((b) => b.id !== selectedId);
     if (others.length === 0) return;
     const next = others[Math.floor(Math.random() * others.length)];
-    setFocusBackground({ id: next.id });
+    const wantsDim = typeof next.recommendedDim === 'number'
+      ? next.recommendedDim
+      : undefined;
+    setFocusBackground(wantsDim != null ? { id: next.id, dim: wantsDim } : { id: next.id });
   }, [selectedId, setFocusBackground]);
 
   const commitDim = useCallback(

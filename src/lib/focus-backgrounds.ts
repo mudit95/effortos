@@ -68,6 +68,29 @@ export interface FocusBackground {
    *  as the static fallback under prefers-reduced-motion. */
   posterUrl?: string;
 
+  /**
+   * Recommended overall dim (0-100). Set per-background based on the
+   * actual content's brightness — bright videos like a snowfall need
+   * a much heavier scrim than a dark fireplace. The picker applies
+   * this as a sensible default when the user picks the background;
+   * the dim slider lets them override.
+   */
+  recommendedDim?: number;
+
+  /**
+   * Strength of the radial vignette rendered specifically behind the
+   * timer. The flat dim scrim alone can't make a centered white timer
+   * legible against a bright video — the vignette is a soft dark
+   * ellipse that fades outward so the rest of the background stays
+   * vivid while the timer area is reliably readable.
+   *
+   *   - 'none'   : no vignette (use for dark gradients / black bg).
+   *   - 'subtle' : ~25% dark at center, fades by ~600px radius.
+   *   - 'normal' : ~40% dark, fades by ~700px. Default for videos.
+   *   - 'strong' : ~55% dark, fades by ~800px. For very bright videos.
+   */
+  vignette?: 'none' | 'subtle' | 'normal' | 'strong';
+
   /** Photographer / source attribution. Optional per Pexels + Pixabay
    *  free-tier licences but rendered in a small footer credit when
    *  present. */
@@ -151,48 +174,78 @@ const GRADIENT_BACKGROUNDS: FocusBackground[] = [
  * FocusBackgroundLayer fallback.
  */
 const SEEDED_REMOTE_BACKGROUNDS: FocusBackground[] = [
+  // Mostly dark (streetlight points + wet glass). Low recommendedDim;
+  // the vignette catches the bright streetlight glare behind the clock.
   {
     id: 'video-rain-window',
     label: 'Rain on window',
     blurb: 'Warm streetlight glow through wet glass',
     type: 'video',
     url: '/backgrounds/rain-window.mp4',
+    recommendedDim: 25,
+    vignette: 'subtle',
   },
+  // Very dark with bright flame in lower half. Low dim, subtle vignette
+  // so the flame stays visible.
   {
     id: 'video-fireplace',
     label: 'Fireplace',
     blurb: 'Crackling logs, warm flames',
     type: 'video',
     url: '/backgrounds/fireplace.mp4',
+    recommendedDim: 20,
+    vignette: 'subtle',
   },
+  // Sky bright, water mid-tone. Needs more dim than dark videos.
   {
     id: 'video-ocean',
     label: 'Ocean shore',
     blurb: 'Slow waves rolling onto a calm beach',
     type: 'video',
     url: '/backgrounds/ocean.mp4',
+    recommendedDim: 40,
+    vignette: 'normal',
   },
+  // Very bright (snow + sunset bokeh). Strongest vignette; highest dim.
+  // Asset is also only 11s — flagged for re-encode in NEXT_STEPS but
+  // shipping the visibility fix today regardless.
   {
     id: 'video-snowfall',
     label: 'Snowfall',
     blurb: 'Sunset bokeh, falling snow',
     type: 'video',
     url: '/backgrounds/snowfall.mp4',
+    recommendedDim: 50,
+    vignette: 'strong',
   },
+  // Mid-tone greens and mid-bright water. Default dim + normal vignette.
+  // Also short (15s) — see NEXT_STEPS for re-encode plan.
   {
     id: 'video-forest-creek',
     label: 'Forest waterfall',
     blurb: 'Mossy creek, soft cascading water',
     type: 'video',
     url: '/backgrounds/forest-creek.mp4',
+    recommendedDim: 35,
+    vignette: 'normal',
   },
-  {
-    id: 'video-candle',
-    label: 'Candle flame',
-    blurb: 'Single flame, dark backdrop',
-    type: 'video',
-    url: '/backgrounds/candle.mp4',
-  },
+  // candle.mp4 was 15 KB / 4.9s / 21 kbps and rendered as a smear in
+  // production — temporarily excluded from the catalog. Run
+  //   ./scripts/refresh-broken-backgrounds.sh
+  // to re-source candle/snowfall/forest-creek at 720p; once the new
+  // candle.mp4 is in /public/backgrounds/, uncomment the entry below
+  // to put it back in the picker. The recommendedDim/vignette values
+  // are tuned for a dark candle scene (single flame, dark backdrop).
+  //
+  // {
+  //   id: 'video-candle',
+  //   label: 'Candle flame',
+  //   blurb: 'Single flame, dark backdrop',
+  //   type: 'video',
+  //   url: '/backgrounds/candle.mp4',
+  //   recommendedDim: 20,
+  //   vignette: 'subtle',
+  // },
 ];
 
 /** The canonical bundled catalog — what the picker renders by default. */
