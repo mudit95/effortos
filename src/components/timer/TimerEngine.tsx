@@ -126,16 +126,25 @@ export function TimerEngine() {
     const worker = workerRef.current;
     if (worker) {
       if (timerState === 'running') {
-        if (prev === 'paused') {
-          // Resume: keep worker's pausedRemaining, don't restart.
-          worker.postMessage({ type: 'RESUME' });
-        } else if (prev === 'break') {
+        if (prev === 'break') {
           // Store flips break→running 500ms after completeTimerSession.
           // The worker started counting at the 'break' transition already;
           // re-issuing START would reset the break countdown. No-op.
           // (See: useStore.completeTimerSession's setTimeout.)
         } else {
-          // idle→running: fresh focus session.
+          // BOTH idle→running (fresh start) AND paused→running (resume)
+          // get a fresh START with the store's current timeRemaining.
+          //
+          // We deliberately do NOT use the worker's RESUME message any
+          // more. RESUME relied on the worker's internal `pausedRemaining`
+          // captured at the previous PAUSE — but on app boot from a
+          // saved-running state, the rehydrated store has timerState
+          // 'paused' yet the worker is brand new and `pausedRemaining`
+          // is 0. RESUME would no-op silently and the timer would
+          // appear stuck after refresh. Always re-deriving the duration
+          // from the store works in every case because the store's
+          // timeRemaining is the source of truth (TICKs are written
+          // through).
           worker.postMessage({
             type: 'START',
             payload: { duration: useStore.getState().timeRemaining },

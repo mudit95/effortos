@@ -628,14 +628,29 @@ export const useStore = create<AppState>((set, get) => ({
           const focusDuration = supaUser.settings?.focus_duration || 25 * 60;
 
           // Recover timer state from localStorage (instant, no network).
+          //
+          // Both running-saves and paused-saves are rehydrated, capped at
+          // a 12-hour TTL — older saves are almost always abandoned
+          // sessions, and resurfacing a day-old timer creates more
+          // confusion than continuity. The rehydrated state is always
+          // 'paused' so the user explicitly confirms before continuing.
           const timerSaved = storage.getTimerState();
           let timeRemaining = focusDuration;
           let timerState: TimerState = 'idle';
           let currentSessionId: string | null = null;
 
-          if (timerSaved && timerSaved.isRunning && cloudActiveGoal) {
-            const elapsed = Math.floor((Date.now() - timerSaved.savedAt) / 1000);
-            const remaining = timerSaved.remaining - elapsed;
+          const TIMER_REHYDRATE_TTL_MS = 12 * 60 * 60 * 1000;
+          if (
+            timerSaved &&
+            cloudActiveGoal &&
+            Date.now() - timerSaved.savedAt < TIMER_REHYDRATE_TTL_MS
+          ) {
+            // For running saves, subtract wall-clock elapsed since save.
+            // For paused saves, the saved `remaining` is verbatim — pause
+            // means time didn't advance, so no elapsed subtraction.
+            const remaining = timerSaved.isRunning
+              ? timerSaved.remaining - Math.floor((Date.now() - timerSaved.savedAt) / 1000)
+              : timerSaved.remaining;
             if (remaining > 0) {
               timeRemaining = remaining;
               timerState = 'paused';
@@ -738,15 +753,24 @@ export const useStore = create<AppState>((set, get) => ({
       const activeGoal = goals.find(g => g.status === 'active') || null;
       const focusDuration = user.settings?.focus_duration || 25 * 60;
 
-      // Recover timer state
+      // Recover timer state — same 12-hour TTL semantics as the cloud
+      // path above. Paused saves are restored too (previously they were
+      // silently dropped, so a pause that crossed a refresh vanished and
+      // the user lost the session).
       const timerSaved = storage.getTimerState();
       let timeRemaining = focusDuration;
       let timerState: TimerState = 'idle';
       let currentSessionId: string | null = null;
 
-      if (timerSaved && timerSaved.isRunning && activeGoal) {
-        const elapsed = Math.floor((Date.now() - timerSaved.savedAt) / 1000);
-        const remaining = timerSaved.remaining - elapsed;
+      const TIMER_REHYDRATE_TTL_MS = 12 * 60 * 60 * 1000;
+      if (
+        timerSaved &&
+        activeGoal &&
+        Date.now() - timerSaved.savedAt < TIMER_REHYDRATE_TTL_MS
+      ) {
+        const remaining = timerSaved.isRunning
+          ? timerSaved.remaining - Math.floor((Date.now() - timerSaved.savedAt) / 1000)
+          : timerSaved.remaining;
         if (remaining > 0) {
           timeRemaining = remaining;
           timerState = 'paused';
