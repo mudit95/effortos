@@ -1006,6 +1006,40 @@ export const useStore = create<AppState>((set, get) => ({
     });
     clearOnboardingDraft();
 
+    // Auto-redeem a pending referral code captured at landing (?ref=CODE).
+    // Stashed by useStashReferralCode hook in LandingPage. We fire-and-
+    // forget — failure is fine; the user can still paste the code later
+    // in the paywall modal. The code is cleared regardless so a failed
+    // redemption doesn't replay on every subsequent dashboard mount.
+    if (typeof window !== 'undefined') {
+      try {
+        const pending = window.localStorage.getItem('effortos:pending_referral');
+        if (pending) {
+          window.localStorage.removeItem('effortos:pending_referral');
+          fetch('/api/coupons/redeem', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: pending }),
+          })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+              if (data?.applied === 'free_months') {
+                get().addToast(
+                  `Referral applied — ${data.value} month${data.value === 1 ? '' : 's'} free!`,
+                  'success',
+                );
+                get().fetchSubscriptionStatus();
+              }
+            })
+            .catch(() => {
+              // Silent fail — user can still paste the code manually.
+            });
+        }
+      } catch {
+        // localStorage unavailable — skip silently.
+      }
+    }
+
     get().refreshDashboard();
   },
 

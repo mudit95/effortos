@@ -16,6 +16,7 @@ import {
 } from '@/lib/pricing';
 import { PactsSection } from './PactsSection';
 import { TimezoneClock } from './TimezoneClock';
+import { InviteFriendsSection } from './InviteFriendsSection';
 
 const THEMES = [
   {
@@ -665,6 +666,9 @@ export function SettingsModal() {
               <div className="pt-4 border-t border-white/[0.06]">
                 <PactsSection />
               </div>
+
+              {/* Invite Friends — referrals (both sides get a month free) */}
+              <InviteFriendsSection />
 
               {/* Your Data — export is safe and belongs above the destructive actions */}
               <div className="pt-4 border-t border-white/[0.06]">

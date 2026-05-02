@@ -453,6 +453,7 @@ function LongTermStreakCalendar({
   recommendedDaily?: number;
 }) {
   const focusDuration = useStore(s => s.user?.settings?.focus_duration ?? 25 * 60);
+  const userName = useStore(s => s.user?.name?.split(' ')[0]);
   const journalEntries = useStore(s => s.journalEntries);
   const setJournalModalDate = useStore(s => s.setJournalModalDate);
   // Streak-freeze plumbing (mig 035). Pull tokens-remaining off the
@@ -477,6 +478,7 @@ function LongTermStreakCalendar({
       onDayClick={(date) => setJournalModalDate(date)}
       freezeTokensRemaining={freezeTokensRemaining}
       onFreezeToday={() => freezeStreak('today')}
+      userName={userName}
     />
   );
 }

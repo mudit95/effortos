@@ -4,6 +4,7 @@ import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, ChevronRight, Flame, Clock, Target, BookOpen, PlusCircle, Snowflake } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ShareStreakButton } from './ShareStreakButton';
 
 interface DailySession {
   date: string;
@@ -41,6 +42,14 @@ interface StreakCalendarProps {
    * call here; this component is presentational.
    */
   onFreezeToday?: () => void;
+  /**
+   * Owner's display name — surfaces inside the share-streak button's
+   * pre-formed share message. Optional; falls back to "I" / "Someone"
+   * when not provided.
+   */
+  userName?: string;
+  /** Show the share-streak button next to the streak chip. Default true. */
+  showShareButton?: boolean;
 }
 
 type HoverInfo = {
@@ -69,6 +78,8 @@ export function StreakCalendar({
   journalDates,
   freezeTokensRemaining,
   onFreezeToday,
+  userName,
+  showShareButton = true,
 }: StreakCalendarProps) {
   // Normalize the journal date array to a Set for O(1) membership checks
   // inside the render loop (one lookup per cell, 35+ cells per month).
@@ -389,6 +400,16 @@ export function StreakCalendar({
               <span className="text-white/50">Best:</span>
               <span className="font-semibold text-white">{bestStreak}</span>
             </>
+          )}
+          {/* Share button — only when there's a current streak worth
+              sharing (a "0 day streak" share message is sad). */}
+          {showShareButton && currentStreak > 0 && (
+            <span className="ml-1">
+              <ShareStreakButton
+                displayName={userName}
+                currentStreak={currentStreak}
+              />
+            </span>
           )}
         </div>
       )}

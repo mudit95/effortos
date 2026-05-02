@@ -790,6 +790,7 @@ export function DailyGrind() {
           focusDurationSec={user?.settings?.focus_duration ?? 25 * 60}
           journalDates={journalDates}
           onDayClick={(date) => setJournalModalDate(date)}
+          userName={user?.name?.split(' ')[0]}
         />
       </div>
 

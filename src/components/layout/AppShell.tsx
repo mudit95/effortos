@@ -41,6 +41,31 @@ export function AppShell() {
   // Subscribe to Supabase Realtime for cross-device sync
   useRealtimeSync();
 
+  // Stash any ?ref=CODE landing-page referral code so completeOnboarding
+  // (or a future paywall step) can auto-apply it. We strip it from the
+  // URL right after capture so refreshes / shares of the tab don't
+  // re-stash the same code endlessly. Sticky for 30 days; cleared on
+  // successful redemption.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const ref = params.get('ref');
+      if (ref && /^[A-Z0-9-]{4,40}$/i.test(ref)) {
+        window.localStorage.setItem('effortos:pending_referral', ref.toUpperCase());
+        params.delete('ref');
+        const next = params.toString();
+        const cleanUrl =
+          window.location.pathname + (next ? `?${next}` : '') + window.location.hash;
+        window.history.replaceState({}, '', cleanUrl);
+      }
+    } catch {
+      // localStorage / URL parsing unavailable — skip silently.
+    }
+    // Run once on mount; URL changes that don't reload the app are
+    // already handled by Next router and won't re-bring a ref param.
+  }, []);
+
   useEffect(() => {
     initializeApp();
     // Apply stored theme on load
