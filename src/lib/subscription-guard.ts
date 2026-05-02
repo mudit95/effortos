@@ -47,6 +47,16 @@ export async function requireActiveSub(): Promise<
 
   const now = new Date();
 
+  // Paused (mig 034) blocks premium access by design — pause means
+  // "stop charging me AND stop letting me use premium." We check
+  // BEFORE the current_period_end fast-path because Razorpay keeps
+  // the existing period_end alive while a subscription is paused;
+  // without this guard, a user could pause on day 1 of a 30-day
+  // cycle and still get 30 days of premium for free.
+  if (sub.status === 'paused') {
+    return { ok: false, reason: 'subscription_paused', status: 402 };
+  }
+
   // Premium (future period end) takes precedence regardless of status string
   if (sub.current_period_end && new Date(sub.current_period_end) > now) {
     return { ok: true, userId: user.id };

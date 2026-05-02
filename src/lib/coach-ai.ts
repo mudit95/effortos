@@ -244,3 +244,133 @@ function getFallbackMessage(nudgeType: NudgeType, ctx: UserContext): string {
       return `📓 Sunday reflection: what went well this week, what would you change? Reply and I'll save it to your journal.`;
   }
 }
+
+// ── Wave 3: Daily AI report card ─────────────────────────────────────────
+//
+// One-line prescriptive suggestion sent to Pro users at end-of-day.
+// Distinct from the existing nightly email (which is descriptive). This
+// is the "what should I do differently tomorrow" line, fed by today's
+// numbers and the user's longer-running pattern.
+//
+// Cached one-per-(user, date) in the daily_cards table (mig 037), so
+// the dashboard render doesn't re-fire Claude. The endpoint
+// (/api/coach/daily-card) handles cache lookup + write.
+
+/** Stats shape the daily-card AI uses. Mirrors the JSONB schema in
+ *  the daily_cards table; keeping the types together makes the
+ *  contract obvious at the call site. */
+export interface DailyCardStats {
+  focusMinutes: number;
+  sessionsCompleted: number;
+  tasksCompleted: number;
+  tasksTotal: number;
+  /** 0..1, NaN when tasksTotal == 0 (renderer should hide). */
+  completionRate: number;
+  /** Latest journal mood if the user logged one today, else null. */
+  mood: string | null;
+  currentStreak: number;
+  /** Active goal pace as % complete, NULL when no active goal. */
+  activeGoalPct: number | null;
+  /** User's first name, used for the personalisation in the prompt. */
+  userName: string;
+}
+
+/** Result tuple from the AI call. tokens=0 when fallback was used
+ *  (no Claude call happened) — caller can record that for accounting. */
+export interface DailyCardAiResult {
+  suggestion: string;
+  tokens: number;
+}
+
+const DAILY_CARD_SYSTEM = `You are EffortOS, generating a one-line evening insight for a user reviewing their day.
+
+OUTPUT RULES:
+- Return EXACTLY one sentence. Max 140 characters. No bullets, no preamble, no markdown.
+- Be prescriptive ("try X tomorrow"), not descriptive (the dashboard already shows numbers).
+- Reference SPECIFIC numbers from CONTEXT only when they support the suggestion. Never invent stats.
+- Tone: warm, grounded, non-pushy. Like a thoughtful colleague, not a coach hyping you up.
+- If today went well, reinforce the pattern ("today's 3 sessions before noon were your best — same shape tomorrow?").
+- If today went sideways, suggest one small recoverable change ("tomorrow, lock in just one 25-min block before lunch").
+- Avoid praise inflation. "Great job!" / "Amazing!" — never write those words.
+- No emojis. The dashboard handles visual styling.`;
+
+export async function generateDailyCardAi(
+  stats: DailyCardStats,
+): Promise<DailyCardAiResult> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return { suggestion: dailyCardFallback(stats), tokens: 0 };
+  }
+
+  const ctxLines: string[] = [
+    `User: ${stats.userName.split(' ')[0] || 'there'}`,
+    `Focus minutes today: ${stats.focusMinutes}`,
+    `Sessions completed: ${stats.sessionsCompleted}`,
+    `Tasks: ${stats.tasksCompleted}/${stats.tasksTotal} complete`,
+    `Streak: ${stats.currentStreak} days`,
+  ];
+  if (stats.mood) ctxLines.push(`Today's journal mood: ${stats.mood}`);
+  if (stats.activeGoalPct != null) {
+    ctxLines.push(`Active goal: ${stats.activeGoalPct}% complete`);
+  }
+
+  try {
+    const anthropic = new Anthropic({ apiKey });
+    const response = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 200,
+      system: DAILY_CARD_SYSTEM,
+      messages: [
+        {
+          role: 'user',
+          content: `[CONTEXT]\n${ctxLines.join('\n')}\n\n[TASK]\nWrite the one-line insight.`,
+        },
+      ],
+    });
+
+    const text = response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join('')
+      .trim();
+
+    // Shape sanity: must be a single sentence, reasonable length.
+    // Anthropic occasionally adds trailing whitespace or a stray
+    // markdown wrapper despite the prompt — strip + bound.
+    const cleaned = text
+      .replace(/^[`*_>\s]+|[`*_>\s]+$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!cleaned || cleaned.length < 20 || cleaned.length > 240) {
+      return { suggestion: dailyCardFallback(stats), tokens: response.usage?.input_tokens ?? 0 };
+    }
+
+    const totalTokens =
+      (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0);
+    return { suggestion: cleaned, tokens: totalTokens };
+  } catch (err) {
+    console.error('[daily-card-ai] generation failed:', err);
+    return { suggestion: dailyCardFallback(stats), tokens: 0 };
+  }
+}
+
+/** Static fallback when AI is unavailable. Picks a line based on
+ *  whether today went well or poorly so the suggestion still feels
+ *  responsive to the user's actual numbers. */
+function dailyCardFallback(stats: DailyCardStats): string {
+  const completed = stats.tasksCompleted;
+  const total = stats.tasksTotal;
+  const cleanSweep = total > 0 && completed === total;
+  const lateStart = stats.focusMinutes < 25;
+
+  if (cleanSweep) {
+    return 'Clean sweep today — try the same first-block timing tomorrow to lock the pattern in.';
+  }
+  if (lateStart && total > 0) {
+    return 'Tomorrow, try locking in just one 25-minute block before lunch — that anchors the rest of the day.';
+  }
+  if (total === 0) {
+    return 'No tasks today — set 1-3 small ones tonight so tomorrow starts with a clear first move.';
+  }
+  return 'Carry one unfinished task into tomorrow as your first focus block — momentum beats blank slate.';
+}

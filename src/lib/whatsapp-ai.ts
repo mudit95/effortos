@@ -1,13 +1,37 @@
 /**
  * AI-powered WhatsApp message parser.
  * Takes a natural-language message and returns a structured intent.
+ *
+ * Phase-3 upgrades (mig 032 + this file):
+ *  - Conversation memory: parser sees the last few turns and uses them
+ *    only to resolve referential ambiguity ("the second one", "yes do
+ *    that"). Memory is appended outside this module — see
+ *    lib/wa-conversation.ts.
+ *  - Multi-intent: a single message like "finish React then start Vue"
+ *    no longer needs two round-trips. The parser may return
+ *    { type: 'multi_intent', intents: [...] } whose sub-intents are
+ *    primitive (never multi_intent themselves).
+ *  - Clarify: when confidence on a destructive action (delete/complete)
+ *    is low and the conversation memory doesn't disambiguate, the
+ *    parser may return a clarify intent with 2–4 candidate options.
+ *  - add_goal: opens up goal creation over chat — a real new capability.
  */
 import Anthropic from '@anthropic-ai/sdk';
 import type { BotPersona } from '@/types';
 import { personaSystemSnippet, resolvePersona } from '@/lib/persona-tone';
 import { ensureAiQuota, recordAiUsage, type AiTier } from '@/lib/aiQuota';
+import {
+  formatConversationForPrompt,
+  type ConversationMessage,
+} from '@/lib/wa-conversation';
 
-export type WAIntent =
+/**
+ * The "primitive" intents — actions a sub-intent inside `multi_intent`
+ * is allowed to be. Excludes multi_intent itself (no recursion) and the
+ * conversational/fallback types (chat / off_topic / unknown / clarify),
+ * which only make sense as the top-level outcome of a single user turn.
+ */
+export type WAPrimitiveIntent =
   | { type: 'add_tasks'; tasks: Array<{ title: string; pomodoros: number; tag?: string }> }
   | { type: 'list_tasks' }
   | { type: 'complete_task'; query: string }
@@ -30,6 +54,27 @@ export type WAIntent =
   | { type: 'list_other_todos' }
   | { type: 'complete_other_todo'; query: string }
   | { type: 'delete_other_todo'; query: string }
+  // ── New in phase 3 ──
+  // add_goal — long-running goal creation via chat. The session-count
+  // field is optional; if the user doesn't mention one, the goal-create
+  // API will run estimation server-side just like the dashboard wizard.
+  | { type: 'add_goal'; title: string; estimatedSessions?: number; deadline?: string }
+  // freeze_streak — consume a freeze token to protect today's (or
+  // yesterday's, within 24h) streak. Pairs with mig 035 + the
+  // /api/streaks/freeze endpoint. The handler reads `which` to decide
+  // between today (default) and yesterday (retroactive window).
+  | { type: 'freeze_streak'; which: 'today' | 'yesterday' };
+
+export type WAIntent =
+  | WAPrimitiveIntent
+  // multi_intent — a single user message expressing two or more separate
+  // primitive intents in one go. The webhook iterates these in order,
+  // running each handler and stitching their replies together.
+  | { type: 'multi_intent'; intents: WAPrimitiveIntent[] }
+  // clarify — the parser couldn't disambiguate between candidates. The
+  // webhook renders the question + numbered options and stores a pending
+  // state so the user's next reply ("2") routes back to the chosen option.
+  | { type: 'clarify'; question: string; options: Array<{ label: string; value: string }> }
   // Conversational, advisory replies about the user's actual tasks, errands,
   // sessions, or how their workday is going. The handler loads real context
   // (today's tasks, errands, focus time) and asks Claude to respond. Stays
@@ -237,7 +282,98 @@ INTENTS (return EXACTLY one):
 19. unknown — message looks task-related but you genuinely can't tell what
     they want, even as a chat reply. This should be rare — most ambiguous
     messages should route to chat_about_tasks.
-    Return: { "type": "unknown", "raw": "original message" }`;
+    Return: { "type": "unknown", "raw": "original message" }
+
+── PHASE-3 META INTENTS ──
+
+20. multi_intent — the message expresses TWO OR MORE separate primitive
+    actions in one go. Use this when (and only when) splitting on commas,
+    "and", "then", "also", or semicolons yields independently-actionable
+    intents that a SINGLE primitive intent above can't capture.
+    Return: { "type": "multi_intent", "intents": [<primitive intent>, <primitive intent>, ...] }
+    - Each sub-intent must be a primitive intent (1–16 above OR add_goal).
+      Sub-intents may NOT be multi_intent (no recursion), chat_about_tasks,
+      off_topic, unknown, or clarify.
+    - Max 4 sub-intents. Anything more is almost certainly noise — fall
+      back to chat_about_tasks instead.
+    - Don't use multi_intent when the parts are all the SAME primitive
+      kind that already supports a list:
+        "study math, code feature, review PRs" → ONE add_tasks with 3 tasks (NOT multi_intent).
+        "buy milk and pay bills"                → ONE add_other_todos with 2 todos.
+      Use multi_intent only when the kinds DIFFER:
+        "finish React then start Vue"           → multi_intent: [complete_task, add_tasks]
+        "delete gym and add yoga 2 poms"        → multi_intent: [delete_task, add_tasks]
+        "plan tomorrow and add journal entry"   → multi_intent: [plan_tomorrow, add_journal]
+
+21. clarify — the user's message is destructive (delete/complete) AND
+    the target is genuinely ambiguous given their existing list. Reserve
+    this for cases where guessing wrong would lose data the user cared
+    about. NEVER clarify on add operations — when in doubt, just add.
+    Return: {
+      "type": "clarify",
+      "question": "Which one?",
+      "options": [
+        { "label": "Math homework", "value": "math homework" },
+        { "label": "Math review", "value": "math review" }
+      ]
+    }
+    - 2–4 options, each with a short label (≤ 60 chars) the user can read
+      at a glance, and a value the webhook will feed back through the
+      parser ("2" maps to options[1].value).
+    - Use sparingly. If the conversation history (RECENT_CONVERSATION) or
+      the user's wording disambiguates, just classify normally instead.
+    - DON'T use clarify if you'd otherwise return chat_about_tasks — chat
+      already lets the user steer the conversation.
+
+── FREEZE_STREAK (new in phase 3.5 — pairs with the streak-freeze infra) ──
+
+23. freeze_streak — consume a freeze token to protect a calendar day's
+    streak. Use ONLY when the user explicitly asks to freeze / protect
+    / save / shield their streak. NOT for "shh" / "pause coaching" —
+    that's a different intent (pause_coaching).
+    Return: { "type": "freeze_streak", "which": "today" }
+       OR:  { "type": "freeze_streak", "which": "yesterday" }
+    - Default the "which" field to 'today' unless the user explicitly says
+      "yesterday" / "missed yesterday" / "save yesterday".
+    - Triggers: "freeze my streak", "freeze today", "save my streak",
+      "protect my streak", "use a freeze token", "freeze yesterday",
+      "save yesterday" (→ which='yesterday'), "I missed yesterday,
+      can you freeze it" (→ which='yesterday').
+    - The 24-hour retroactive window is enforced server-side; the
+      handler returns a clean error if the user tries to freeze
+      anything older than yesterday.
+
+── ADD_GOAL (new in phase 3) ──
+
+22. add_goal — create a LONG-RUNNING goal (not a single-day task). Goals
+    have estimated session counts and optional deadlines; they sit above
+    daily tasks in the hierarchy.
+    Return: { "type": "add_goal", "title": "...", "estimatedSessions": N, "deadline": "YYYY-MM-DD" }
+    - title is required, ≤ 80 chars, sanitised below.
+    - estimatedSessions is OPTIONAL. Omit unless the user explicitly
+      states a session count or hours ("100 hours of guitar" → 200,
+      "30 sessions" → 30). Otherwise the server estimates.
+    - deadline is OPTIONAL ISO date YYYY-MM-DD. Convert relative phrases:
+      "by end of year" → use Dec 31 of current year.
+      "in 3 months" → today + 90 days.
+    - Distinguish from add_tasks: tasks are single-day items; goals span
+      weeks/months. Use add_goal for messages like:
+        "create goal: ship MVP" / "new goal: learn guitar"
+        "I want to read 12 books this year" → add_goal with deadline
+        "set a goal to run a marathon in 6 months"
+    - For ambiguous "I want to learn X" with no goal/task framing, prefer
+      add_goal when the activity is clearly long-running, otherwise
+      add_tasks for a single 1-pomodoro learning session today.
+
+CONFIDENCE RULES (CRITICAL):
+- Default to a real intent when you're at least ~70% confident.
+- For DESTRUCTIVE actions (delete_task, delete_other_todo, complete_task,
+  complete_other_todo), you must be MORE confident — if the query is
+  ambiguous AND the user's recent list could have multiple matches, return
+  clarify instead.
+- If RECENT_CONVERSATION clearly resolves a referential phrase ("the
+  second one", "yes that one", "the React one"), use that resolution
+  silently — don't ask to clarify what context already answers.`;
 
 // Hard cap on the user's input we feed to the parser. Anything longer is
 // almost never a legitimate one-message task command — and longer inputs
@@ -254,12 +390,17 @@ function sanitizeTitle(s: string): string {
     .trim();
 }
 
-// Validate / harden the structured intent the model returned. We can't
-// trust the JSON shape blindly: even with the system prompt locked down,
-// a clever input could persuade Claude to emit overlong titles, empty
-// queries, or query: "all" patterns that fuzzy-match the first task and
-// silently delete/complete it.
-function hardenIntent(parsed: unknown, originalMessage: string): WAIntent {
+/**
+ * Validate / harden the structured intent the model returned. We can't
+ * trust the JSON shape blindly: even with the system prompt locked down,
+ * a clever input could persuade Claude to emit overlong titles, empty
+ * queries, or query: "all" patterns that fuzzy-match the first task and
+ * silently delete/complete it.
+ *
+ * @internal Exported for unit testing — callers in production should go
+ *   through parseWhatsAppMessage() which calls this internally.
+ */
+export function hardenIntent(parsed: unknown, originalMessage: string): WAIntent {
   if (!parsed || typeof parsed !== 'object') return { type: 'unknown', raw: originalMessage };
   const obj = parsed as Record<string, unknown>;
   const type = obj.type;
@@ -272,6 +413,89 @@ function hardenIntent(parsed: unknown, originalMessage: string): WAIntent {
     if (t === 'all' || t === 'every' || t === 'everything' || t === '*') return true;
     return false;
   };
+
+  // multi_intent gets recursive harden — but we strip any nested
+  // multi_intent / chat / off_topic / unknown / clarify out of the sub
+  // list. Only primitives can be sub-intents, matching the prompt.
+  if (type === 'multi_intent') {
+    const rawList = Array.isArray(obj.intents) ? (obj.intents as unknown[]) : [];
+    const sub: WAPrimitiveIntent[] = [];
+    for (const item of rawList.slice(0, 4)) {
+      const inner = hardenIntent(item, originalMessage);
+      if (isPrimitiveIntent(inner)) {
+        sub.push(inner);
+      }
+      // Non-primitive returns (chat_about_tasks, unknown, clarify, nested
+      // multi_intent) are silently dropped. If the user really sent two
+      // primitives plus garbage, we honour the primitives.
+    }
+    if (sub.length === 0) return { type: 'unknown', raw: originalMessage };
+    if (sub.length === 1) return sub[0]; // collapse trivial wrapper
+    return { type: 'multi_intent', intents: sub };
+  }
+
+  if (type === 'clarify') {
+    const question = typeof obj.question === 'string'
+      ? sanitizeTitle(obj.question).slice(0, 200)
+      : '';
+    const rawOptions = Array.isArray(obj.options) ? (obj.options as unknown[]) : [];
+    const cleanedOptions: Array<{ label: string; value: string }> = [];
+    for (const opt of rawOptions.slice(0, 4)) {
+      if (!opt || typeof opt !== 'object') continue;
+      const r = opt as Record<string, unknown>;
+      const label = typeof r.label === 'string' ? sanitizeTitle(r.label).slice(0, 60) : '';
+      const value = typeof r.value === 'string' ? sanitizeTitle(r.value).slice(0, 200) : '';
+      if (label && value) cleanedOptions.push({ label, value });
+    }
+    // A clarify with fewer than 2 real options is useless — degrade to
+    // unknown so the user gets a generic "didn't catch that" rather than
+    // a one-button prompt.
+    if (!question || cleanedOptions.length < 2) {
+      return { type: 'unknown', raw: originalMessage };
+    }
+    return { type: 'clarify', question, options: cleanedOptions };
+  }
+
+  if (type === 'freeze_streak') {
+    // Whitelist `which` — defaults to today on anything unexpected.
+    // Mirrors the /api/streaks/freeze body validation, so the
+    // intent-shape and the API contract stay aligned.
+    const which: 'today' | 'yesterday' =
+      obj.which === 'yesterday' ? 'yesterday' : 'today';
+    return { type: 'freeze_streak', which };
+  }
+
+  if (type === 'add_goal') {
+    const title = typeof obj.title === 'string'
+      ? sanitizeTitle(obj.title).slice(0, 80)
+      : '';
+    if (!title) return { type: 'unknown', raw: originalMessage };
+    const out: { type: 'add_goal'; title: string; estimatedSessions?: number; deadline?: string } = {
+      type: 'add_goal', title,
+    };
+    if (
+      typeof obj.estimatedSessions === 'number'
+      && obj.estimatedSessions >= 1
+      && obj.estimatedSessions <= 5000
+    ) {
+      out.estimatedSessions = Math.floor(obj.estimatedSessions);
+    }
+    if (typeof obj.deadline === 'string') {
+      // Strict YYYY-MM-DD shape and a sane 10-year horizon. Reject
+      // anything else so a free-form date string never reaches the
+      // goal-create endpoint.
+      const m = obj.deadline.match(/^\d{4}-\d{2}-\d{2}$/);
+      if (m) {
+        const d = new Date(obj.deadline + 'T00:00:00Z');
+        const horizon = new Date();
+        horizon.setUTCFullYear(horizon.getUTCFullYear() + 10);
+        if (!isNaN(d.getTime()) && d.getTime() > Date.now() && d <= horizon) {
+          out.deadline = obj.deadline;
+        }
+      }
+    }
+    return out;
+  }
 
   switch (type) {
     case 'add_tasks':
@@ -349,9 +573,53 @@ function hardenIntent(parsed: unknown, originalMessage: string): WAIntent {
   }
 }
 
+/**
+ * Type guard: is this a primitive intent (eligible to live inside a
+ * multi_intent.intents array)?  Excludes the meta intents and the
+ * conversational/fallback types.
+ */
+export function isPrimitiveIntent(intent: WAIntent): intent is WAPrimitiveIntent {
+  switch (intent.type) {
+    case 'add_tasks':
+    case 'list_tasks':
+    case 'complete_task':
+    case 'check_progress':
+    case 'edit_task':
+    case 'delete_task':
+    case 'move_task':
+    case 'time_today':
+    case 'help':
+    case 'pause_coaching':
+    case 'plan_tomorrow':
+    case 'add_journal':
+    case 'add_other_todos':
+    case 'list_other_todos':
+    case 'complete_other_todo':
+    case 'delete_other_todo':
+    case 'add_goal':
+    case 'freeze_streak':
+      return true;
+    default:
+      return false;
+  }
+}
+
 export async function parseWhatsAppMessage(
   message: string,
-  opts?: { userId?: string; tier?: AiTier },
+  opts?: {
+    userId?: string;
+    tier?: AiTier;
+    /**
+     * Optional rolling window of recent inbound + outbound messages for
+     * this user (oldest first). When provided, we inject it into the
+     * parser's system prompt so the model can resolve referential
+     * ambiguity ("the second one", "yes that one", "delete it").
+     * Caller is responsible for sourcing this from
+     * lib/wa-conversation.getRecentConversation. Empty array or omitted
+     * = stateless behaviour, identical to the pre-mig-032 parser.
+     */
+    recentMessages?: ConversationMessage[];
+  },
 ): Promise<WAIntent> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -382,14 +650,26 @@ export async function parseWhatsAppMessage(
   try {
     console.log('[WhatsApp AI] Parsing message:', safeMessage.slice(0, 100));
     const anthropic = new Anthropic({ apiKey });
+
+    // Conversation history block — only present when the caller supplied
+    // recent messages. The block is rendered via wa-conversation's
+    // formatter, which uses <RECENT_CONVERSATION> data delimiters that
+    // mirror the existing <USER_MESSAGE> tagging convention.
+    const conversationBlock = opts?.recentMessages?.length
+      ? formatConversationForPrompt(opts.recentMessages) + '\n\n'
+      : '';
+
     // Wrap the user's message in explicit data delimiters. This tells
     // Claude (and our future selves) that anything inside is UNTRUSTED —
     // see SYSTEM_PROMPT block above for the prompt-injection defence.
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 500,
+      max_tokens: 600,
       system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: `<USER_MESSAGE>\n${safeMessage}\n</USER_MESSAGE>` }],
+      messages: [{
+        role: 'user',
+        content: `${conversationBlock}<USER_MESSAGE>\n${safeMessage}\n</USER_MESSAGE>`,
+      }],
     });
 
     // Record actual token usage for the daily quota bucket.

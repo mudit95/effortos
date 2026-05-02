@@ -386,6 +386,7 @@ export function Reports() {
         <div className="flex items-center justify-center gap-2 mb-6">
           <button
             onClick={() => setOffset(o => o - 1)}
+            aria-label="Previous period"
             className="p-1.5 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 transition-all"
           >
             <ChevronLeft className="w-4 h-4" />
@@ -394,6 +395,7 @@ export function Reports() {
           <button
             onClick={() => setOffset(o => Math.min(o + 1, 0))}
             disabled={offset >= 0}
+            aria-label="Next period"
             className="p-1.5 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 transition-all disabled:opacity-20"
           >
             <ChevronRight className="w-4 h-4" />
@@ -408,6 +410,27 @@ export function Reports() {
           )}
         </div>
       </motion.div>
+
+      {/* Empty-state hint for first-time users (all zeros across the
+          summary cards). The cards still render the zeros explicitly
+          so the layout doesn't shift the moment data arrives — this
+          panel just frames the zeros as "you haven't started yet"
+          rather than letting the user wonder why everything's empty. */}
+      {report.completedPomodoros === 0 && report.tasksCompleted === 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.04, duration: 0.4, ease }}
+          className="text-center p-6 rounded-xl border border-dashed border-white/[0.06] bg-white/[0.015]"
+        >
+          <p className="text-sm text-white/50 mb-1">
+            Nothing to report yet for this {period === 'daily' ? 'day' : period === 'weekly' ? 'week' : 'month'}
+          </p>
+          <p className="text-xs text-white/30">
+            Reports populate as you log focus sessions. Start a pomodoro to fill in the cards below.
+          </p>
+        </motion.div>
+      )}
 
       {/* Summary cards */}
       <motion.div

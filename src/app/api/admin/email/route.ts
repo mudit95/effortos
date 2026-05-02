@@ -3,6 +3,8 @@ import { requireAdmin } from '@/lib/admin';
 import { sendEmail } from '@/lib/email';
 import { adminCustomEmail } from '@/lib/email-templates';
 import { getAdminSupabase, logEmail, listAllAuthUsers } from '@/lib/cron-helpers';
+import { createServiceClient } from '@/lib/supabase/service';
+import { logAdminAction } from '@/lib/adminAudit';
 
 /**
  * POST /api/admin/email
@@ -122,6 +124,23 @@ export async function POST(req: Request) {
       errors.push(`${email}: ${err instanceof Error ? err.message : 'unknown'}`);
     }
   }
+
+  // Audit: ADMIN_EMAIL_SENT. A custom-email broadcast can reach every paid
+  // user — that's a privileged data-access action that absolutely needs a
+  // forensic trail (who, when, what subject, how many got it).
+  await logAdminAction({
+    service: createServiceClient(),
+    actorUserId: check.user.id,
+    actionType: 'ADMIN_EMAIL_SENT',
+    payload: {
+      target,
+      subject: String(subject).slice(0, 200),
+      recipient_count: recipientEmails.length,
+      sent,
+      errors_count: errors.length,
+    },
+    request: req,
+  });
 
   return NextResponse.json({ sent, total: recipientEmails.length, errors: errors.length > 0 ? errors : undefined });
 }

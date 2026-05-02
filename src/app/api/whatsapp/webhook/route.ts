@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, timingSafeEqual, randomUUID } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createServiceClient } from '@/lib/supabase/service';
 import { extractIncomingMessage, sendTextMessage, downloadWhatsAppMedia } from '@/lib/whatsapp';
@@ -18,6 +18,12 @@ import { parseWhatsAppMessage, generateChatResponse, type WAIntent } from '@/lib
 import { getUserAiTier, type AiTier } from '@/lib/aiQuota';
 import { resolvePersona } from '@/lib/persona-tone';
 import { getUserTimezone, todayKeyInTz, dateKeyInTz } from '@/lib/user-date';
+import {
+  getRecentConversation,
+  appendConversationMessage,
+  DEFAULT_CONTEXT_WINDOW,
+  type ConversationMessage,
+} from '@/lib/wa-conversation';
 import {
   setPendingFlow,
   consumePendingFlow,
@@ -292,7 +298,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: 'ok' });
     }
 
-    const { from, text, buttonReplyId, audioId, messageId } = msg;
+    const { from, text, buttonReplyId, audioId, imageId, imageMimeType, messageId } = msg;
     const supabase = createServiceClient();
 
     // ── 0. Dedup by Meta message_id ─────────────────────────────────
@@ -343,6 +349,15 @@ export async function POST(req: NextRequest) {
     // See lib/aiQuota.ts — Pro gets 200k tokens/day, Starter 50k, free 5k.
     const aiTier: AiTier = await getUserAiTier(supabase, profile.id);
 
+    // Phase-3 conversational memory: load the rolling window of recent
+    // turns once at the top so every quick-match fall-through and the AI
+    // parser see the same history. getRecentConversation degrades to []
+    // when the table isn't migrated, so this is safe pre-mig-032.
+    const recentMessages: ConversationMessage[] = await getRecentConversation(
+      profile.id,
+      DEFAULT_CONTEXT_WINDOW,
+    );
+
     // ── 1b. Check for pending multi-step flow (e.g., journal entry) ──
     // consumePendingFlow uses GETDEL so two near-simultaneous deliveries
     // can't both consume the same flow. Redis TTL (10 min) handles
@@ -384,6 +399,19 @@ export async function POST(req: NextRequest) {
     // ── 1c. Handle voice notes — transcribe and process as text ──
     if (audioId && !text) {
       await handleVoiceNote(supabase, profile, from, audioId);
+      return NextResponse.json({ status: 'ok' });
+    }
+
+    // ── 1c'. Handle photo journals — image gets uploaded to Storage and
+    // saved as today's journal entry with an optional caption as the body.
+    // Sits parallel to the voice flow: an inbound photo from a linked
+    // user is interpreted as "save this to today's journal", same as
+    // voice notes are interpreted as journal-or-command depending on the
+    // pending flow. We don't try to parse images as commands — that's
+    // an entirely separate cost surface (vision API, OCR, etc.) and
+    // doesn't have a clean activation story right now.
+    if (imageId) {
+      await handleImageJournal(profile.id, from, imageId, imageMimeType, text);
       return NextResponse.json({ status: 'ok' });
     }
 
@@ -513,7 +541,7 @@ export async function POST(req: NextRequest) {
       if (match) {
         intent = { type: 'edit_task', query: match[1].trim(), newPomodoros: parseInt(match[2], 10) };
       } else {
-        intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier });
+        intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier, recentMessages });
       }
     }
     // Rename task — "rename X to Y"
@@ -522,7 +550,7 @@ export async function POST(req: NextRequest) {
       if (match) {
         intent = { type: 'edit_task', query: match[1].trim(), newTitle: match[2].trim() };
       } else {
-        intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier });
+        intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier, recentMessages });
       }
     }
     // Help / greeting
@@ -554,7 +582,7 @@ export async function POST(req: NextRequest) {
           todos: titles.map(t => ({ title: t.slice(0, 200), estimated_minutes: null })),
         };
       } else {
-        intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier });
+        intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier, recentMessages });
       }
     }
     // "Remind me to X" — single errand. AI handles multi-errand parsing
@@ -568,7 +596,7 @@ export async function POST(req: NextRequest) {
           todos: [{ title: title.slice(0, 200), estimated_minutes: null }],
         };
       } else {
-        intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier });
+        intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier, recentMessages });
       }
     }
     // List tasks — exact or contains keywords
@@ -618,16 +646,23 @@ export async function POST(req: NextRequest) {
       if (q) {
         intent = { type: 'complete_task', query: q };
       } else {
-        intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier });
+        intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier, recentMessages });
       }
     }
     else {
       // Fall through to AI parsing
       console.log('[WhatsApp] No quick-match, falling through to AI for:', lowerText.slice(0, 80));
-      intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier });
+      intent = await parseWhatsAppMessage(text, { userId: profile.id, tier: aiTier, recentMessages });
     }
 
     // ── 4. Execute intent ──
+    //
+    // Phase-3: record the inbound user turn in conversation memory just
+    // before dispatch. We tag it with the parsed intent type so future
+    // analytics / pruning logic has the classification on hand without
+    // re-parsing. This is best-effort — appendConversationMessage swallows
+    // its own errors (see lib/wa-conversation.ts).
+    void appendConversationMessage(profile.id, 'user', text, intent.type);
     await executeIntent(supabase, profile, from, intent);
 
     return NextResponse.json({ status: 'ok' });
@@ -711,6 +746,41 @@ async function executeIntent(
     case 'chat_about_tasks':
       await handleChatAboutTasks(supabase, profile, phone, intent.raw);
       break;
+    // ── Phase-3 additions ──
+    case 'multi_intent': {
+      // Run each sub-intent through executeIntent in order. The parser
+      // already capped the list at 4 and stripped non-primitives, so
+      // this is a bounded fan-out — never more than 4 outbound replies
+      // to the user from a single inbound message.
+      for (const sub of intent.intents) {
+        await executeIntent(supabase, profile, phone, sub as WAIntent);
+      }
+      break;
+    }
+    case 'clarify': {
+      // Render the parser's question + numbered options. We deliberately
+      // don't persist a clarify-pending state in Redis: the next inbound
+      // message will pass through the parser with the just-recorded
+      // conversation memory ("BOT: Did you mean: 1) Math homework, 2)
+      // Math review?"), which lets the parser bind a bare "1" or "the
+      // math review one" back to the right option without a separate
+      // stateful flow. Keeps the surface area small.
+      const optionLines = intent.options
+        .map((o, i) => `${i + 1}. ${o.label}`)
+        .join('\n');
+      const reply = `🤔 ${intent.question}\n\n${optionLines}\n\n_Reply with the number or the name._`;
+      await sendBotReply(phone, reply);
+      // Memory: capture the bot's clarify reply so the next user turn
+      // sees it as conversation context.
+      void appendConversationMessage(profile.id, 'bot', reply, 'clarify');
+      break;
+    }
+    case 'add_goal':
+      await handleAddGoal(supabase, profile.id, phone, profile.name, intent);
+      break;
+    case 'freeze_streak':
+      await handleFreezeStreak(supabase, profile.id, phone, intent.which);
+      break;
     case 'off_topic':
     case 'unknown':
     default: {
@@ -739,6 +809,143 @@ async function executeIntent(
       await sendBotReply(phone, helpText);
       break;
     }
+  }
+}
+
+// ── Phase-3.5: freeze a streak day via chat ─────────────────────────────
+//
+// Pairs with mig 035 + /api/streaks/freeze. Calls the same
+// claim_freeze_token RPC that the manual UI button uses, so the
+// per-user race + UNIQUE-collision handling lives in one place
+// (Postgres). The webhook just translates intent → RPC call →
+// human reply.
+async function handleFreezeStreak(
+  supabase: SupabaseClient,
+  userId: string,
+  phone: string,
+  which: 'today' | 'yesterday',
+) {
+  try {
+    const tz = await getUserTimezone(supabase, userId);
+    const today = todayKeyInTz(tz);
+    const targetDate = which === 'today'
+      ? today
+      : dateKeyInTz(tz, new Date(Date.now() - 24 * 60 * 60 * 1000));
+
+    const { data: claimRes, error: claimErr } = await supabase.rpc(
+      'claim_freeze_token',
+      {
+        p_user_id: userId,
+        p_date: targetDate,
+        p_source: 'manual',
+      },
+    );
+
+    if (claimErr) {
+      const hint = (claimErr.hint || '').toLowerCase();
+      if (hint === 'no_tokens') {
+        await sendBotReply(
+          phone,
+          '🛡 You\'re out of freeze tokens this month — they\'ll replenish on your next cycle.',
+        );
+        void appendConversationMessage(userId, 'bot', 'No freeze tokens remaining this month.', 'freeze_streak');
+        return;
+      }
+      if (hint === 'already_frozen') {
+        await sendBotReply(
+          phone,
+          `🛡 ${which === 'today' ? 'Today' : 'Yesterday'} is already frozen — your streak is safe.`,
+        );
+        void appendConversationMessage(userId, 'bot', `${which} already frozen`, 'freeze_streak');
+        return;
+      }
+      throw new Error(claimErr.message);
+    }
+
+    const remaining = Array.isArray(claimRes)
+      ? claimRes[0]?.remaining_tokens
+      : (claimRes as { remaining_tokens?: number } | null)?.remaining_tokens;
+
+    const dayLabel = which === 'today' ? 'Today' : 'Yesterday';
+    const remainingLine = typeof remaining === 'number'
+      ? `\n_${remaining} token${remaining === 1 ? '' : 's'} left this month._`
+      : '';
+    const reply = `🛡 ${dayLabel} frozen — your streak is safe.${remainingLine}`;
+    await sendBotReply(phone, reply);
+    void appendConversationMessage(userId, 'bot', reply, 'freeze_streak');
+  } catch (err) {
+    console.error('[WhatsApp] handleFreezeStreak error:', err);
+    await sendBotReply(phone, '❌ Something went wrong freezing that day. Try again?');
+  }
+}
+
+// ── Phase-3: goal creation via chat ──────────────────────────────────────
+//
+// Minimal goal-create flow over WhatsApp. We deliberately don't try to
+// recreate the dashboard's full estimation wizard here — the user's
+// follow-up signal will be "open the app to set milestones". Defaults
+// below produce a sensible row that satisfies the goals NOT-NULL
+// columns; the user can recalibrate once they're in the dashboard.
+async function handleAddGoal(
+  supabase: SupabaseClient,
+  userId: string,
+  phone: string,
+  _name: string,
+  intent: { type: 'add_goal'; title: string; estimatedSessions?: number; deadline?: string },
+) {
+  try {
+    const sessions = intent.estimatedSessions && intent.estimatedSessions > 0
+      ? intent.estimatedSessions
+      : 25; // sensible "one month at a pomodoro a day" starter
+    const insertPayload: Record<string, unknown> = {
+      user_id: userId,
+      title: intent.title,
+      estimated_sessions_initial: sessions,
+      estimated_sessions_current: sessions,
+      sessions_completed: 0,
+      user_time_bias: 0,
+      feedback_bias_log: [],
+      experience_level: 'beginner',
+      daily_availability: 1,
+      consistency_level: 'medium',
+      confidence_score: 0.5,
+      difficulty: 'moderate',
+      recommended_sessions_per_day: 1,
+      estimated_days: sessions,
+      status: 'active',
+    };
+    if (intent.deadline) insertPayload.deadline = intent.deadline;
+
+    const { error } = await supabase.from('goals').insert(insertPayload);
+
+    if (error) {
+      // Migration 029 added a BEFORE INSERT trigger that caps active +
+      // paused goals per user. Surface that explicitly so the user
+      // knows what to do; everything else falls into the generic error
+      // toast below.
+      const lower = (error.message || '').toLowerCase();
+      if (lower.includes('goal') && (lower.includes('cap') || lower.includes('limit') || lower.includes('exceed'))) {
+        await sendBotReply(
+          phone,
+          '🎯 You\'re already at the active-goal limit. Complete or pause one in the app, then try again.',
+        );
+        const blocked = '🎯 You\'re already at the active-goal limit. Complete or pause one in the app, then try again.';
+        void appendConversationMessage(userId, 'bot', blocked, 'add_goal');
+        return;
+      }
+      throw error;
+    }
+
+    const sessionsLine = intent.estimatedSessions
+      ? `~${sessions} pomodoros estimated`
+      : 'Pace will calibrate as you log sessions';
+    const deadlineLine = intent.deadline ? `\n📅 Target: ${intent.deadline}` : '';
+    const reply = `🎯 New goal: *${intent.title}*\n${sessionsLine}${deadlineLine}\n\nOpen the dashboard to break it into milestones, or just start a focus session toward it.`;
+    await sendBotReply(phone, reply);
+    void appendConversationMessage(userId, 'bot', reply, 'add_goal');
+  } catch (err) {
+    console.error('[WhatsApp] handleAddGoal error:', err);
+    await sendBotReply(phone, '❌ Something went wrong creating that goal. Try again?');
   }
 }
 
@@ -1013,6 +1220,11 @@ async function handleSaveJournalEntry(
   userId: string,
   phone: string,
   journalText: string,
+  /** Optional photo attachment — when present, attaches the image
+   *  to the entry. If an entry already exists for today, the image
+   *  REPLACES any prior attachment (we keep the most recent one to
+   *  avoid storage churn). */
+  media?: { url: string; type: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif' },
 ) {
   try {
     const tz = await getUserTimezone(supabase, userId);
@@ -1032,37 +1244,158 @@ async function handleSaveJournalEntry(
         ? `${existing.content}\n\n---\n\n${journalText}`
         : journalText;
 
+      const updatePayload: Record<string, unknown> = { content: updated };
+      if (media) {
+        updatePayload.media_url = media.url;
+        updatePayload.media_type = media.type;
+      }
       const { error } = await supabase
         .from('journal_entries')
-        .update({ content: updated })
+        .update(updatePayload)
         .eq('id', existing.id);
 
       if (error) throw error;
 
-      await sendBotReply(
-        phone,
-        `📓 Appended to today's journal entry. You now have ${updated.split('\n').length} lines total.`,
-      );
+      const replyBody = media
+        ? `📷 Photo + journal entry saved for today.`
+        : `📓 Appended to today's journal entry. You now have ${updated.split('\n').length} lines total.`;
+      await sendBotReply(phone, replyBody);
     } else {
       // Create new entry
+      const insertPayload: Record<string, unknown> = {
+        user_id: userId,
+        date: todayKey,
+        content: journalText,
+      };
+      if (media) {
+        insertPayload.media_url = media.url;
+        insertPayload.media_type = media.type;
+      }
       const { error } = await supabase
         .from('journal_entries')
-        .insert({
-          user_id: userId,
-          date: todayKey,
-          content: journalText,
-        });
+        .insert(insertPayload);
 
       if (error) throw error;
 
-      await sendBotReply(
-        phone,
-        `📓 Journal entry saved for today. Keep reflecting — it adds up!`,
-      );
+      const replyBody = media
+        ? journalText
+          ? `📷 Photo + caption saved as today's journal entry.`
+          : `📷 Photo saved as today's journal entry. _Send a caption as a reply if you want to add words._`
+        : `📓 Journal entry saved for today. Keep reflecting — it adds up!`;
+      await sendBotReply(phone, replyBody);
     }
   } catch (err) {
     console.error('[WhatsApp] Journal save error:', err);
     await sendBotReply(phone, '❌ Failed to save your journal entry. Please try again.');
+  }
+}
+
+/**
+ * Photo journal pipeline. Inbound image → download from Meta → upload
+ * to Supabase Storage at journal-media/<user>/<uuid>.<ext> → generate
+ * a 1-year signed URL → save to journal_entries via handleSaveJournalEntry.
+ *
+ * Failure modes (all non-fatal — webhook still 200s):
+ *   - Download from Meta fails (oversized, non-Meta host, network).
+ *     Reply with a "couldn't fetch the photo" message; the user can
+ *     retry by re-sending.
+ *   - Storage upload fails. Reply with a generic "couldn't save"
+ *     message and surface the error in logs for ops.
+ *   - The journal-media bucket isn't created yet (mig 033 not applied).
+ *     Reply with a "photos aren't enabled yet" hint, identical to the
+ *     pre-Whisper voice-notes guard.
+ *
+ * The bucket is private; we store a long-lived signed URL on the
+ * journal row so the dashboard <img> tag can fetch directly without
+ * an extra round-trip. Signed URLs leak to network logs and browser
+ * history, which is acceptable for personal journal photos but worth
+ * documenting for any future "is this private enough?" review.
+ */
+async function handleImageJournal(
+  userId: string,
+  phone: string,
+  imageId: string,
+  imageMimeType: string | undefined,
+  caption: string,
+) {
+  // Validate MIME against the storage bucket's allowed list. Anything
+  // else (rare — WhatsApp normalises images server-side) gets a polite
+  // rejection rather than a corrupted upload.
+  const ALLOWED: ReadonlyArray<'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif'> = [
+    'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  ];
+  const mime = (ALLOWED as readonly string[]).includes(imageMimeType ?? '')
+    ? (imageMimeType as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif')
+    : 'image/jpeg'; // WhatsApp's default — safe fallback.
+
+  await sendBotReply(phone, '📷 Got your photo — saving to today\'s journal...', { suppressFooter: true });
+
+  try {
+    // Step 1: Download from Meta. downloadWhatsAppMedia handles SSRF
+    // host-allowlisting + the 5 MB cap, so we just check the result.
+    const buffer = await downloadWhatsAppMedia(imageId);
+    if (!buffer) {
+      await sendBotReply(phone, '❌ Couldn\'t fetch your photo from WhatsApp. Try sending it again?');
+      return;
+    }
+
+    // Step 2: Upload to Supabase Storage. Path: <user_id>/<uuid>.<ext>.
+    // The user-id-prefix is what the journal-media RLS policy gates on,
+    // so cross-user reads are impossible even with a guessed UUID.
+    const ext = mime === 'image/png' ? 'png'
+      : mime === 'image/webp' ? 'webp'
+      : mime === 'image/gif' ? 'gif'
+      : 'jpg';
+    const objectKey = `${userId}/${randomUUID()}.${ext}`;
+
+    const supabase = createServiceClient();
+    const { error: uploadErr } = await supabase.storage
+      .from('journal-media')
+      .upload(objectKey, buffer, {
+        contentType: mime,
+        upsert: false,
+      });
+
+    if (uploadErr) {
+      // Bucket not configured yet → guide the operator + the user.
+      // Supabase returns a 'NoSuchBucket' or 'Bucket not found' error
+      // string when migration 033 hasn't been applied.
+      const msg = (uploadErr.message || '').toLowerCase();
+      if (msg.includes('bucket')) {
+        await sendBotReply(
+          phone,
+          '📷 Photo journals aren\'t enabled yet on this deployment. _The admin needs to apply migration 033._',
+        );
+        console.error('[WhatsApp] Photo journal bucket missing — apply mig 033:', uploadErr);
+        return;
+      }
+      throw uploadErr;
+    }
+
+    // Step 3: Long-lived signed URL. 1 year = 31,536,000 s. We store
+    // it on the journal row so the dashboard renders without an extra
+    // signed-URL round-trip per page load.
+    const { data: signed, error: signErr } = await supabase.storage
+      .from('journal-media')
+      .createSignedUrl(objectKey, 60 * 60 * 24 * 365);
+
+    if (signErr || !signed?.signedUrl) {
+      throw signErr ?? new Error('createSignedUrl returned no URL');
+    }
+
+    // Step 4: Persist on journal_entries via the existing handler.
+    // Caption goes in as the entry body; if the user sent no caption
+    // we still create the entry so the photo is preserved + visible.
+    await handleSaveJournalEntry(
+      supabase,
+      userId,
+      phone,
+      caption.trim(),
+      { url: signed.signedUrl, type: mime },
+    );
+  } catch (err) {
+    console.error('[WhatsApp] handleImageJournal error:', err);
+    await sendBotReply(phone, '❌ Something went wrong saving your photo. Try again?');
   }
 }
 
@@ -1723,7 +2056,26 @@ async function handleVoiceNote(
     }
 
     // Otherwise feed through the normal AI parser.
-    const intent = await parseWhatsAppMessage(transcript);
+    //
+    // PARITY: every text-message call site passes { userId, tier } so the
+    // parser can charge tokens against the per-user daily Anthropic
+    // quota. Voice notes are conceptually identical — the transcript is
+    // user-supplied text — but earlier this branch silently omitted the
+    // quota gate, letting voice traffic burn unlimited tokens. The fix
+    // is to look up the same aiTier and pass it through.
+    //
+    // Phase-3: voice notes also participate in conversational memory.
+    // Read the rolling window before the parse and record the transcript
+    // (post-Whisper) afterwards so a typed follow-up to a voice-note
+    // turn can resolve references the same way as text-only flows.
+    const aiTier = await getUserAiTier(supabase, profile.id);
+    const recentMessages = await getRecentConversation(profile.id, DEFAULT_CONTEXT_WINDOW);
+    const intent = await parseWhatsAppMessage(transcript, {
+      userId: profile.id,
+      tier: aiTier,
+      recentMessages,
+    });
+    void appendConversationMessage(profile.id, 'user', transcript, intent.type);
     await executeIntent(supabase, profile, phone, intent);
   } catch (err) {
     console.error('[WhatsApp] Voice note processing error:', err);

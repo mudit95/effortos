@@ -98,7 +98,21 @@ export async function ensureAiQuota(
 ): Promise<QuotaOk | QuotaExhausted> {
   const redis = getRedis();
   if (!redis) {
-    // Fail-open in dev / unconfigured prod. Logged at lib-init time elsewhere.
+    // Fail-open in development so local testing without Upstash keys works.
+    // Fail-CLOSED in production: an unconfigured Redis there means cost
+    // controls are silently disabled — a single user could burn arbitrary
+    // Anthropic spend with no upper bound. We'd rather hard-fail the AI
+    // request and surface the misconfig than serve unlimited spend.
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[aiQuota] Redis not configured — failing closed in production. Set UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN.');
+      return {
+        ok: false,
+        used: 0,
+        limit: DAILY_TOKEN_LIMITS[tier],
+        tier,
+        resetAt: Date.now() + msUntilUtcMidnight(),
+      };
+    }
     return { ok: true, used: 0, limit: Number.POSITIVE_INFINITY, tier };
   }
 

@@ -11,6 +11,28 @@ export interface User {
   phone_number?: string;
   whatsapp_linked?: boolean;
   bot_persona?: BotPersona;
+  /**
+   * Streak-freeze tokens remaining for the current bucket (mig 035).
+   * Free tier defaults to 1/month, Pro to 3/month. Decremented atomically
+   * by the claim_freeze_token RPC when /api/streaks/freeze is called or
+   * the auto-apply cron fires. Undefined for users created before the
+   * migration was applied; the dashboard treats undefined as "tokens
+   * unknown" and hides the freeze CTA until a refresh hydrates it.
+   */
+  freeze_tokens_remaining?: number;
+  /** Last user-local calendar date with a completed focus session
+   *  (mig 035). Drives the 7+ day lapse-recovery flow. */
+  last_session_date?: string;
+  /**
+   * Selected focus-mode background (mig 036). NULL/undefined = solid
+   * dark default. Bundled IDs match `focus-backgrounds` catalog;
+   * 'custom:<storage-key>' references the focus-backgrounds storage
+   * bucket.
+   */
+  focus_background_id?: string | null;
+  /** Dim-overlay opacity (0–100, %) applied over the background so the
+   *  timer stays readable. Default 35. */
+  focus_background_dim?: number;
   settings: UserSettings;
 }
 
@@ -159,6 +181,16 @@ export interface OnboardingData {
   /** Selected bot persona (drives WhatsApp tone). Optional —
    *  falls back to 'friend' if the user skips the step. */
   botPersona?: BotPersona;
+  /**
+   * Goal-template id, when the user picked a quick-start archetype on
+   * step 0. Drives two downstream behaviours: (1) the wizard auto-
+   * advances past motivation/context/perception (since the template
+   * already pre-filled them); (2) `completeOnboarding` seeds the
+   * template's first daily tasks for today after the goal is created.
+   * Undefined for users on the manual free-text path.
+   * See `lib/goal-templates.ts` for the catalog.
+   */
+  templateId?: string;
 }
 
 export interface Toast {
@@ -248,6 +280,14 @@ export interface JournalEntry {
   // button is disabled for this entry — the prompt is a single marker the
   // user uses to write against, not a chat.
   ai_prompt?: string;
+  /** Long-lived signed URL for an attached photo. Set when the entry was
+   *  created via WhatsApp photo journal (mig 033). Null/undefined for
+   *  text-only entries. The URL is signed for 1 year at write time;
+   *  re-signing isn't wired yet (TODO when we hit users with year-old
+   *  photos). */
+  media_url?: string;
+  /** MIME type of the attached photo. Mirror of journal_entries.media_type. */
+  media_type?: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
   created_at: string;
   updated_at: string;
 }
@@ -268,12 +308,19 @@ export interface ShadowGoal {
 }
 
 // Subscription types
-export type SubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'cancelled' | 'expired' | 'none';
+export type SubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'paused' | 'cancelled' | 'expired' | 'none';
 export type PlanTier = 'starter' | 'pro';
+/** Billing cadence for a subscription. Persisted in subscriptions.billing_cadence
+ *  (migration 031). Fixed at /api/subscription/create time and not mutated
+ *  later — switching cadence requires cancelling and re-subscribing. */
+export type BillingCadence = 'monthly' | 'annual';
 
 export interface SubscriptionInfo {
   status: SubscriptionStatus;
   plan_tier: PlanTier;
+  /** Defaults to 'monthly' when absent (covers admin-granted, implicit-trial,
+   *  and pre-migration-031 rows). */
+  billing_cadence?: BillingCadence;
   razorpay_subscription_id?: string;
   plan_id?: string;
   trial_ends_at?: string;    // ISO date

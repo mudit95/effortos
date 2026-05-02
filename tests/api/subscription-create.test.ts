@@ -25,6 +25,7 @@ type SubRow = {
   razorpay_subscription_id: string;
   plan_id: string;
   plan_tier: 'starter' | 'pro';
+  billing_cadence?: 'monthly' | 'annual';
   status: string;
   trial_ends_at: string | null;
   created_at: string;
@@ -36,7 +37,9 @@ interface MockState {
   existingActive: SubRow | null;
   // What the post-upsert re-read returns. Tests configure this to simulate
   // either "we won" (matches our id) or "we lost" (different id).
-  postUpsertRead: Pick<SubRow, 'razorpay_subscription_id' | 'plan_tier' | 'status' | 'trial_ends_at'> | null;
+  postUpsertRead:
+    | (Pick<SubRow, 'razorpay_subscription_id' | 'plan_tier' | 'status' | 'trial_ends_at'> & { billing_cadence?: 'monthly' | 'annual' })
+    | null;
   // Razorpay create returns this id; tests inspect cancel calls to verify
   // orphan-cleanup behaviour.
   razorpayCreatedId: string;
@@ -45,6 +48,12 @@ interface MockState {
   // state (not inside buildFromChain) because each .from() call returns a
   // fresh chain and we need the count to span calls.
   readCount: number;
+  // Captures the upsert payload so cadence-related tests can assert that
+  // billing_cadence is persisted correctly.
+  upsertedRow: Record<string, unknown> | null;
+  // Captures the (tier, cycle) tuple the route asked the plan-resolver for,
+  // so tests can verify monthly vs annual routing.
+  resolvedPlanCalls: Array<{ tier: string; cycle?: string }>;
 }
 
 const state: MockState = {
@@ -54,6 +63,8 @@ const state: MockState = {
   razorpayCreatedId: '',
   cancelCalls: [],
   readCount: 0,
+  upsertedRow: null,
+  resolvedPlanCalls: [],
 };
 
 // ── Mocks: Supabase, Razorpay, rate limiter ─────────────────────────
@@ -95,7 +106,16 @@ vi.mock('@/lib/razorpay', () => ({
       }),
     },
   }),
-  getPlanIdForTier: (_tier: string) => 'plan_test_starter',
+  // Honour both the tier and the cycle so cadence routing can be asserted.
+  // Returns distinct, recognisable plan IDs per (tier × cycle) so tests can
+  // tell which combination the route asked for.
+  getPlanIdForTier: (tier: 'starter' | 'pro', cycle: 'monthly' | 'annual' = 'monthly') => {
+    state.resolvedPlanCalls.push({ tier, cycle });
+    if (cycle === 'annual') {
+      return tier === 'pro' ? 'plan_test_pro_annual' : 'plan_test_starter_annual';
+    }
+    return tier === 'pro' ? 'plan_test_pro' : 'plan_test_starter';
+  },
   TRIAL_DAYS: 3,
 }));
 
@@ -131,7 +151,13 @@ function buildFromChain() {
         },
       }),
     }),
-    upsert: async () => ({ data: null, error: null }),
+    upsert: async (row: Record<string, unknown>) => {
+      // Capture the most recent upsert payload so tests can read what the
+      // route persisted (cadence, plan_id, etc.) without reaching for
+      // private spies.
+      state.upsertedRow = row;
+      return { data: null, error: null };
+    },
   };
 }
 
@@ -144,20 +170,24 @@ function reset(): void {
   state.razorpayCreatedId = '';
   state.cancelCalls = [];
   state.readCount = 0;
+  state.upsertedRow = null;
+  state.resolvedPlanCalls = [];
 }
 
-async function callRoute(): Promise<{ status: number; body: Record<string, unknown> }> {
+async function callRoute(
+  body: Record<string, unknown> = { tier: 'starter' },
+): Promise<{ status: number; body: Record<string, unknown> }> {
   // Re-import the route fresh per test so module-level state (if any) resets.
   vi.resetModules();
   const mod = await import('@/app/api/subscription/create/route');
   const req = new Request('http://test/api/subscription/create', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ tier: 'starter' }),
+    body: JSON.stringify(body),
   });
   const res = await mod.POST(req);
-  const body = await res.json();
-  return { status: res.status, body };
+  const respBody = await res.json();
+  return { status: res.status, body: respBody };
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -226,5 +256,133 @@ describe('/api/subscription/create — race resolution', () => {
     const { status, body } = await callRoute();
     expect(status).toBe(401);
     expect(body.error).toBe('Unauthorized');
+  });
+});
+
+describe('/api/subscription/create — billing cadence', () => {
+  beforeEach(() => {
+    reset();
+  });
+
+  it('cadence: "annual" routes to the annual plan id and persists billing_cadence', async () => {
+    state.razorpayCreatedId = 'sub_annual_001';
+    state.postUpsertRead = {
+      razorpay_subscription_id: 'sub_annual_001',
+      plan_tier: 'pro',
+      billing_cadence: 'annual',
+      status: 'trialing',
+      trial_ends_at: new Date().toISOString(),
+    };
+
+    const { status, body } = await callRoute({ tier: 'pro', cadence: 'annual' });
+
+    expect(status).toBe(200);
+    expect(body.subscription_id).toBe('sub_annual_001');
+    expect(body.billing_cadence).toBe('annual');
+    expect(body.plan_tier).toBe('pro');
+
+    // Plan resolver should have been called with cycle='annual' for tier='pro'.
+    const proAnnualCall = state.resolvedPlanCalls.find(
+      c => c.tier === 'pro' && c.cycle === 'annual',
+    );
+    expect(proAnnualCall).toBeDefined();
+
+    // Persisted row carries cadence and the annual plan id.
+    expect(state.upsertedRow?.billing_cadence).toBe('annual');
+    expect(state.upsertedRow?.plan_id).toBe('plan_test_pro_annual');
+  });
+
+  it('cadence omitted defaults to monthly', async () => {
+    state.razorpayCreatedId = 'sub_monthly_default';
+    state.postUpsertRead = {
+      razorpay_subscription_id: 'sub_monthly_default',
+      plan_tier: 'starter',
+      billing_cadence: 'monthly',
+      status: 'trialing',
+      trial_ends_at: new Date().toISOString(),
+    };
+
+    const { status, body } = await callRoute({ tier: 'starter' });
+
+    expect(status).toBe(200);
+    expect(body.billing_cadence).toBe('monthly');
+    expect(state.upsertedRow?.billing_cadence).toBe('monthly');
+    expect(state.upsertedRow?.plan_id).toBe('plan_test_starter');
+  });
+
+  it('cadence: "yearly" (typo) is rejected and falls back to monthly', async () => {
+    // Defence-in-depth: the route whitelists only 'annual'. Anything else
+    // — typos like 'yearly', empty string, malicious payloads — must
+    // route to monthly so a stale build can't trick checkout into
+    // charging the wrong amount.
+    state.razorpayCreatedId = 'sub_typo_fallback';
+    state.postUpsertRead = {
+      razorpay_subscription_id: 'sub_typo_fallback',
+      plan_tier: 'starter',
+      billing_cadence: 'monthly',
+      status: 'trialing',
+      trial_ends_at: new Date().toISOString(),
+    };
+
+    const { status, body } = await callRoute({ tier: 'starter', cadence: 'yearly' });
+
+    expect(status).toBe(200);
+    expect(body.billing_cadence).toBe('monthly');
+    expect(state.upsertedRow?.billing_cadence).toBe('monthly');
+  });
+
+  it('cadence upgrade: existing monthly + new annual same tier triggers upgrade flow', async () => {
+    // Existing monthly Pro user wants to switch to annual Pro to lock in
+    // the discount. /create should treat this as an upgrade: cancel the
+    // old Razorpay subscription, set status=active immediately (no fresh
+    // trial), persist billing_cadence='annual'.
+    state.existingActive = {
+      user_id: 'user-aaa',
+      razorpay_subscription_id: 'sub_existing_monthly',
+      plan_id: 'plan_test_pro',
+      plan_tier: 'pro',
+      billing_cadence: 'monthly',
+      status: 'active',
+      trial_ends_at: null,
+      created_at: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(),
+    };
+    state.razorpayCreatedId = 'sub_new_annual';
+    state.postUpsertRead = {
+      razorpay_subscription_id: 'sub_new_annual',
+      plan_tier: 'pro',
+      billing_cadence: 'annual',
+      status: 'active',
+      trial_ends_at: null,
+    };
+
+    const { status, body } = await callRoute({ tier: 'pro', cadence: 'annual' });
+
+    expect(status).toBe(200);
+    expect(body.billing_cadence).toBe('annual');
+    // The old monthly Razorpay sub should be cancelled to avoid double-billing.
+    expect(state.cancelCalls).toContain('sub_existing_monthly');
+    // Status should be active immediately (no new 3-day trial).
+    expect(state.upsertedRow?.status).toBe('active');
+    expect(state.upsertedRow?.billing_cadence).toBe('annual');
+  });
+
+  it('blocks duplicate annual: existing annual + new annual same tier returns 409', async () => {
+    state.existingActive = {
+      user_id: 'user-aaa',
+      razorpay_subscription_id: 'sub_existing_annual',
+      plan_id: 'plan_test_starter_annual',
+      plan_tier: 'starter',
+      billing_cadence: 'annual',
+      status: 'active',
+      trial_ends_at: null,
+      created_at: new Date().toISOString(),
+    };
+
+    const { status, body } = await callRoute({ tier: 'starter', cadence: 'annual' });
+
+    expect(status).toBe(409);
+    expect(body.error).toBe('Already subscribed');
+    // No Razorpay calls should have happened — we short-circuited.
+    expect(state.cancelCalls).toEqual([]);
   });
 });

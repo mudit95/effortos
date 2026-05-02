@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
-import { getRazorpay, TRIAL_DAYS, getPlanIdForTier } from '@/lib/razorpay';
+import { getRazorpay, TRIAL_DAYS, getPlanIdForTier, type BillingCycle } from '@/lib/razorpay';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitOrNull } from '@/lib/ratelimit';
-import type { PlanTier } from '@/types';
+import type { PlanTier, BillingCadence } from '@/types';
 
 /**
  * POST /api/subscription/create
@@ -11,8 +11,14 @@ import type { PlanTier } from '@/types';
  * The trial is implemented via `start_at` — the first charge happens
  * 3 days after authorization.
  *
- * Body: { tier?: 'starter' | 'pro', couponCode?, couponId?, offerId? }
+ * Body: { tier?: 'starter' | 'pro', cadence?: 'monthly' | 'annual',
+ *         couponCode?, couponId?, offerId? }
  *   - tier: which plan tier to subscribe to (default: 'starter')
+ *   - cadence: billing frequency (default: 'monthly'). Annual unlocks the
+ *     ~33% discount priced at ₹3,999 (Starter) / ₹7,999 (Pro). Cadence
+ *     is persisted in subscriptions.billing_cadence (migration 031) and
+ *     fixed for the lifetime of the subscription — switching requires
+ *     cancel + re-subscribe so we don't have to mid-cycle prorate.
  *   - If couponId is provided, re-validate server-side and forward the
  *     Razorpay offer_id attached to that coupon so the discount applies.
  */
@@ -34,15 +40,19 @@ export async function POST(req: Request) {
     // Parse body
     const body = await req.json().catch(() => ({}));
     const tier: PlanTier = (body?.tier === 'pro') ? 'pro' : 'starter';
+    // Whitelist cadence — anything other than 'annual' falls back to monthly.
+    // Never trust client values verbatim: a typo or an old build sending
+    // {cadence: 'yearly'} would otherwise silently route to a wrong plan.
+    const cadence: BillingCadence = (body?.cadence === 'annual') ? 'annual' : 'monthly';
     const couponCode: string | null = body?.couponCode ?? null;
     const couponId: string | null = body?.couponId ?? null;
     let offerId: string | null = body?.offerId ?? null;
 
-    // Resolve the correct Razorpay plan ID for the tier
-    const planId = getPlanIdForTier(tier);
+    // Resolve the correct Razorpay plan ID for tier × cadence
+    const planId = getPlanIdForTier(tier, cadence as BillingCycle);
     if (!planId) {
       return NextResponse.json(
-        { error: `Payment plan not configured for ${tier} tier` },
+        { error: `Payment plan not configured for ${tier} ${cadence}` },
         { status: 503 },
       );
     }
@@ -91,18 +101,35 @@ export async function POST(req: Request) {
       .in('status', ['trialing', 'active'])
       .maybeSingle();
 
+    // Existing-subscription rules. We allow two kinds of "swap":
+    //   (1) Tier upgrade   — starter → pro, any cadence. Existing flow.
+    //   (2) Cadence upgrade — monthly → annual, same or higher tier.
+    //                         Lets a happy monthly customer lock in the
+    //                         annual discount without contacting support.
+    // Anything else (downgrade, same-cadence/same-tier duplicate) is
+    // rejected with 409 — switching the other direction needs a
+    // proration story we don't have yet, and "already subscribed"
+    // is the safe default that surfaces the error to the user.
+    const existingCadence: BillingCadence =
+      existing?.billing_cadence === 'annual' ? 'annual' : 'monthly';
+    const isTierUpgrade = existing?.plan_tier === 'starter' && tier === 'pro';
+    const isCadenceUpgrade = existingCadence === 'monthly' && cadence === 'annual';
+    const isUpgrade = Boolean(existing) && (isTierUpgrade || isCadenceUpgrade);
+
     if (existing) {
-      // If they're upgrading from starter to pro, allow it
-      if (existing.plan_tier === 'starter' && tier === 'pro') {
-        // Cancel the old starter subscription at Razorpay if it exists
+      if (isUpgrade) {
+        // Cancel the old subscription at Razorpay if it exists. We use the
+        // immediate-cancel form (no `cancel_at_cycle_end`) because we're
+        // about to create its successor — leaving the old one billable
+        // until period-end would double-charge the user during overlap.
         if (existing.razorpay_subscription_id) {
           try {
             await getRazorpay().subscriptions.cancel(existing.razorpay_subscription_id);
           } catch (e) {
-            console.warn('[Subscription] Failed to cancel old starter sub:', e);
+            console.warn('[Subscription] Failed to cancel old sub before upgrade:', e);
           }
         }
-        // Continue to create new Pro subscription below
+        // Continue to create new (upgraded) subscription below
       } else {
         return NextResponse.json({
           error: 'Already subscribed',
@@ -111,16 +138,27 @@ export async function POST(req: Request) {
       }
     }
 
-    // Calculate trial end (3 days from now) — skip trial if upgrading
-    const isUpgrade = existing?.plan_tier === 'starter' && tier === 'pro';
+    // Calculate trial end (3 days from now) — skip trial if upgrading.
+    // Tier OR cadence upgrades both skip: the user already trialed once.
     const trialEnd = isUpgrade
       ? Math.floor(Date.now() / 1000) + 60 // charge almost immediately for upgrades
       : Math.floor(Date.now() / 1000) + (TRIAL_DAYS * 24 * 60 * 60);
 
-    // Build subscription params
+    // Build subscription params.
+    //
+    // total_count caps the number of billing cycles the subscription can
+    // run for. We pick a value that gives roughly 10+ years of runway
+    // (well past the practical lifetime of any subscription) without
+    // colliding with Razorpay's per-period maxima:
+    //   monthly: 156 max → 120 = 10 yrs
+    //   annual:   99 max →  12 = 12 yrs
+    // If a customer ever reaches the cap, Razorpay sends
+    // `subscription.completed` and the cron-driven re-engagement path
+    // surfaces the renewal — far preferable to silently cutting off.
+    const totalCount = cadence === 'annual' ? 12 : 120;
     const subParams: Record<string, unknown> = {
       plan_id: planId,
-      total_count: 120,
+      total_count: totalCount,
       quantity: 1,
       customer_notify: 1,
       start_at: trialEnd,
@@ -128,6 +166,7 @@ export async function POST(req: Request) {
         user_id: user.id,
         user_email: user.email || '',
         plan_tier: tier,
+        billing_cadence: cadence,
         ...(couponCode ? { coupon_code: couponCode } : {}),
       },
     };
@@ -152,6 +191,7 @@ export async function POST(req: Request) {
       razorpay_subscription_id: subscription.id,
       plan_id: planId,
       plan_tier: tier,
+      billing_cadence: cadence,
       status: isUpgrade ? 'active' : 'trialing',
       trial_ends_at: isUpgrade ? existing?.trial_ends_at : trialEndsAt,
       created_at: new Date().toISOString(),
@@ -160,7 +200,7 @@ export async function POST(req: Request) {
 
     const { data: settled } = await service
       .from('subscriptions')
-      .select('razorpay_subscription_id, plan_tier, status, trial_ends_at')
+      .select('razorpay_subscription_id, plan_tier, billing_cadence, status, trial_ends_at')
       .eq('user_id', user.id)
       .maybeSingle();
 
@@ -178,6 +218,7 @@ export async function POST(req: Request) {
         trial_ends_at: settled.trial_ends_at,
         offer_id: null,
         plan_tier: settled.plan_tier,
+        billing_cadence: settled.billing_cadence ?? cadence,
         deduplicated: true,
       });
     }
@@ -188,6 +229,7 @@ export async function POST(req: Request) {
       trial_ends_at: trialEndsAt,
       offer_id: offerId,
       plan_tier: tier,
+      billing_cadence: cadence,
     });
   } catch (err) {
     console.error('Create subscription error:', err);

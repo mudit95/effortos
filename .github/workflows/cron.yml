@@ -29,6 +29,7 @@ on:
     - cron: '0 3 * * *'    # pacts-cleanup
     - cron: '0 4 * * *'    # retention-sweep
     - cron: '30 4 * * *'   # purge-deleted-accounts
+    - cron: '0 5 * * *'    # replenish-freeze-tokens
     - cron: '0 6 * * *'    # re-engagement
     - cron: '30 7 * * *'   # pact-activity
     - cron: '30 8 * * *'   # trial-ending
@@ -46,10 +47,12 @@ on:
           - afternoon-email
           - nightly-email
           - coach
+          - apply-streak-freezes
           - watchdog
           - pacts-cleanup
           - retention-sweep
           - purge-deleted-accounts
+          - replenish-freeze-tokens
           - re-engagement
           - pact-activity
           - trial-ending
@@ -96,6 +99,17 @@ jobs:
           curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$SITE_URL/api/cron/coach"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL:    ${{ secrets.SITE_URL }}
+      - name: Hit apply-streak-freezes
+        # Joins the hourly fan because the cron uses each user's local
+        # timezone to decide whether to fire — only users in the
+        # 23:00-00:59 local window get a freeze applied per tick.
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/cron/apply-streak-freezes"
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           SITE_URL:    ${{ secrets.SITE_URL }}
@@ -152,6 +166,20 @@ jobs:
           curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer $CRON_SECRET" \
             "$SITE_URL/api/cron/purge-deleted-accounts"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL:    ${{ secrets.SITE_URL }}
+
+  replenish-freeze-tokens:
+    name: Replenish freeze tokens (daily 05:00 UTC)
+    if: github.event.schedule == '0 5 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/cron/replenish-freeze-tokens"
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           SITE_URL:    ${{ secrets.SITE_URL }}

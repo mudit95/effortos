@@ -16,7 +16,12 @@ import { playSound } from '@/lib/sounds';
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { resetProvider as resetDataLayerProvider } from '@/lib/dataLayer';
 import * as api from '@/lib/api';
-import { STARTER_PRICE_PER_MO, PRO_PRICE_PER_MO } from '@/lib/pricing';
+import {
+  STARTER_PRICE_PER_MO,
+  PRO_PRICE_PER_MO,
+  STARTER_ANNUAL_PRICE_PER_YEAR,
+  PRO_ANNUAL_PRICE_PER_YEAR,
+} from '@/lib/pricing';
 import { track } from '@/lib/analytics';
 import {
   buildCoachContext,
@@ -29,6 +34,7 @@ import {
 } from '@/lib/coachClient';
 
 import { enqueueOffline, initOfflineSync } from '@/lib/offline-queue';
+import { getTemplateById } from '@/lib/goal-templates';
 
 // Module-level single-flight handle for initializeApp. The Supabase auth
 // listener fires INITIAL_SESSION + SIGNED_IN + TOKEN_REFRESHED in close
@@ -328,8 +334,34 @@ interface AppState {
 
   // Subscription
   fetchSubscriptionStatus: () => void;
-  startTrial: (opts?: { tier?: PlanTier; couponCode?: string; couponId?: string; offerId?: string }) => void;
+  startTrial: (opts?: { tier?: PlanTier; cadence?: 'monthly' | 'annual'; couponCode?: string; couponId?: string; offerId?: string }) => void;
   cancelSubscription: () => void;
+  /**
+   * Pause the active subscription. Calls /api/subscription/pause; on
+   * success flips local subscription.status to 'paused' so PremiumGate
+   * gates the user out without waiting for a fetchSubscriptionStatus.
+   * Surfaces a toast on failure (e.g., past_due → must fix payment first).
+   */
+  pauseSubscription: () => void;
+  /** Resume from paused. Mirrors pauseSubscription's pattern. */
+  resumeSubscription: () => void;
+  /**
+   * Freeze a calendar day to protect the streak (mig 035).
+   * `date` defaults to 'today'; 'yesterday' uses the 24h retroactive
+   * window. On success, optimistically updates user.freeze_tokens_remaining
+   * and surfaces a toast. On failure (no tokens, already frozen, beyond
+   * window) surfaces an error toast and leaves state unchanged.
+   */
+  freezeStreak: (date?: 'today' | 'yesterday') => void;
+  /**
+   * Update focus-mode background preference (mig 036).
+   *   - id:  bundled background id, 'custom:<key>', or null to clear.
+   *   - dim: 0-100 opacity of the dim scrim, optional (only one
+   *          field may be set per call — pass {dim} alone to keep
+   *          the current id).
+   * Updates user state optimistically and persists via cloudSync.
+   */
+  setFocusBackground: (opts: { id?: string | null; dim?: number }) => void;
   setShowPaywall: (show: boolean) => void;
   isSubscriptionActive: () => boolean;
   isProTier: () => boolean;
@@ -518,9 +550,27 @@ export const useStore = create<AppState>((set, get) => ({
 
           // Fire-and-forget: send the welcome email on first cloud bootstrap.
           // The endpoint is idempotent (checks email_log + account age), so it's
-          // safe to call on every boot; after the first success it's a no-op.
+          // safe to call on every boot; but the round-trip itself is wasted
+          // after the first success. Cache a per-user "already attempted"
+          // flag in localStorage so subsequent boots skip the call entirely.
+          // Falls back to the server-side check on first install on a new
+          // device. (Falls through cleanly on private mode / SSR boundary.)
           if (typeof window !== 'undefined') {
-            fetch('/api/account/welcome-email', { method: 'POST' }).catch(() => {});
+            const cacheKey = `effortos:welcomeEmailDone:${supaUser.id}`;
+            let alreadyDone = false;
+            try {
+              alreadyDone = localStorage.getItem(cacheKey) === '1';
+            } catch {
+              // localStorage unavailable — fall through and call the server
+              // (it'll still bail out idempotently).
+            }
+            if (!alreadyDone) {
+              fetch('/api/account/welcome-email', { method: 'POST' })
+                .then(() => {
+                  try { localStorage.setItem(cacheKey, '1'); } catch { /* ignore */ }
+                })
+                .catch(() => { /* idempotent — no retry needed */ });
+            }
           }
 
           // ── Cloud path: load data from Supabase ──
@@ -897,6 +947,22 @@ export const useStore = create<AppState>((set, get) => ({
     // is done — remove it from the shelf now that it has a real goal.
     if (pendingShadowGoalId) {
       get().removeShadowGoal(pendingShadowGoalId);
+    }
+
+    // Quick-start template path: seed today's first three daily tasks
+    // straight from the template so the user lands on the dashboard
+    // with something to do, not an empty list. This is the activation
+    // half of the templates feature — picking a template gets you a
+    // goal, but only the seeded tasks get you to a focus session in
+    // <30 seconds. addDailyTask handles storage + cloudSync; the goal
+    // id link makes the tasks count toward goal progress.
+    if (onboardingData.templateId) {
+      const template = getTemplateById(onboardingData.templateId);
+      if (template) {
+        for (const seed of template.seedTasks) {
+          get().addDailyTask(seed.title, seed.pomodoros, false, seed.tag, goal.id);
+        }
+      }
     }
 
     set({
@@ -2072,6 +2138,7 @@ export const useStore = create<AppState>((set, get) => ({
         subscription: {
           status: data.status,
           plan_tier: data.plan_tier || 'starter',
+          billing_cadence: data.billing_cadence === 'annual' ? 'annual' : 'monthly',
           razorpay_subscription_id: data.razorpay_subscription_id,
           plan_id: data.plan_id,
           trial_ends_at: data.trial_ends_at,
@@ -2094,6 +2161,7 @@ export const useStore = create<AppState>((set, get) => ({
   startTrial: async (opts) => {
     try {
       const tier = opts?.tier || 'starter';
+      const cadence: 'monthly' | 'annual' = opts?.cadence === 'annual' ? 'annual' : 'monthly';
       const isUpgrade = tier === 'pro' && get().isSubscriptionActive();
 
       const res = await fetch('/api/subscription/create', {
@@ -2101,6 +2169,7 @@ export const useStore = create<AppState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tier,
+          cadence,
           couponCode: opts?.couponCode ?? null,
           couponId: opts?.couponId ?? null,
           offerId: opts?.offerId ?? null,
@@ -2116,10 +2185,14 @@ export const useStore = create<AppState>((set, get) => ({
       // Pull from pricing.ts so the Razorpay checkout description stays in
       // sync if the env-driven prices change. Earlier this was hardcoded
       // as '₹499/mo' / '₹999/mo' — out of sync with pricing.ts is a real
-      // bait-and-switch risk on launch day.
-      const priceLabel = tier === 'pro' ? PRO_PRICE_PER_MO : STARTER_PRICE_PER_MO;
+      // bait-and-switch risk on launch day. Annual variants use the
+      // ₹X,XXX/year string from pricing so the checkout description
+      // matches the modal's pricing copy exactly.
+      const priceLabel = cadence === 'annual'
+        ? (tier === 'pro' ? PRO_ANNUAL_PRICE_PER_YEAR : STARTER_ANNUAL_PRICE_PER_YEAR)
+        : (tier === 'pro' ? PRO_PRICE_PER_MO : STARTER_PRICE_PER_MO);
       const description = isUpgrade
-        ? `Upgrade to Pro — ${priceLabel}`
+        ? `Upgrade to ${tier === 'pro' ? 'Pro' : 'Starter'} — ${priceLabel}`
         : `3-day free trial, then ${priceLabel}`;
 
       // Open Razorpay checkout — wait up to 5 s for the lazy-loaded
@@ -2168,6 +2241,7 @@ export const useStore = create<AppState>((set, get) => ({
                 subscription: {
                   status: isUpgrade ? 'active' : 'trialing',
                   plan_tier: tier,
+                  billing_cadence: cadence,
                   razorpay_subscription_id: data.subscription_id,
                   trial_ends_at: data.trial_ends_at,
                 },
@@ -2209,6 +2283,106 @@ export const useStore = create<AppState>((set, get) => ({
       get().addToast(data.message || 'Subscription cancelled', 'info');
     } catch {
       get().addToast('Could not cancel subscription', 'error');
+    }
+  },
+
+  pauseSubscription: async () => {
+    try {
+      const res = await fetch('/api/subscription/pause', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        get().addToast(data.error || 'Could not pause', 'error');
+        return;
+      }
+      set({
+        subscription: {
+          ...get().subscription,
+          status: 'paused',
+        },
+      });
+      get().addToast(data.message || 'Subscription paused', 'info');
+    } catch {
+      get().addToast('Could not pause subscription', 'error');
+    }
+  },
+
+  resumeSubscription: async () => {
+    try {
+      const res = await fetch('/api/subscription/resume', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        get().addToast(data.error || 'Could not resume', 'error');
+        return;
+      }
+      set({
+        subscription: {
+          ...get().subscription,
+          status: 'active',
+        },
+      });
+      get().addToast(data.message || 'Welcome back', 'success');
+    } catch {
+      get().addToast('Could not resume subscription', 'error');
+    }
+  },
+
+  setFocusBackground: ({ id, dim }) => {
+    const u = get().user;
+    if (!u) return;
+    // Build the patch — only fields the caller specified, so a slider-
+    // only update doesn't accidentally clobber a just-picked id.
+    const patch: { focus_background_id?: string | null; focus_background_dim?: number } = {};
+    if (id !== undefined) patch.focus_background_id = id;
+    if (typeof dim === 'number') {
+      patch.focus_background_dim = Math.max(0, Math.min(100, Math.floor(dim)));
+    }
+    if (Object.keys(patch).length === 0) return;
+
+    // Optimistic local update so the picker tile flips immediately.
+    set({ user: { ...u, ...patch } });
+
+    // Persist to profiles via the same cloudSync pattern used elsewhere.
+    cloudSync(async () => {
+      const supabase = createClient();
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) return;
+      await supabase
+        .from('profiles')
+        .update(patch)
+        .eq('id', authUser.id);
+    });
+  },
+
+  freezeStreak: async (date = 'today') => {
+    try {
+      const res = await fetch('/api/streaks/freeze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        get().addToast(data.error || 'Could not freeze that day', 'error');
+        return;
+      }
+      // Optimistically reflect the new token count so the CTA disables
+      // immediately without waiting for a re-fetch. The endpoint also
+      // returns the authoritative remaining count, so we trust it.
+      const currentUser = get().user;
+      if (currentUser) {
+        set({
+          user: {
+            ...currentUser,
+            freeze_tokens_remaining: typeof data.remaining_tokens === 'number'
+              ? data.remaining_tokens
+              : currentUser.freeze_tokens_remaining,
+          },
+        });
+      }
+      const dayLabel = date === 'today' ? 'today' : 'yesterday';
+      get().addToast(`Streak protected for ${dayLabel} 🛡️`, 'success');
+    } catch {
+      get().addToast('Could not freeze that day', 'error');
     }
   },
 

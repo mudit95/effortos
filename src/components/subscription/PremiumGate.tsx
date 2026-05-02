@@ -54,11 +54,18 @@ export function PremiumGate({
     subscription.status === 'past_due' &&
     periodEndMs != null &&
     now.getTime() < periodEndMs + PAST_DUE_GRACE_MS;
+  // Paused (mig 034) is explicitly NOT active — the user opted out of
+  // premium until they resume. Razorpay keeps current_period_end alive
+  // during pause, so we have to short-circuit before the period-end
+  // fast-path or every paused user would still see premium content.
+  const isPaused = subscription.status === 'paused';
   const isActive =
-    hasFuturePeriodEnd ||
-    (subscription.status === 'trialing' && hasFutureTrial) ||
-    subscription.status === 'active' ||
-    inPastDueGrace;
+    !isPaused && (
+      hasFuturePeriodEnd ||
+      (subscription.status === 'trialing' && hasFutureTrial) ||
+      subscription.status === 'active' ||
+      inPastDueGrace
+    );
 
   // While we're still figuring out subscription state, don't show a gate
   // (prevents flash of "Subscribe" for paying users).

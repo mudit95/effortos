@@ -12,7 +12,11 @@ import { useStore } from '@/store/useStore';
 export function useRealtimeSync() {
   const subscriptionRef = useRef<{ unsubscribe: () => void } | null>(null);
   const refreshDailyTasks = useStore(s => s.refreshDailyTasks);
-  const initializeApp = useStore(s => s.initializeApp);
+  // NB: Zustand action references are stable across renders (selector
+  // returns the same fn instance), so adding `refreshDailyTasks` to the
+  // dep array doesn't actually thrash the realtime channel. The earlier
+  // version also had `initializeApp` here even though it was never
+  // referenced inside the effect — pure dead weight, removed.
 
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
@@ -84,5 +88,5 @@ export function useRealtimeSync() {
         subscriptionRef.current = null;
       }
     };
-  }, [refreshDailyTasks, initializeApp]);
+  }, [refreshDailyTasks]);
 }

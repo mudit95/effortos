@@ -4,6 +4,11 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sparkles } from 'lucide-react';
 
+// Cache TTL for the AI motivation message — 4 hours. Held at module
+// scope so useCallback's deps array stays empty and the function
+// identity remains stable across renders.
+const MOTIVATION_TTL_MS = 4 * 60 * 60 * 1000;
+
 // Fallback messages when AI is unavailable
 const FALLBACK_MESSAGES = [
   'Small steps compound into big results',
@@ -40,7 +45,38 @@ export function MotivationMessage({
   const propsRef = useRef({ taskTitle, goalTitle, sessionsCompleted, sessionsTotal, streakDays, userName });
   propsRef.current = { taskTitle, goalTitle, sessionsCompleted, sessionsTotal, streakDays, userName };
 
-  const fetchMotivation = useCallback(async () => {
+  // Cache TTL for the motivation message — 4 hours. Module-level
+  // constant lifted out of the component body so the useCallback below
+  // doesn't need it in its deps array.
+
+  // Per-user motivation cache. Pre-cache, this fired on every dashboard
+  // mount — refresh / back-button / deeplink all cost an Anthropic round
+  // trip. The widget's design intent ("Auto-refreshes") is preserved by
+  // keeping a 4-hour TTL; multiple loads in the same window reuse the
+  // cached message, the next morning gets a fresh one. The optional
+  // refreshKey parameter on parent re-mounts will still bypass the
+  // cache if the parent passes a manual ⟳ trigger.
+  const cacheKeyRef = useRef<string>('');
+  cacheKeyRef.current = `effortos:motivation:${propsRef.current.userName || 'anon'}`;
+
+  const fetchMotivation = useCallback(async (force?: boolean) => {
+    const cacheKey = cacheKeyRef.current;
+    // Try the cache first unless forced.
+    if (!force) {
+      try {
+        const raw = localStorage.getItem(cacheKey);
+        if (raw) {
+          const parsed = JSON.parse(raw) as { message: string; ts: number };
+          if (parsed.ts && Date.now() - parsed.ts < MOTIVATION_TTL_MS && parsed.message) {
+            setMessage(parsed.message);
+            return;
+          }
+        }
+      } catch {
+        // localStorage / JSON failure — fall through to network.
+      }
+    }
+
     setIsLoading(true);
     try {
       const res = await fetch('/api/coach/motivation', {
@@ -52,6 +88,9 @@ export function MotivationMessage({
       if (!res.ok) throw new Error('Failed');
       const data = await res.json();
       setMessage(data.message);
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify({ message: data.message, ts: Date.now() }));
+      } catch { /* ignore */ }
     } catch {
       // Use a random fallback
       setMessage(FALLBACK_MESSAGES[Math.floor(Math.random() * FALLBACK_MESSAGES.length)]);

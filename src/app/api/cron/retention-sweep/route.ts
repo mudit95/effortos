@@ -60,6 +60,17 @@ const SWEEP_TARGETS: SweepTarget[] = [
   // older than ~24h either. 90 days lets us debug a specific subscription
   // history, then prunes.
   { table: 'webhook_events',        retentionDays: 90,  timestampColumn: 'received_at' },
+
+  // Cron run log (mig 030). The watchdog only ever reads the most recent
+  // row per cron_name, so anything past a few weeks is dead weight.
+  // ~7 rows/hour = ~5k/month/cron. Without sweeping, the table grows
+  // unbounded and slowly drags the watchdog query.
+  { table: 'cron_run_log',          retentionDays: 30,  timestampColumn: 'ran_at' },
+
+  // WhatsApp conversational memory (mig 032). Parser only ever reads the
+  // last ~6 rows per user. Anything older than two weeks is noise — and
+  // for privacy, we should be aggressive about pruning user-typed text.
+  { table: 'wa_conversation_context', retentionDays: 14, timestampColumn: 'created_at' },
 ];
 
 export async function GET(request: Request) {

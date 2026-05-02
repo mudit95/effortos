@@ -9,6 +9,11 @@ import { SelectGroup } from '@/components/ui/select-group';
 import { useStore } from '@/store/useStore';
 import { ArrowRight, ArrowLeft, Sparkles, X, MessageCircle, Check } from 'lucide-react';
 import type { BotPersona } from '@/types';
+import {
+  GOAL_TEMPLATES,
+  deadlineForTemplate,
+  type GoalTemplate,
+} from '@/lib/goal-templates';
 
 // 6 steps: goal → why → context → perception → bot persona → WhatsApp opt-in.
 // WhatsApp stays LAST so users finish the value-defining flow first
@@ -147,6 +152,29 @@ export function OnboardingFlow() {
     setOnboardingStep(Math.max(0, step - 1));
   };
 
+  /**
+   * Quick-start: user picked an archetype on step 0. Pre-fill every
+   * field the template covers and jump straight to the persona step
+   * (4) — motivation/context/perception are redundant because the
+   * template specifies them. Hitting Back from step 4 still walks
+   * through each pre-filled step in case the user wants to tweak.
+   */
+  const handleTemplatePicked = useCallback((template: GoalTemplate) => {
+    updateOnboardingData({
+      templateId: template.id,
+      goalTitle: template.goalTitle,
+      motivation: template.motivation,
+      experienceLevel: template.experienceLevel,
+      dailyAvailability: template.dailyAvailability,
+      consistencyLevel: template.consistencyLevel,
+      userTimeEstimate: template.userTimeEstimate,
+      deadline: deadlineForTemplate(template),
+    });
+    setGoalError('');
+    setDirection(1);
+    setOnboardingStep(PERSONA_STEP);
+  }, [updateOnboardingData, setOnboardingStep]);
+
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
       <div className="w-full max-w-lg relative">
@@ -211,6 +239,8 @@ export function OnboardingFlow() {
                 value={onboardingData.goalTitle || ''}
                 onChange={(v) => { updateOnboardingData({ goalTitle: v }); setGoalError(''); }}
                 error={goalError}
+                onTemplatePicked={handleTemplatePicked}
+                activeTemplateId={onboardingData.templateId}
               />
             )}
             {step === 1 && (
@@ -337,29 +367,75 @@ function StepWhyMotivation({ data, onChange }: {
   );
 }
 
-// Step 1: Goal Input
-function StepGoalInput({ value, onChange, error }: {
+// Step 1: Goal Input — quick-start templates above, free-text fallback below.
+function StepGoalInput({
+  value,
+  onChange,
+  error,
+  onTemplatePicked,
+  activeTemplateId,
+}: {
   value: string;
   onChange: (v: string) => void;
   error: string;
+  onTemplatePicked: (template: GoalTemplate) => void;
+  activeTemplateId?: string;
 }) {
   return (
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-white mb-2">What do you want to accomplish?</h2>
         <p className="text-white/40 text-sm">
-          Be specific. &ldquo;Learn React&rdquo; is better than &ldquo;learn stuff.&rdquo;
+          Pick a quick-start, or describe your own. You can always tweak later.
         </p>
       </div>
+
+      {/* Quick-start templates. Picking one auto-fills the goal +
+          estimation inputs and jumps the user straight to the persona
+          step. We render 2-up on sm+, 1-up on mobile so each card has
+          breathing room. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {GOAL_TEMPLATES.map((t) => {
+          const selected = activeTemplateId === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onTemplatePicked(t)}
+              className={`text-left p-3 rounded-xl border transition-all ${
+                selected
+                  ? 'border-cyan-500/40 bg-cyan-500/[0.08] text-white shadow-lg shadow-cyan-500/5'
+                  : 'border-white/[0.06] bg-white/[0.02] text-white/70 hover:text-white hover:bg-white/[0.04]'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-base leading-none">{t.emoji}</span>
+                <span className="text-sm font-semibold">{t.label}</span>
+              </div>
+              <p className="text-[11px] text-white/40 leading-snug">{t.blurb}</p>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Or-divider — small, low-contrast so it doesn't compete with
+          the template grid for the user's attention. */}
+      <div className="flex items-center gap-3 py-1">
+        <div className="h-px flex-1 bg-white/[0.06]" />
+        <span className="text-[11px] uppercase tracking-wider text-white/30">
+          Or describe your own
+        </span>
+        <div className="h-px flex-1 bg-white/[0.06]" />
+      </div>
+
       <div>
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="e.g., Build a full-stack SaaS application with Next.js and deploy to production"
-          className={`w-full h-32 rounded-xl border bg-white/5 px-4 py-3 text-white placeholder:text-white/25 transition-all duration-200 resize-none focus:outline-none focus:ring-2 focus:ring-cyan-500/50 text-sm leading-relaxed ${
+          className={`w-full h-28 rounded-xl border bg-white/5 px-4 py-3 text-white placeholder:text-white/25 transition-all duration-200 resize-none focus:outline-none focus:ring-2 focus:ring-cyan-500/50 text-sm leading-relaxed ${
             error ? 'border-red-500/50' : 'border-white/10 hover:border-white/20'
           }`}
-          autoFocus
         />
         {error && (
           <p className="text-xs text-red-400 mt-1.5">{error}</p>

@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/admin';
+import { createServiceClient } from '@/lib/supabase/service';
+import { logAdminAction } from '@/lib/adminAudit';
 
 export async function POST(req: Request) {
   const check = await requireAdmin();
@@ -15,10 +17,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'invalid kind' }, { status: 400 });
   }
 
+  const normalizedCode = String(code).toUpperCase().trim();
   const { error } = await check.supabase
     .from('coupons')
     .insert({
-      code: String(code).toUpperCase().trim(),
+      code: normalizedCode,
       kind,
       discount_value: Number(discount_value),
       description: description || null,
@@ -30,6 +33,24 @@ export async function POST(req: Request) {
     });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Audit: COUPON_CREATED. Compliance requires every privileged mutation
+  // to leave a trail (DPDP §10, SOC 2). Without this, "who created the
+  // 100% off coupon?" has no answer beyond grepping CloudWatch.
+  await logAdminAction({
+    service: createServiceClient(),
+    actorUserId: check.user.id,
+    actionType: 'COUPON_CREATED',
+    payload: {
+      code: normalizedCode,
+      kind,
+      discount_value: Number(discount_value),
+      max_redemptions: max_redemptions ?? null,
+      expires_at: expires_at ?? null,
+    },
+    request: req,
+  });
+
   return NextResponse.json({ ok: true });
 }
 
@@ -43,5 +64,16 @@ export async function PATCH(req: Request) {
   }
   const { error } = await check.supabase.from('coupons').update({ active }).eq('id', id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // Audit: COUPON_TOGGLED_ACTIVE. Disabling an active coupon is a
+  // monetarily-relevant action; flag who flipped it and when.
+  await logAdminAction({
+    service: createServiceClient(),
+    actorUserId: check.user.id,
+    actionType: 'COUPON_TOGGLED_ACTIVE',
+    payload: { coupon_id: id, active },
+    request: req,
+  });
+
   return NextResponse.json({ ok: true });
 }

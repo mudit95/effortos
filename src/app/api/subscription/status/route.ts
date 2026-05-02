@@ -34,6 +34,7 @@ export async function GET() {
         return NextResponse.json({
           status: 'trialing' as SubscriptionStatus,
           plan_tier: 'starter',
+          billing_cadence: 'monthly',
           trial_ends_at: trialEnd.toISOString(),
           implicit: true, // no payment method on file yet
         });
@@ -42,6 +43,7 @@ export async function GET() {
       return NextResponse.json({
         status: 'expired' as SubscriptionStatus,
         plan_tier: 'starter',
+        billing_cadence: 'monthly',
         trial_ends_at: trialEnd.toISOString(),
       });
     }

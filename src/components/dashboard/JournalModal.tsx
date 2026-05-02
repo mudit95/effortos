@@ -109,7 +109,16 @@ function JournalModalBody({
   onToast,
 }: {
   dateKey: string;
-  existing: { content: string; mood?: JournalMoodId; ai_prompt?: string } | null;
+  existing: {
+    content: string;
+    mood?: JournalMoodId;
+    ai_prompt?: string;
+    /** Optional photo attachment (mig 033). Rendered above the
+     *  textarea when present so the user sees the photo they
+     *  sent via WhatsApp. */
+    media_url?: string;
+    media_type?: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
+  } | null;
   onClose: () => void;
   onSave: (date: string, content: string, mood?: JournalMoodId) => void;
   onDelete: (date: string) => void;
@@ -410,6 +419,33 @@ function JournalModalBody({
                 Today&rsquo;s entry
               </label>
             </div>
+            {/* Photo attachment, when this entry was created via WhatsApp's
+                photo-journal flow (mig 033). Rendered above the textarea so
+                the photo and the caption read top-down naturally. We
+                lazy-load and let the browser size it; the parent height
+                is bounded so a tall photo can't push the textarea off-screen. */}
+            {existing?.media_url && (
+              <div className="px-6 pb-3 shrink-0">
+                {/*
+                  Plain <img>, not next/image. The src is a Supabase
+                  Storage signed URL with an embedded token query
+                  string that rotates per upload — next/image's
+                  loader expects stable URLs and a configured
+                  remotePatterns entry, neither of which applies to
+                  per-user signed URLs. The image is also already
+                  bounded (≤5 MB at the upload step + max-h-72 in
+                  CSS), so the LCP/bandwidth concerns next/image
+                  guards against don't really apply here.
+                */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={existing.media_url}
+                  alt="Photo attached to today's journal entry"
+                  loading="lazy"
+                  className="rounded-xl border border-white/[0.06] max-h-72 w-auto object-contain bg-black/20"
+                />
+              </div>
+            )}
             <div className="px-6 pb-4 flex-1 min-h-0">
               <textarea
                 id="journal-content"

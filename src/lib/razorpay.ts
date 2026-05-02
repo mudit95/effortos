@@ -23,7 +23,7 @@ export const STARTER_PLAN_ID = process.env.RAZORPAY_PLAN_ID || '';
 /** Pro plan ID — create in Razorpay dashboard (₹999/month) */
 export const PRO_PLAN_ID = process.env.RAZORPAY_PRO_PLAN_ID || '';
 
-/** Annual plan IDs — create in Razorpay dashboard (₹4,999/year, ₹9,999/year) */
+/** Annual plan IDs — create in Razorpay dashboard (₹3,999/year, ₹7,999/year) */
 export const STARTER_ANNUAL_PLAN_ID = process.env.RAZORPAY_STARTER_ANNUAL_PLAN_ID || '';
 export const PRO_ANNUAL_PLAN_ID = process.env.RAZORPAY_PRO_ANNUAL_PLAN_ID || '';
 
@@ -37,9 +37,9 @@ export const TRIAL_DAYS = 3;
 export const STARTER_MONTHLY_PRICE = Number(process.env.RAZORPAY_MONTHLY_PRICE || 49900);   // ₹499
 export const PRO_MONTHLY_PRICE = Number(process.env.RAZORPAY_PRO_MONTHLY_PRICE || 99900);    // ₹999
 
-/** Annual prices in paise. ~17% discount vs. monthly × 12. */
-export const STARTER_ANNUAL_PRICE = Number(process.env.RAZORPAY_STARTER_ANNUAL_PRICE || 499900); // ₹4,999
-export const PRO_ANNUAL_PRICE = Number(process.env.RAZORPAY_PRO_ANNUAL_PRICE || 999900);         // ₹9,999
+/** Annual prices in paise. ~33% discount vs. monthly × 12 (4 months free). */
+export const STARTER_ANNUAL_PRICE = Number(process.env.RAZORPAY_STARTER_ANNUAL_PRICE || 399900); // ₹3,999
+export const PRO_ANNUAL_PRICE = Number(process.env.RAZORPAY_PRO_ANNUAL_PRICE || 799900);         // ₹7,999
 
 /** Legacy alias */
 export const MONTHLY_PRICE = STARTER_MONTHLY_PRICE;

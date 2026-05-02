@@ -343,6 +343,36 @@ async function handleEvent({
       return;
     }
 
+    case 'subscription.paused': {
+      // User-initiated pause — we already updated DB synchronously in
+      // /api/subscription/pause. This is the belt-and-braces sync in
+      // case Razorpay or another path triggered the pause.
+      await supabase
+        .from('subscriptions')
+        .update({
+          status: 'paused',
+          // Only set paused_at if it's not already set; respects the
+          // /api/subscription/pause write that beat us here.
+          paused_at: new Date().toISOString(),
+        })
+        .eq('razorpay_subscription_id', subscriptionId)
+        .neq('status', 'paused'); // no-op if already paused
+      return;
+    }
+
+    case 'subscription.resumed': {
+      // User-initiated resume — same belt-and-braces pattern.
+      await supabase
+        .from('subscriptions')
+        .update({
+          status: 'active',
+          paused_at: null,
+        })
+        .eq('razorpay_subscription_id', subscriptionId)
+        .eq('status', 'paused');
+      return;
+    }
+
     default:
       // Unhandled event — log at WARN so ops can see new event types Razorpay
       // adds before we explicitly handle them. The event is still recorded in

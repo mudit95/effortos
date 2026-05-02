@@ -993,6 +993,10 @@ export function LandingPage() {
   // motion via its global `MotionConfig` defaults.
   const reduceMotion = useReducedMotion();
 
+  // Pricing-section cadence toggle. Defaulting to 'annual' surfaces the
+  // ₹3,999 / ₹7,999 deal first; users who want monthly are one tap away.
+  const [landingCadence, setLandingCadence] = useState<'monthly' | 'annual'>('annual');
+
   return (
     <div className="flex flex-col bg-[#080b10] min-h-screen overflow-hidden">
       {/* Progress bar at top */}
@@ -1473,10 +1477,40 @@ export function LandingPage() {
 
       {/* ── Pricing ────────────────────────────────────────────── */}
       <Section className="py-16 sm:py-24 px-4">
-        <div className="text-center mb-10">
+        <div className="text-center mb-8">
           <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2">Two plans. Both quiet.</h2>
           <p className="text-sm text-white/40 max-w-md mx-auto">Three days free on either. Cancel anytime, no questions.</p>
         </div>
+
+        {/* Monthly / Annual toggle. State lives in the parent LandingPage so
+            both pricing cards stay in sync with one tap. Defaulting to
+            annual front-loads the better deal. */}
+        <div className="max-w-xs mx-auto mb-8 relative flex p-1 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+          <button
+            onClick={() => setLandingCadence('monthly')}
+            className={`flex-1 py-2 text-xs font-medium rounded-lg transition-colors ${
+              landingCadence === 'monthly'
+                ? 'bg-white/[0.07] text-white/90'
+                : 'text-white/40 hover:text-white/60'
+            }`}
+          >
+            Monthly
+          </button>
+          <button
+            onClick={() => setLandingCadence('annual')}
+            className={`flex-1 py-2 text-xs font-medium rounded-lg transition-colors relative ${
+              landingCadence === 'annual'
+                ? 'bg-white/[0.07] text-white/90'
+                : 'text-white/40 hover:text-white/60'
+            }`}
+          >
+            Annual
+            <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-emerald-500/15 text-emerald-300">
+              Save 33%
+            </span>
+          </button>
+        </div>
+
         <div className="max-w-3xl mx-auto grid sm:grid-cols-2 gap-4">
           {/* Starter */}
           <motion.div
@@ -1487,10 +1521,18 @@ export function LandingPage() {
             <div className="relative z-10">
               <div className="text-xs font-bold text-cyan-400 uppercase tracking-wider mb-2">Starter</div>
               <div className="flex items-baseline gap-1 mb-1">
-                <span className="text-3xl font-bold text-white">$5.99</span>
-                <span className="text-sm text-white/30">/month</span>
+                <span className="text-3xl font-bold text-white">
+                  {landingCadence === 'annual' ? '$47' : '$5.99'}
+                </span>
+                <span className="text-sm text-white/30">
+                  {landingCadence === 'annual' ? '/year' : '/month'}
+                </span>
               </div>
-              <p className="text-[11px] text-white/30 mb-4">≈ ₹499 — billed in INR via Razorpay</p>
+              <p className="text-[11px] text-white/30 mb-4">
+                {landingCadence === 'annual'
+                  ? '≈ ₹3,999/year — billed in INR via Razorpay (4 months free)'
+                  : '≈ ₹499 — billed in INR via Razorpay'}
+              </p>
               <ul className="space-y-2.5 mb-6 text-sm text-white/50">
                 {[
                   'AI goal estimation that learns your pace',
@@ -1525,10 +1567,18 @@ export function LandingPage() {
             <div className="relative z-10">
               <div className="text-xs font-bold text-purple-400 uppercase tracking-wider mb-2">Pro</div>
               <div className="flex items-baseline gap-1 mb-1">
-                <span className="text-3xl font-bold text-white">$11.99</span>
-                <span className="text-sm text-white/30">/month</span>
+                <span className="text-3xl font-bold text-white">
+                  {landingCadence === 'annual' ? '$95' : '$11.99'}
+                </span>
+                <span className="text-sm text-white/30">
+                  {landingCadence === 'annual' ? '/year' : '/month'}
+                </span>
               </div>
-              <p className="text-[11px] text-white/30 mb-4">≈ ₹999 — billed in INR via Razorpay</p>
+              <p className="text-[11px] text-white/30 mb-4">
+                {landingCadence === 'annual'
+                  ? '≈ ₹7,999/year — billed in INR via Razorpay (4 months free)'
+                  : '≈ ₹999 — billed in INR via Razorpay'}
+              </p>
               <ul className="space-y-2.5 mb-6 text-sm text-white/50">
                 {[
                   'Everything in Starter, plus:',

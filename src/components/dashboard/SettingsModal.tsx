@@ -8,7 +8,12 @@ import { X, Bell, Clock, Palette, Check, CreditCard, AlertTriangle, Mail, Globe,
 import type { BotPersona } from '@/types';
 import { createClient } from '@/lib/supabase/client';
 import * as storage from '@/lib/storage';
-import { STARTER_PRICE_PER_MONTH, PRO_PRICE_PER_MONTH } from '@/lib/pricing';
+import {
+  STARTER_PRICE_PER_MONTH,
+  PRO_PRICE_PER_MONTH,
+  STARTER_ANNUAL_PRICE_PER_YEAR,
+  PRO_ANNUAL_PRICE_PER_YEAR,
+} from '@/lib/pricing';
 import { PactsSection } from './PactsSection';
 import { TimezoneClock } from './TimezoneClock';
 
@@ -119,6 +124,8 @@ export function SettingsModal() {
   const subscription = useStore(s => s.subscription);
   const subscriptionLoading = useStore(s => s.subscriptionLoading);
   const cancelSubscription = useStore(s => s.cancelSubscription);
+  const pauseSubscription = useStore(s => s.pauseSubscription);
+  const resumeSubscription = useStore(s => s.resumeSubscription);
   const setShowPaywall = useStore(s => s.setShowPaywall);
 
   const [focusMin, setFocusMin] = useState(
@@ -321,13 +328,23 @@ export function SettingsModal() {
             initial={{ scale: 0.95, opacity: 0, y: 20 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.95, opacity: 0, y: 20 }}
+            // role="dialog" + aria-modal=true tells screen readers this
+            // is a focused modal — they should treat the rest of the
+            // page as inert. aria-labelledby ties the dialog to its
+            // heading so the announcement on open is "Settings dialog"
+            // not just "dialog". Backdrop click + Escape (handled in
+            // an effect above) cover the close paths.
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-modal-title"
             className="w-full max-w-md bg-[#131820] border border-white/10 rounded-2xl shadow-2xl max-h-[85vh] overflow-y-auto"
           >
             {/* Header */}
             <div className="flex items-center justify-between p-6 pb-4 border-b border-white/[0.06]">
-              <h3 className="text-lg font-semibold text-white">Settings</h3>
+              <h3 id="settings-modal-title" className="text-lg font-semibold text-white">Settings</h3>
               <button
                 onClick={() => setShowSettings(false)}
+                aria-label="Close settings"
                 className="text-white/30 hover:text-white/60 transition-colors p-1"
               >
                 <X className="w-4 h-4" />
@@ -455,13 +472,17 @@ export function SettingsModal() {
                   <h4 className="text-sm font-medium text-white/70">Subscription</h4>
                 </div>
                 {(() => {
-                  // Tier-aware price label. Earlier we always rendered the
-                  // Starter price for both tiers, so Pro subscribers were
-                  // told they were paying ₹499 while actually being charged ₹999.
-                  const tierPrice =
-                    subscription.plan_tier === 'pro'
-                      ? PRO_PRICE_PER_MONTH
-                      : STARTER_PRICE_PER_MONTH;
+                  // Tier × cadence-aware price label. Earlier we always
+                  // rendered the Starter monthly price for everyone, so Pro
+                  // subscribers were told they were paying ₹499 while actually
+                  // being charged ₹999, and annual subscribers saw the
+                  // monthly figure with no clue when their next renewal hit.
+                  const isAnnual = subscription.billing_cadence === 'annual';
+                  const isPro = subscription.plan_tier === 'pro';
+                  const tierPrice = isPro
+                    ? (isAnnual ? PRO_ANNUAL_PRICE_PER_YEAR : PRO_PRICE_PER_MONTH)
+                    : (isAnnual ? STARTER_ANNUAL_PRICE_PER_YEAR : STARTER_PRICE_PER_MONTH);
+                  const renewalNoun = isAnnual ? 'Annual renewal' : 'Next billing';
 
                   // Cancel button — visible for BOTH active and trialing.
                   // Trialing users need an in-product opt-out before the
@@ -481,6 +502,31 @@ export function SettingsModal() {
                     </button>
                   );
 
+                  // Pause button — only meaningful for an actively-paying
+                  // user (not trialing — pausing a 3-day trial is silly).
+                  // Past-due users see neither pause nor cancel here; they
+                  // get the dedicated "update payment" surface below.
+                  // Spacing: pause and cancel render inline with a divider
+                  // so the user reads "pause OR cancel" as siblings, not
+                  // pause-as-default.
+                  const pauseAndCancelRow = (
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => {
+                          if (confirm('Pause your subscription? No charges, no premium access. Resume any time from Settings.')) {
+                            pauseSubscription();
+                            setShowSettings(false);
+                          }
+                        }}
+                        className="text-xs text-cyan-400/60 hover:text-cyan-300 transition-colors"
+                      >
+                        Pause subscription
+                      </button>
+                      <span className="text-white/15">·</span>
+                      {cancelButton}
+                    </div>
+                  );
+
                   if (subscriptionLoading) {
                     return <p className="text-xs text-white/30">Loading...</p>;
                   }
@@ -490,10 +536,33 @@ export function SettingsModal() {
                         <p className="text-xs text-green-400/70">Active subscription — {tierPrice}</p>
                         {subscription.current_period_end && (
                           <p className="text-[11px] text-white/25">
-                            Next billing: {new Date(subscription.current_period_end).toLocaleDateString()}
+                            {renewalNoun}: {new Date(subscription.current_period_end).toLocaleDateString()}
                           </p>
                         )}
-                        {cancelButton}
+                        {pauseAndCancelRow}
+                      </div>
+                    );
+                  }
+                  if (subscription.status === 'paused') {
+                    return (
+                      <div className="space-y-2 rounded-lg border border-cyan-400/20 bg-cyan-400/[0.04] p-3">
+                        <p className="text-xs font-medium text-cyan-300">Subscription paused</p>
+                        <p className="text-[11px] text-white/55 leading-relaxed">
+                          No charges happening. Premium features are off. Tap resume any time and you&rsquo;re back in.
+                        </p>
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={() => {
+                              resumeSubscription();
+                              setShowSettings(false);
+                            }}
+                            className="text-xs font-medium text-cyan-300 hover:text-cyan-200 transition-colors"
+                          >
+                            Resume subscription
+                          </button>
+                          <span className="text-white/15">·</span>
+                          {cancelButton}
+                        </div>
                       </div>
                     );
                   }

@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import {
   Users, Plus, Copy, Check, UserMinus,
-  Flame, Calendar, Loader2,
+  Flame, Calendar, Loader2, X,
 } from 'lucide-react';
 
 interface Pact {
@@ -113,6 +113,40 @@ export function PactsSection() {
       });
       if (res.ok) fetchPacts();
     } catch {}
+  };
+
+  /**
+   * Cancel a pending invite the current user sent. Reuses /api/pacts/end
+   * since that route accepts any non-'ended' status; it flips the row to
+   * 'ended' which removes it from both the pending and active filters.
+   *
+   * Without this, a user who typoed an email or changed their mind had no
+   * in-product recourse — the row sat in their UI for 7 days waiting for
+   * the pacts-cleanup cron to flip it to 'declined'. That's the bug the
+   * user surfaced ("sent pacts that are not accepted are not deleted").
+   */
+  const cancelInvite = async (pactId: string) => {
+    if (!confirm('Cancel this pending invite? The recipient won\'t be able to accept anymore.')) return;
+    try {
+      const res = await fetch('/api/pacts/end', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pact_id: pactId }),
+      });
+      if (res.ok) fetchPacts();
+    } catch {}
+  };
+
+  /** "Sent X days ago" / "Sent today" helper for the pending-pact card.
+   *  Matches the 7-day TTL after which the pacts-cleanup cron auto-expires
+   *  the invite — so the user can see how long until they don't have to
+   *  manage it anymore. */
+  const ageLabel = (createdAt: string): string => {
+    const ageMs = Date.now() - new Date(createdAt).getTime();
+    const days = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+    if (days <= 0) return 'sent today';
+    if (days === 1) return 'sent 1 day ago';
+    return `sent ${days} days ago`;
   };
 
   const copyCode = (code: string) => {
@@ -262,22 +296,34 @@ export function PactsSection() {
           key={pact.id}
           className="p-3 rounded-xl border border-white/[0.06] bg-white/[0.02]"
         >
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-white/60">{pact.partner_email}</p>
-              <p className="text-[10px] text-white/25 mt-0.5">Waiting for them to accept</p>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm text-white/60 truncate">{pact.partner_email}</p>
+              <p className="text-[10px] text-white/25 mt-0.5">
+                Waiting for them to accept · {ageLabel(pact.created_at)}
+              </p>
             </div>
-            <button
-              onClick={() => copyCode(pact.invite_code)}
-              className="flex items-center gap-1 text-[10px] text-white/30 hover:text-cyan-400 transition-colors px-2 py-1 rounded bg-white/[0.03]"
-              title="Copy invite code to share"
-            >
-              {copied === pact.invite_code ? (
-                <><Check className="w-3 h-3" /> Copied</>
-              ) : (
-                <><Copy className="w-3 h-3" /> Code</>
-              )}
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={() => copyCode(pact.invite_code)}
+                className="flex items-center gap-1 text-[10px] text-white/30 hover:text-cyan-400 transition-colors px-2 py-1 rounded bg-white/[0.03]"
+                title="Copy invite code to share"
+              >
+                {copied === pact.invite_code ? (
+                  <><Check className="w-3 h-3" /> Copied</>
+                ) : (
+                  <><Copy className="w-3 h-3" /> Code</>
+                )}
+              </button>
+              <button
+                onClick={() => cancelInvite(pact.id)}
+                className="flex items-center gap-1 text-[10px] text-white/30 hover:text-red-400 transition-colors px-2 py-1 rounded bg-white/[0.03]"
+                title="Cancel this invite"
+                aria-label="Cancel pending invite"
+              >
+                <X className="w-3 h-3" /> Cancel
+              </button>
+            </div>
           </div>
         </div>
       ))}

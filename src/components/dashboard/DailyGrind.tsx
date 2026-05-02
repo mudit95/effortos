@@ -461,8 +461,12 @@ function IdleTimerPlaceholder({
       <p className="text-[9px] text-white/30 uppercase tracking-widest font-medium mb-1.5">
         Ready when you are
       </p>
+      {/* When there are no tasks the lower DailyGrind empty-state already
+          owns the "add tasks" message — repeating it here was the
+          redundant copy flagged in PLATFORM_REVIEW.md. Fall back to a
+          short prompt about the unassigned-pomodoro option below. */}
       <p className="text-[13px] text-white/55 font-medium mb-3 text-center leading-tight px-1">
-        {hasTasks ? 'Click play on a task to begin' : 'Add tasks to start a session'}
+        {hasTasks ? 'Click play on a task to begin' : 'Or jump straight into a free pomodoro'}
       </p>
 
       <div className="relative w-[168px] h-[168px] flex items-center justify-center">
@@ -810,13 +814,21 @@ export function DailyGrind() {
           {/* Row 1: date nav + view toggle + log */}
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-1.5">
-              <button onClick={goToPreviousDay} className="p-1.5 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 transition-all">
+              <button
+                onClick={goToPreviousDay}
+                aria-label="Previous day"
+                className="p-1.5 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 transition-all"
+              >
                 <ChevronLeft className="w-4 h-4" />
               </button>
               <h2 className="text-lg font-bold text-white min-w-[100px] text-center">
                 {formatDateLabel(dailyViewDate)}
               </h2>
-              <button onClick={goToNextDay} className="p-1.5 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 transition-all">
+              <button
+                onClick={goToNextDay}
+                aria-label="Next day"
+                className="p-1.5 rounded-lg text-white/30 hover:text-white/60 hover:bg-white/5 transition-all"
+              >
                 <ChevronRight className="w-4 h-4" />
               </button>
               {!isToday && (

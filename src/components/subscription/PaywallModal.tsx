@@ -5,8 +5,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store/useStore';
 import { Button } from '@/components/ui/button';
 import { Sparkles, X, Shield, Zap, Brain, BarChart3, Clock, Ticket, MessageCircle, Check } from 'lucide-react';
-import { STARTER_PRICE, PRO_PRICE } from '@/lib/pricing';
-import type { PlanTier } from '@/types';
+import {
+  STARTER_PRICE,
+  PRO_PRICE,
+  STARTER_ANNUAL_PRICE,
+  PRO_ANNUAL_PRICE,
+  STARTER_ANNUAL_EFFECTIVE_MONTHLY,
+  PRO_ANNUAL_EFFECTIVE_MONTHLY,
+  STARTER_ANNUAL_SAVINGS,
+  PRO_ANNUAL_SAVINGS,
+} from '@/lib/pricing';
+import type { PlanTier, BillingCadence } from '@/types';
 import { track, getAnonymousId } from '@/lib/analytics';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
@@ -47,6 +56,10 @@ export function PaywallModal() {
   }, [showPaywall, userId]);
   const [loading, setLoading] = useState(false);
   const [selectedTier, setSelectedTier] = useState<PlanTier>('starter');
+  // Default to annual — front-loads our best offer (33% off, 4 months free).
+  // Users who prefer monthly can flip the toggle; defaulting to annual lifts
+  // ARPU without hiding the cheaper option.
+  const [selectedCadence, setSelectedCadence] = useState<BillingCadence>('annual');
   const [couponCode, setCouponCode] = useState('');
   const [couponMsg, setCouponMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [redeeming, setRedeeming] = useState(false);
@@ -100,6 +113,7 @@ export function PaywallModal() {
     setLoading(true);
     await startTrial({
       tier: selectedTier,
+      cadence: selectedCadence,
       ...(appliedCoupon && appliedCoupon.razorpay_offer_id ? {
         couponCode: appliedCoupon.code,
         couponId: appliedCoupon.coupon_id,
@@ -112,7 +126,22 @@ export function PaywallModal() {
   if (!showPaywall) return null;
 
   const features = selectedTier === 'pro' ? PRO_FEATURES : STARTER_FEATURES;
-  const price = selectedTier === 'pro' ? PRO_PRICE : STARTER_PRICE;
+
+  // Pricing copy is a 2×2 of (tier × cadence). Compute every variant so the
+  // toggle and the headline price stay perfectly aligned with what the
+  // Razorpay checkout will charge — drift here is a chargeback risk.
+  const isAnnual = selectedCadence === 'annual';
+  const isPro = selectedTier === 'pro';
+  const headlinePrice = isAnnual
+    ? (isPro ? PRO_ANNUAL_PRICE : STARTER_ANNUAL_PRICE)
+    : (isPro ? PRO_PRICE : STARTER_PRICE);
+  const headlineSuffix = isAnnual ? '/year' : '/month';
+  const effectiveMonthly = isAnnual
+    ? (isPro ? PRO_ANNUAL_EFFECTIVE_MONTHLY : STARTER_ANNUAL_EFFECTIVE_MONTHLY)
+    : null;
+  const annualSavings = isPro ? PRO_ANNUAL_SAVINGS : STARTER_ANNUAL_SAVINGS;
+  const tierMonthlyShort = isPro ? PRO_PRICE : STARTER_PRICE;
+  const tierAnnualShort = isPro ? PRO_ANNUAL_PRICE : STARTER_ANNUAL_PRICE;
 
   return (
     <AnimatePresence>
@@ -171,7 +200,9 @@ export function PaywallModal() {
               >
                 <div className="text-center">
                   <div className="font-bold">Starter</div>
-                  <div className="text-xs mt-0.5 opacity-70">{STARTER_PRICE}/mo</div>
+                  <div className="text-xs mt-0.5 opacity-70">
+                    {selectedCadence === 'annual' ? `${STARTER_ANNUAL_PRICE}/yr` : `${STARTER_PRICE}/mo`}
+                  </div>
                 </div>
               </button>
               <button
@@ -187,8 +218,39 @@ export function PaywallModal() {
                 </div>
                 <div className="text-center">
                   <div className="font-bold">Pro</div>
-                  <div className="text-xs mt-0.5 opacity-70">{PRO_PRICE}/mo</div>
+                  <div className="text-xs mt-0.5 opacity-70">
+                    {selectedCadence === 'annual' ? `${PRO_ANNUAL_PRICE}/yr` : `${PRO_PRICE}/mo`}
+                  </div>
                 </div>
+              </button>
+            </div>
+
+            {/* Cadence toggle — segmented control. Annual selected by default
+                so the most ARPU-positive option is the path of least
+                resistance, but monthly is one tap away. */}
+            <div className="mt-3 relative flex p-1 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+              <button
+                onClick={() => setSelectedCadence('monthly')}
+                className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                  selectedCadence === 'monthly'
+                    ? 'bg-white/[0.07] text-white/90'
+                    : 'text-white/40 hover:text-white/60'
+                }`}
+              >
+                Monthly
+              </button>
+              <button
+                onClick={() => setSelectedCadence('annual')}
+                className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors relative ${
+                  selectedCadence === 'annual'
+                    ? 'bg-white/[0.07] text-white/90'
+                    : 'text-white/40 hover:text-white/60'
+                }`}
+              >
+                Annual
+                <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-emerald-500/15 text-emerald-300">
+                  {annualSavings}
+                </span>
               </button>
             </div>
           </div>
@@ -217,13 +279,22 @@ export function PaywallModal() {
           <div className="px-6 py-5 border-t border-white/[0.06]">
             <div className="text-center mb-4">
               <div className="flex items-baseline justify-center gap-1">
-                <span className="text-3xl font-bold text-white">{price}</span>
-                <span className="text-sm text-white/30">/month</span>
+                <span className="text-3xl font-bold text-white">{headlinePrice}</span>
+                <span className="text-sm text-white/30">{headlineSuffix}</span>
               </div>
+              {effectiveMonthly && (
+                <p className="text-[11px] text-emerald-400/80 mt-1">
+                  Just {effectiveMonthly}/mo billed annually
+                </p>
+              )}
               <p className="text-xs text-white/25 mt-1">
-                {trialEnded ? 'Billed monthly. Cancel anytime.'
-                  : isCurrentlyStarter && selectedTier === 'pro' ? 'Upgrade now. Billed monthly.'
-                  : `3 days free, then ${price}/month. Cancel anytime.`}
+                {trialEnded
+                  ? `Billed ${isAnnual ? 'annually' : 'monthly'}. Cancel anytime.`
+                  : isCurrentlyStarter && selectedTier === 'pro'
+                    ? `Upgrade now. Billed ${isAnnual ? 'annually' : 'monthly'}.`
+                    : isAnnual
+                      ? `3 days free, then ${tierAnnualShort}/year. Cancel anytime.`
+                      : `3 days free, then ${tierMonthlyShort}/month. Cancel anytime.`}
               </p>
             </div>
 

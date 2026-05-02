@@ -6,6 +6,8 @@ import { useStore } from '@/store/useStore';
 import { Button } from '@/components/ui/button';
 import { GoalProgressBar } from './GoalProgressBar';
 import { FeedbackModal } from './FeedbackModal';
+import { LapseRecoveryModal } from './LapseRecoveryModal';
+import { DailyCard } from './DailyCard';
 import { SessionNotesModal } from './SessionNotesModal';
 import { CelebrationScreen } from './CelebrationScreen';
 import { SettingsModal } from './SettingsModal';
@@ -186,8 +188,25 @@ export function Dashboard() {
       />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-4 sm:mt-6">
+        {/* Visually-hidden page heading — sighted users see the active-goal
+            title and nav as visual anchors; screen-reader users need a
+            proper H1 to navigate by heading-level keys (H in JAWS/NVDA)
+            and to know they're on the dashboard. The .sr-only utility
+            keeps it off-screen but in the accessibility tree. */}
+        <h1 className="sr-only">
+          {activeGoal ? `${activeGoal.title} — EffortOS dashboard` : 'EffortOS dashboard'}
+        </h1>
+
         {/* Personalized daily brief — context-on-arrival */}
         <DailyBrief />
+
+        {/* Daily AI card (Wave 3) — shows today's stats for everyone +
+            a one-line "for tomorrow" suggestion for Pro users. Cached
+            once-per-(user,date) on the server side, so this is a fast
+            DB read after the first dashboard load each day. */}
+        <div className="mb-4 sm:mb-6">
+          <DailyCard />
+        </div>
 
         {/* Free / expired callout — frames "what you have vs. what you unlock"
             for non-paying users. Renders nothing for trialing/active users. */}
@@ -273,6 +292,7 @@ export function Dashboard() {
       </main>
 
       {/* Modals */}
+      <LapseRecoveryModal />
       <FeedbackModal />
       <SessionNotesModal />
       <CelebrationScreen />
@@ -435,6 +455,13 @@ function LongTermStreakCalendar({
   const focusDuration = useStore(s => s.user?.settings?.focus_duration ?? 25 * 60);
   const journalEntries = useStore(s => s.journalEntries);
   const setJournalModalDate = useStore(s => s.setJournalModalDate);
+  // Streak-freeze plumbing (mig 035). Pull tokens-remaining off the
+  // user object and pass the freezeStreak action down. The CTA in
+  // StreakCalendar self-gates on (tokens > 0 AND streak ≥ 3) so we
+  // can wire both unconditionally — the component decides whether
+  // to render.
+  const freezeTokensRemaining = useStore(s => s.user?.freeze_tokens_remaining);
+  const freezeStreak = useStore(s => s.freezeStreak);
 
   const journalDates = React.useMemo(
     () => journalEntries.map(e => e.date),
@@ -448,6 +475,8 @@ function LongTermStreakCalendar({
       focusDurationSec={focusDuration}
       journalDates={journalDates}
       onDayClick={(date) => setJournalModalDate(date)}
+      freezeTokensRemaining={freezeTokensRemaining}
+      onFreezeToday={() => freezeStreak('today')}
     />
   );
 }

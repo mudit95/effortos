@@ -79,12 +79,38 @@ export function DailyBrief() {
     return null;
   }, [activeGoal, dashboardStats]);
 
-  // Fetch AI one-liner
+  // Fetch AI one-liner (with per-day client-side cache).
+  //
+  // Pre-cache, this fired on every dashboard mount — every page refresh,
+  // back-button, deeplink, etc. burned Anthropic tokens. The brief is
+  // generated from inputs that are mostly stable over a single day
+  // (streak count, goal title, completion %), so caching the response
+  // by (user_id, local-date) is a clean win. The cache key lives in
+  // localStorage so it survives reload but not log-out-then-back-in
+  // (different account). Stale-after-midnight is the right TTL —
+  // tomorrow's brief should reflect tomorrow's data.
   useEffect(() => {
     if (!user || !activeGoal || dismissed) return;
-    // Only fetch once per mount
     let cancelled = false;
     setLoadingAi(true);
+
+    const todayKey = (() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    })();
+    const cacheKey = `effortos:dailyBrief:${user.id}:${todayKey}`;
+
+    // Try the cache first.
+    try {
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        setAiLine(cached);
+        setLoadingAi(false);
+        return () => { cancelled = true; };
+      }
+    } catch {
+      // localStorage unavailable — fall through to network.
+    }
 
     (async () => {
       try {
@@ -103,6 +129,9 @@ export function DailyBrief() {
         if (res.ok && !cancelled) {
           const data = await res.json();
           setAiLine(data.message);
+          if (data.message) {
+            try { localStorage.setItem(cacheKey, data.message); } catch { /* ignore */ }
+          }
         }
       } catch {
         // Silently fail — the brief still works without the AI line

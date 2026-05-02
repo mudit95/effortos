@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, ChevronRight, Flame, Clock, Target, BookOpen, PlusCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Flame, Clock, Target, BookOpen, PlusCircle, Snowflake } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface DailySession {
@@ -28,6 +28,19 @@ interface StreakCalendarProps {
   // "Add journal entry" and "View journal entry". Passed as an array
   // for ergonomics; we normalize to a Set internally for O(1) lookup.
   journalDates?: string[];
+  /**
+   * Streak-freeze tokens remaining for this user (mig 035). When > 0
+   * AND the current streak is at or above the floor (3 days), the
+   * "Freeze today" CTA appears under the streak badge. Undefined =
+   * tokens-unknown (user pre-mig-035) → no CTA shown.
+   */
+  freezeTokensRemaining?: number;
+  /**
+   * Called when the user taps "Freeze today" — the parent wires this
+   * to the freezeStreak store action. We don't manage the network
+   * call here; this component is presentational.
+   */
+  onFreezeToday?: () => void;
 }
 
 type HoverInfo = {
@@ -54,6 +67,8 @@ export function StreakCalendar({
   className = '',
   onDayClick,
   journalDates,
+  freezeTokensRemaining,
+  onFreezeToday,
 }: StreakCalendarProps) {
   // Normalize the journal date array to a Set for O(1) membership checks
   // inside the render loop (one lookup per cell, 35+ cells per month).
@@ -258,14 +273,21 @@ export function StreakCalendar({
         </button>
       </div>
 
-      {/* Day labels */}
-      <div className="grid grid-cols-7 gap-1 mb-2 px-2">
+      {/* Day labels.
+          Sighted users see the first letter (M / T / W / T / F / S / S).
+          Screen-reader users would otherwise hear ambiguous "M, T, W, T,
+          F, S, S" — Tue/Thu and Sat/Sun indistinguishable. aria-label on
+          each cell pins the full weekday name; the visible character is
+          aria-hidden so the SR doesn't double-read it. */}
+      <div className="grid grid-cols-7 gap-1 mb-2 px-2" role="row">
         {dayLabels.map((label) => (
           <div
             key={label}
+            role="columnheader"
+            aria-label={label}
             className="text-xs text-white/40 text-center font-medium py-1"
           >
-            {label.charAt(0)}
+            <span aria-hidden="true">{label.charAt(0)}</span>
           </div>
         ))}
       </div>
@@ -369,6 +391,36 @@ export function StreakCalendar({
             </>
           )}
         </div>
+      )}
+
+      {/* Freeze-today CTA (mig 035). Only renders when:
+          - We know the token count (freezeTokensRemaining is defined),
+          - The user has at least 1 token left,
+          - The current streak is ≥ 3 (the auto-apply threshold per
+            STREAK_FREEZES_DESIGN.md — protecting a 1-day streak masks
+            the activation problem we'd rather fix at the source).
+          A successful freeze decrements the token via the store's
+          freezeStreak action; the UI re-renders and either the CTA
+          stays (more tokens) or hides (out). If the user already
+          froze today, the backend rejects with 409 and we surface a
+          toast — no need to track that state client-side. */}
+      {typeof freezeTokensRemaining === 'number' &&
+        freezeTokensRemaining > 0 &&
+        currentStreak >= 3 &&
+        onFreezeToday && (
+        <button
+          type="button"
+          onClick={onFreezeToday}
+          className="w-full flex items-center justify-center gap-2 text-xs px-3 py-2 rounded-lg border border-cyan-400/20 bg-cyan-400/[0.04] text-cyan-200 hover:bg-cyan-400/[0.08] hover:border-cyan-400/30 transition-colors"
+          aria-label={`Use a freeze token to protect your ${currentStreak}-day streak. ${freezeTokensRemaining} remaining.`}
+        >
+          <Snowflake className="w-3.5 h-3.5" />
+          <span className="font-medium">Freeze today</span>
+          <span className="text-cyan-400/50">·</span>
+          <span className="text-cyan-300/70">
+            {freezeTokensRemaining} {freezeTokensRemaining === 1 ? 'token' : 'tokens'} left
+          </span>
+        </button>
       )}
 
       {/* ── Rich hover tooltip ─────────────────────────────────────── */}

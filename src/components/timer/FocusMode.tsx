@@ -14,6 +14,8 @@ import { AmbientSoundToggle } from './AmbientSoundToggle';
 import { BreathingGuide } from './BreathingGuide';
 import { warmUpAudio } from '@/lib/sounds';
 import { QuickPomodoroPrompt } from './QuickPomodoroPrompt';
+import { FocusBackgroundLayer } from './FocusBackgroundLayer';
+import { BackgroundPicker } from './BackgroundPicker';
 
 // How long the keyboard-shortcuts panel stays visible on first mount.
 // The user gets a brief glance at the available shortcuts, then it
@@ -195,8 +197,18 @@ export function FocusMode() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 bg-[var(--background,#080b10)] flex flex-col items-center justify-center px-4"
+      className="fixed inset-0 z-50 bg-[var(--background,#080b10)] flex flex-col items-center justify-center px-4 overflow-hidden"
     >
+      {/* Focus-mode background (mig 036). Renders the user's chosen
+          gradient/image/video at z-0 plus a dim scrim at z-[1] so the
+          timer + controls (everything else in this tree) stay readable.
+          When no background is selected, this renders nothing and the
+          parent's bg-[var(--background)] solid colour shows through. */}
+      <FocusBackgroundLayer
+        backgroundId={user?.focus_background_id ?? null}
+        dimPercent={user?.focus_background_dim ?? 35}
+      />
+
       {/* Exit button */}
       <button
         onClick={handleExit}
@@ -206,8 +218,12 @@ export function FocusMode() {
         <X className="w-5 h-5" />
       </button>
 
-      {/* Ambient sound (sits just left of the exit button). */}
-      <div className="absolute top-2 right-16 sm:top-4 sm:right-24 z-10">
+      {/* Ambient sound + background picker (sit just left of the exit
+          button). The two pickers share visual language — both are
+          large rounded-corner toggles with a popover beneath, side by
+          side so the user sees them as siblings. */}
+      <div className="absolute top-2 right-16 sm:top-4 sm:right-24 z-10 flex items-center gap-2">
+        <BackgroundPicker />
         <AmbientSoundToggle />
       </div>
 

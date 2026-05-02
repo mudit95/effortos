@@ -260,6 +260,13 @@ export function extractIncomingMessage(body: Record<string, unknown>): {
   messageId: string;
   buttonReplyId?: string;
   audioId?: string;
+  /** Image media id from Meta when the user sent a photo. The webhook
+   *  routes these to the photo-journal handler. Optional caption (the
+   *  text WhatsApp lets users attach to an image) lands in `text`. */
+  imageId?: string;
+  /** Image MIME type as reported by Meta (image/jpeg, image/png, etc.).
+   *  Used to validate the upload + set media_type on the journal row. */
+  imageMimeType?: string;
 } | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -290,6 +297,22 @@ export function extractIncomingMessage(body: Record<string, unknown>): {
     if ((msg.type === 'audio' || msg.type === 'voice') && (msg.audio?.id || msg.voice?.id)) {
       const audioId = msg.audio?.id || msg.voice?.id;
       return { from, text: '', messageId, audioId };
+    }
+
+    // Image (photo journals). WhatsApp puts an optional caption in
+    // image.caption — feed it through as `text` so the webhook can
+    // save it as the journal body alongside the photo. No caption
+    // means an empty text; the handler decides how to prompt.
+    if (msg.type === 'image' && msg.image?.id) {
+      const caption: string = msg.image?.caption || '';
+      const mime: string | undefined = msg.image?.mime_type;
+      return {
+        from,
+        text: caption,
+        messageId,
+        imageId: msg.image.id,
+        imageMimeType: mime,
+      };
     }
 
     return null;

@@ -38,6 +38,15 @@ export const maxDuration = 60;
  * for inbox space with same-day digest sends).
  */
 
+// Two thresholds, two templates, two cooldowns. Re-engagement is the
+// existing 14-day "still planning to come back?" send. Welcome-back is
+// the gentler 7-day nudge added in Wave 2 — pairs with the in-app
+// LapseRecoveryModal so users get both an email AND a friendlier prompt
+// when they next open the app. A user who hits the 7-day window first
+// gets welcome-back; if they're still gone at 14 days they then get the
+// stronger re-engagement (separate email_log type, separate cooldown).
+const WELCOME_BACK_THRESHOLD = 7;
+const WELCOME_BACK_COOLDOWN_DAYS = 60;
 const QUIET_DAYS_THRESHOLD = 14;
 const RE_ENGAGEMENT_COOLDOWN_DAYS = 30;
 const RE_ENGAGEMENT_CONCURRENCY = 8;
@@ -46,6 +55,10 @@ interface Candidate {
   user_id: string;
   email: string;
   name: string;
+  /** Days since the user's most recent completed session, computed
+   *  in the candidate-build step so the send loop doesn't need to
+   *  re-derive it. -1 = no sessions ever (treated as quiet). */
+  daysQuiet: number;
 }
 
 function reEngagementEmail(opts: { userName: string; daysQuiet: number }): { subject: string; html: string } {
@@ -63,14 +76,38 @@ function reEngagementEmail(opts: { userName: string; daysQuiet: number }): { sub
   };
 }
 
+/**
+ * Welcome-back template — gentler than re-engagement. Sent at 7 days
+ * dormant. Tone is "we noticed you stepped away, no pressure" rather
+ * than "still planning to come back?" The aim is to catch the lapse
+ * early and offer a quick re-entry, not to apply social pressure.
+ */
+function welcomeBackEmail(opts: { userName: string; daysQuiet: number }): { subject: string; html: string } {
+  const firstName = (opts.userName || 'there').split(' ')[0];
+  const days = opts.daysQuiet;
+  let body = `<h1>Your seat&rsquo;s still warm</h1>`;
+  body += `<p>Hi ${firstName} — it&rsquo;s been ${days} day${days === 1 ? '' : 's'} since your last focus session. That&rsquo;s a perfectly normal break.</p>`;
+  body += `<p>If you&rsquo;d like to ease back in, one 25-minute session is all it takes. No streak math required.</p>`;
+  body += `<p><a href="${APP_URL}/dashboard" class="btn">Start a quick 25 min &rarr;</a></p>`;
+  body += `<p style="margin-top:24px;color:#64748b;font-size:12px;">No follow-up unless you ask for one. &mdash; Mudit</p>`;
+  return {
+    subject: `Your seat&rsquo;s still warm at EffortOS`,
+    html: emailLayout(body, { preheader: `Easing back in is one tap. No streak pressure.` }),
+  };
+}
+
 export async function GET(request: Request) {
   const authErr = verifyCronAuth(request);
   if (authErr) return authErr;
 
   const supabase = getAdminSupabase();
   const now = Date.now();
-  const quietCutoff = new Date(now - QUIET_DAYS_THRESHOLD * 24 * 60 * 60 * 1000).toISOString();
-  const cooldownCutoff = new Date(now - RE_ENGAGEMENT_COOLDOWN_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  // Welcome-back (7d) is the broader window — anything 7+ days dormant
+  // qualifies for at least the welcome-back template. The 14d
+  // re-engagement is a strict subset chosen later.
+  const welcomeBackCutoff = new Date(now - WELCOME_BACK_THRESHOLD * 24 * 60 * 60 * 1000).toISOString();
+  const reEngagementCooldownCutoff = new Date(now - RE_ENGAGEMENT_COOLDOWN_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const welcomeBackCooldownCutoff = new Date(now - WELCOME_BACK_COOLDOWN_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
   // ── 1. Active-ish subscribers (paying or trialing) ─────────────────
   const { data: activeSubs, error: subsErr } = await supabase
@@ -89,17 +126,19 @@ export async function GET(request: Request) {
   }
   const candidateIds = activeSubs.map((s) => s.user_id);
 
-  // ── 2. Filter to those with no recent session ──────────────────────
-  // We look up the most recent completed session per user. A user with
-  // ZERO sessions ever (newly trialed, never used) also qualifies — the
-  // "no row" case is exactly what we want to nudge.
+  // ── 2. Find recent sessions per candidate ──────────────────────────
+  // Pull the latest completed session for each candidate so we can
+  // compute days-quiet per user (drives both threshold checks +
+  // template variable). Users with NO completed sessions ever get
+  // daysQuiet=Infinity (treated as max-quiet — nudge them).
   const { data: recentSessions } = await supabase
     .from('sessions')
     .select('user_id, end_time')
     .in('user_id', candidateIds)
     .eq('status', 'completed')
-    .gte('end_time', quietCutoff);
+    .gte('end_time', welcomeBackCutoff);
 
+  // Anyone with a session in the last 7 days is engaged enough — skip.
   const activeRecently = new Set((recentSessions ?? []).map((s) => s.user_id));
   const quietIds = candidateIds.filter((id) => !activeRecently.has(id));
   if (quietIds.length === 0) {
@@ -107,31 +146,59 @@ export async function GET(request: Request) {
     return NextResponse.json({ sent: 0, reason: 'no quiet users' });
   }
 
-  // ── 3. Filter out users we've already nudged in the last 30 days ──
-  const { data: recentEmails } = await supabase
-    .from('email_log')
-    .select('user_id')
+  // For each quiet candidate, fetch their most-recent completed session
+  // (could be older than 7 days, just outside the welcomeBackCutoff
+  // window). One query, ordered desc, then max-per-user in code.
+  const { data: latestSessions } = await supabase
+    .from('sessions')
+    .select('user_id, end_time')
     .in('user_id', quietIds)
-    .eq('email_type', 're_engagement')
-    .gte('created_at', cooldownCutoff);
+    .eq('status', 'completed')
+    .order('end_time', { ascending: false });
 
-  const inCooldown = new Set((recentEmails ?? []).map((e) => e.user_id));
-  const targetIds = quietIds.filter((id) => !inCooldown.has(id));
-  if (targetIds.length === 0) {
-    await recordCronRun('re-engagement', 'success', { sent: 0, reason: 'all_in_cooldown' });
-    return NextResponse.json({ sent: 0, reason: 'all in 30d cooldown' });
+  const lastSessionMs = new Map<string, number>();
+  for (const s of latestSessions ?? []) {
+    if (!lastSessionMs.has(s.user_id as string)) {
+      lastSessionMs.set(s.user_id as string, new Date(s.end_time as string).getTime());
+    }
   }
+
+  // ── 3. Cooldown filtering — separate per email type ────────────────
+  // A user who got welcome-back 30 days ago is fresh for re-engagement
+  // but NOT for another welcome-back (60d cooldown). Two separate
+  // queries so the windows don't bleed.
+  const [reEngagementCooldownRows, welcomeBackCooldownRows] = await Promise.all([
+    supabase
+      .from('email_log')
+      .select('user_id')
+      .in('user_id', quietIds)
+      .eq('email_type', 're_engagement')
+      .gte('created_at', reEngagementCooldownCutoff),
+    supabase
+      .from('email_log')
+      .select('user_id')
+      .in('user_id', quietIds)
+      .eq('email_type', 'welcome_back')
+      .gte('created_at', welcomeBackCooldownCutoff),
+  ]);
+
+  const inReEngagementCooldown = new Set(
+    (reEngagementCooldownRows.data ?? []).map((e) => e.user_id),
+  );
+  const inWelcomeBackCooldown = new Set(
+    (welcomeBackCooldownRows.data ?? []).map((e) => e.user_id),
+  );
 
   // ── 4. Filter out unsubscribers + soft-deleted ──────────────────────
   const [{ data: prefs }, { data: profiles }] = await Promise.all([
     supabase
       .from('email_preferences')
       .select('user_id, unsubscribed_all')
-      .in('user_id', targetIds),
+      .in('user_id', quietIds),
     supabase
       .from('profiles')
       .select('id, name, deleted_at')
-      .in('id', targetIds),
+      .in('id', quietIds),
   ]);
 
   const unsubscribed = new Set(
@@ -141,66 +208,109 @@ export async function GET(request: Request) {
   const authUsers = await listAllAuthUsers(supabase);
   const emailMap = new Map(authUsers.map((u) => [u.id, u.email]));
 
-  const candidates: Candidate[] = targetIds
+  const allCandidates: Candidate[] = quietIds
     .map((id) => {
       if (unsubscribed.has(id)) return null;
       const profile = profileMap.get(id);
       if (!profile || profile.deleted_at) return null;
       const email = emailMap.get(id);
       if (!email) return null;
-      return { user_id: id, email, name: profile.name || 'there' };
+      const lastMs = lastSessionMs.get(id);
+      const daysQuiet = lastMs
+        ? Math.floor((now - lastMs) / (24 * 60 * 60 * 1000))
+        : Number.POSITIVE_INFINITY;
+      return {
+        user_id: id,
+        email,
+        name: profile.name || 'there',
+        daysQuiet,
+      };
     })
     .filter((c): c is Candidate => c !== null);
 
-  if (candidates.length === 0) {
-    await recordCronRun('re-engagement', 'success', { sent: 0, reason: 'all_filtered_out' });
-    return NextResponse.json({ sent: 0, reason: 'all filtered out' });
+  // ── 5. Bucket into welcome-back vs re-engagement ───────────────────
+  // 14+ days dormant → re-engagement (strong nudge, gated by 30d cooldown).
+  // 7-13 days dormant → welcome-back (gentle nudge, gated by 60d cooldown).
+  // 14+ users who are in re-engagement cooldown SKIP entirely (don't
+  // downgrade them to welcome-back — they already heard from us).
+  const reEngagementCandidates = allCandidates.filter(
+    (c) => c.daysQuiet >= QUIET_DAYS_THRESHOLD && !inReEngagementCooldown.has(c.user_id),
+  );
+  const welcomeBackCandidates = allCandidates.filter(
+    (c) =>
+      c.daysQuiet >= WELCOME_BACK_THRESHOLD &&
+      c.daysQuiet < QUIET_DAYS_THRESHOLD &&
+      !inWelcomeBackCooldown.has(c.user_id),
+  );
+
+  if (reEngagementCandidates.length === 0 && welcomeBackCandidates.length === 0) {
+    await recordCronRun('re-engagement', 'success', { sent: 0, reason: 'all_in_cooldown_or_filtered' });
+    return NextResponse.json({ sent: 0, reason: 'all in cooldown or filtered' });
   }
 
-  // ── 5. Fan-out send ────────────────────────────────────────────────
+  // ── 6. Fan-out send (both buckets concurrently) ────────────────────
   const errors: string[] = [];
-  let sent = 0;
+  let sentReEngagement = 0;
+  let sentWelcomeBack = 0;
 
-  const results = await concurrentMap(candidates, RE_ENGAGEMENT_CONCURRENCY, async (c) => {
-    const { subject, html } = reEngagementEmail({
-      userName: c.name,
-      daysQuiet: QUIET_DAYS_THRESHOLD,
-    });
+  type EmailJob = {
+    candidate: Candidate;
+    template: 're_engagement' | 'welcome_back';
+  };
+  const jobs: EmailJob[] = [
+    ...reEngagementCandidates.map((c) => ({ candidate: c, template: 're_engagement' as const })),
+    ...welcomeBackCandidates.map((c) => ({ candidate: c, template: 'welcome_back' as const })),
+  ];
+
+  const results = await concurrentMap(jobs, RE_ENGAGEMENT_CONCURRENCY, async (job) => {
+    const c = job.candidate;
+    const { subject, html } = job.template === 'welcome_back'
+      ? welcomeBackEmail({ userName: c.name, daysQuiet: c.daysQuiet })
+      : reEngagementEmail({ userName: c.name, daysQuiet: c.daysQuiet });
     const r = await sendEmail({
       to: c.email,
       subject,
       html,
-      tags: [{ name: 'type', value: 're_engagement' }],
+      tags: [{ name: 'type', value: job.template }],
     });
     await logEmail({
       userId: c.user_id,
       emailTo: c.email,
-      emailType: 're_engagement',
+      emailType: job.template,
       subject,
       resendId: r?.id,
     });
-    return true;
+    return job.template;
   });
 
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
     if (!r.ok) {
       errors.push(
-        `${candidates[i].email}: ${r.error instanceof Error ? r.error.message : 'unknown'}`,
+        `${jobs[i].candidate.email}: ${r.error instanceof Error ? r.error.message : 'unknown'}`,
       );
+    } else if (r.value === 'welcome_back') {
+      sentWelcomeBack++;
     } else {
-      sent++;
+      sentReEngagement++;
     }
   }
 
+  const sent = sentReEngagement + sentWelcomeBack;
   await recordCronRun('re-engagement', 'success', {
     sent,
-    considered: candidates.length,
+    sentReEngagement,
+    sentWelcomeBack,
+    consideredReEngagement: reEngagementCandidates.length,
+    consideredWelcomeBack: welcomeBackCandidates.length,
     errorCount: errors.length,
   });
   return NextResponse.json({
     sent,
-    considered: candidates.length,
+    sent_re_engagement: sentReEngagement,
+    sent_welcome_back: sentWelcomeBack,
+    considered_re_engagement: reEngagementCandidates.length,
+    considered_welcome_back: welcomeBackCandidates.length,
     errors: errors.length > 0 ? errors : undefined,
   });
 }

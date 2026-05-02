@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { rateLimitOrNull } from '@/lib/ratelimit';
 
 /**
  * POST /api/sessions/complete
@@ -26,6 +27,14 @@ export async function POST(request: Request) {
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    // Rate limit: a normal user completes a pomodoro every ~25 min, so the
+    // 'light' bucket (20/hr) is generous headroom. The cap exists so a
+    // confused offline-queue replay loop, or a script hammering this
+    // endpoint, can't spam goal/milestone/task increments faster than the
+    // DB triggers (mig 029) can apply their per-day caps.
+    const blocked = await rateLimitOrNull(user.id, 'light');
+    if (blocked) return blocked;
 
     const body = await request.json();
     const { sessionId, duration, notes, dailyTaskId, goalId } = body;
@@ -158,6 +167,35 @@ export async function POST(request: Request) {
       .from('timer_state')
       .delete()
       .eq('user_id', user.id);
+
+    // 6. Stamp last_session_date on the profile (mig 035) so the
+    // lapse-recovery modal + the apply-streak-freezes cron know the
+    // user was active today. We use the user's local-date frame
+    // because streaks/lapse are evaluated in their timezone, not UTC.
+    // Best-effort: the column is optional UI plumbing — if the update
+    // fails (RLS hiccup, profile row missing) we don't fail the
+    // session-complete request.
+    try {
+      const { data: tzRow } = await supabase
+        .from('profiles')
+        .select('timezone')
+        .eq('id', user.id)
+        .maybeSingle();
+      const tz = (tzRow?.timezone as string) || 'Asia/Kolkata';
+      // Format today as YYYY-MM-DD in the user's tz. Inline the same
+      // logic used by lib/user-date.todayKeyInTz so we don't need an
+      // extra import in this hot path.
+      const todayLocal = new Intl.DateTimeFormat('en-CA', { timeZone: tz })
+        .format(new Date());
+      await supabase
+        .from('profiles')
+        .update({ last_session_date: todayLocal })
+        .eq('id', user.id);
+    } catch (e) {
+      // Non-fatal — log and continue. The cron + modal degrade
+      // gracefully when the column is stale.
+      console.warn('[sessions/complete] last_session_date update failed:', e);
+    }
 
     return NextResponse.json({ success: true, session });
   } catch (err) {
