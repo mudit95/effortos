@@ -161,7 +161,9 @@ export async function POST(req: Request) {
       if (error.code === '42P01') {
         return NextResponse.json({ error: 'Pacts feature not yet set up. Run migration 018 in your Supabase SQL editor.' }, { status: 500 });
       }
-      return NextResponse.json({ error: error.message || 'Failed to create pact' }, { status: 500 });
+      // Don't echo raw error.message to the client — it may contain
+      // Postgres column names / constraint names useful for probing.
+      return NextResponse.json({ error: 'Failed to create pact' }, { status: 500 });
     }
 
     // Send invite email to partner (fire-and-forget)

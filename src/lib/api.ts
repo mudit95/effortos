@@ -300,10 +300,28 @@ export async function addFeedback(goalId: string, bias: number): Promise<Goal | 
 
 // ── Session Operations ────────────────────────────────────────────────
 
-export async function getSessions(goalId?: string): Promise<Session[]> {
+/**
+ * Fetch sessions for the calling user. Accepts either:
+ *   - bare goalId string  (legacy signature, kept for callers that
+ *     just want goal-scoped sessions);
+ *   - options object { goalId?, since?, limit? } (preferred)
+ *
+ * Callers that only need a recent window (FocusHeatmap and
+ * DistractionInsight need 90 days) should pass `since` so the row
+ * filter happens server-side. The pre-fix implementation pulled EVERY
+ * session and filtered client-side, scaling linearly with the user's
+ * lifetime session count.
+ */
+export async function getSessions(
+  opts?: string | { goalId?: string; since?: string; limit?: number },
+): Promise<Session[]> {
   const supabase = getSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return [];
+
+  const goalId = typeof opts === 'string' ? opts : opts?.goalId;
+  const since = typeof opts === 'object' && opts ? opts.since : undefined;
+  const limit = typeof opts === 'object' && opts ? opts.limit : undefined;
 
   let query = supabase
     .from('sessions')
@@ -312,6 +330,8 @@ export async function getSessions(goalId?: string): Promise<Session[]> {
     .order('start_time', { ascending: false });
 
   if (goalId) query = query.eq('goal_id', goalId);
+  if (since) query = query.gte('start_time', since);
+  if (limit && limit > 0) query = query.limit(limit);
 
   const { data } = await query;
   return (data || []) as Session[];

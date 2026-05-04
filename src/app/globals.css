@@ -15,6 +15,103 @@
   box-sizing: border-box;
 }
 
+/* ── A11y: visible focus ring for keyboard users ─────────────────── */
+/* Most interactive elements use Tailwind's `outline-none` which also
+   strips :focus-visible by default. We re-add a soft cyan ring so
+   keyboard tab navigation actually shows where you are. Only fires on
+   :focus-visible (NOT plain :focus) so mouse clicks don't paint
+   rings on freshly-clicked buttons. */
+:focus-visible {
+  outline: 2px solid rgba(34, 211, 238, 0.55);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── A11y: minimum contrast floor for non-decorative copy ────────── */
+/* Tailwind classes `text-white/25` and `text-white/30` on our dark
+   #0B0F14 background sit at ~1.6-2.0:1 contrast, well below WCAG AA
+   (4.5:1 for body text, 3:1 for UI text). They're scattered across
+   100+ places as quick "muted" copy — fixing each by hand would be
+   a long PR. We bump the visual floor to ~/40 (still feels muted,
+   passes 3:1 for UI text) site-wide. Components that genuinely want
+   decorative-only divider tone can use bg-* opacities or border-*
+   instead of text-* without fighting this rule. */
+.text-white\/25 {
+  color: rgb(255 255 255 / 0.45) !important;
+}
+.text-white\/30 {
+  color: rgb(255 255 255 / 0.5) !important;
+}
+/* Inputs already have a designed focus state via Tailwind; let those
+   win without an extra outline ring on top. */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+}
+
+/* ── Reduced motion: disable decorative animations ───────────────── */
+/* framer-motion handles layout animations automatically under this
+   media query, but our explicit `animate` props don't. The default
+   behaviour collapses our decorative pulse / scale animations to a
+   single keyframe which reads as static — exactly what users who
+   request reduced motion want. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── Touch-pointer overrides ─────────────────────────────────────── */
+/*
+ * `(pointer: coarse)` matches phones/tablets where the primary input
+ * is a finger — hover states don't fire reliably and tap targets need
+ * to be ≥ 44×44 px (Apple HIG / WCAG 2.5.5 AAA).
+ *
+ * Two coarse-pointer fixes baked in here so we don't have to thread
+ * `useReducedMotion`-style conditionals through every component:
+ *
+ *   1. `group-hover:opacity-100` controls (drag handles, delete chips,
+ *      roll-to-tomorrow chevrons) become visible at all times. On
+ *      desktop, hover keeps them tucked away to keep the row clean;
+ *      on touch, where there is no hover, they need to be visible
+ *      or they're functionally absent.
+ *
+ *   2. Buttons that style themselves with `p-1` or `p-1.5` get a
+ *      minimum 44px hit-box via `min-inline-size` / `min-block-size`.
+ *      The visual icon stays the same; the surrounding tap target
+ *      grows.
+ */
+@media (pointer: coarse) {
+  /* Reveal hover-only affordances. Tailwind compiles
+     `group-hover:opacity-100` to a class with the `:hover` selector
+     on the parent; we override using the rule that won by specificity
+     (the `&` selector binds to the same element). */
+  .group:hover .group-hover\:opacity-100,
+  .group .group-hover\:opacity-100 {
+    opacity: 1 !important;
+  }
+  /* Same for hover-text-color reveals on icon buttons. */
+  .group:hover .group-hover\:text-white\/15,
+  .group .group-hover\:text-white\/15 {
+    color: rgb(255 255 255 / 0.4) !important;
+  }
+  /* Bump small icon buttons to a 44×44 hit area without changing
+     the visual icon. The icons themselves keep their dimensions;
+     only the touch surface grows. */
+  button.p-1, button.p-1\.5,
+  a.p-1, a.p-1\.5,
+  [role="button"].p-1, [role="button"].p-1\.5 {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 html, html.dark, html.light {
   color-scheme: dark;
   background: #0B0F14;

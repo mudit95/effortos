@@ -275,7 +275,14 @@ async function handleConfirmOTP(
   // reply — uses that voice. If no persona is supplied (e.g. user is
   // re-linking from Settings without changing voice) we leave whatever
   // is on the profile alone.
-  const serviceClient = createServiceClient();
+  // Defence-in-depth: use an auth-bound client for the profile write
+  // so RLS gates the row by auth.uid() — even if a future refactor
+  // mis-plumbs `userId` from the outer handler, RLS prevents a
+  // cross-user write. We construct the client here rather than pass
+  // it through every helper because supabase ssr clients are tied
+  // to the request's cookie scope and shouldn't be reused across
+  // function boundaries.
+  const authClient = await createClient();
   const linkUpdate: Record<string, unknown> = {
     phone_number: phone,
     whatsapp_linked: true,
@@ -283,10 +290,13 @@ async function handleConfirmOTP(
   if (persona) {
     linkUpdate.bot_persona = persona;
   }
-  const { error: dbError } = await serviceClient
+  const { error: dbError } = await authClient
     .from('profiles')
     .update(linkUpdate)
     .eq('id', userId);
+  // Cross-user uniqueness checks below + welcome-message fan-out
+  // still need service-role privileges, so keep that client too.
+  const serviceClient = createServiceClient();
 
   if (dbError) {
     console.error('Failed to link phone:', dbError);

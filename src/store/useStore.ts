@@ -287,6 +287,12 @@ interface AppState {
   addManualSession: (notes?: string) => void;
 
   updateSettings: (settings: Partial<UserSettings>) => void;
+  /**
+   * Update the user's anchor-habit text (mig 041). Pass null to clear.
+   * Cap is 80 chars (CHECK at the DB level); store-side defensive trim.
+   * Optimistic in-memory update + cloud sync via the profiles row.
+   */
+  updateAnchorHabit: (text: string | null) => Promise<void>;
 
   addToast: (message: string, type?: Toast['type']) => void;
   removeToast: (id: string) => void;
@@ -298,6 +304,11 @@ interface AppState {
   addDailyTaskForDate: (title: string, date: string, pomodorosTarget?: number, repeating?: boolean, tag?: TaskTagId, goalId?: string) => void;
   toggleTaskComplete: (taskId: string) => void;
   deleteDailyTask: (taskId: string) => void;
+  /** Reorder pending tasks for a given date by an explicit ordering of
+   *  task ids. Updates each task's `order` field in store, localStorage,
+   *  and (via cloudSync) Supabase. The list is the new "pending" order;
+   *  completed tasks keep their existing order untouched. */
+  reorderDailyTasks: (date: string, orderedIds: string[]) => void;
   setActiveDailyTask: (taskId: string | null) => void;
   completeDailyPomodoro: () => void;
   setDailyViewDate: (date: string) => void;
@@ -536,6 +547,12 @@ export const useStore = create<AppState>((set, get) => ({
             phone_number: profile.phone_number || '',
             whatsapp_linked: profile.whatsapp_linked || false,
             bot_persona: profile.bot_persona || undefined,
+            // Profile metadata used by behavioral / lapse / focus features.
+            freeze_tokens_remaining: profile.freeze_tokens_remaining,
+            last_session_date: profile.last_session_date,
+            focus_background_id: profile.focus_background_id,
+            focus_background_dim: profile.focus_background_dim,
+            anchor_habit_text: profile.anchor_habit_text,
             settings: {
               focus_duration: profile.focus_duration,
               break_duration: profile.break_duration,
@@ -677,16 +694,25 @@ export const useStore = create<AppState>((set, get) => ({
             dailyViewDate: todayKey,
             journalEntries,
             shadowGoals,
-            // Priority: active goal → dashboard.
-            // Otherwise, if user has ever completed onboarding OR has ANY goal
-            // in their history (paused/completed), keep them on dashboard.
-            // Only a brand-new user with no goals and no onboarding goes to onboarding.
+            // Priority order:
+            //   1. If a session was active before the reload (we
+            //      hydrate it into 'paused' state with a real
+            //      currentSessionId — see the timerSaved block
+            //      above), restore the user to FOCUS MODE. Biggest
+            //      UX win for mobile users whose tab got killed
+            //      mid-session — they come back to where they left
+            //      off, not the dashboard.
+            //   2. Active goal → dashboard.
+            //   3. If onboarded or has any goals → dashboard.
+            //   4. Brand-new user → onboarding.
             currentView:
-              cloudActiveGoal
-                ? 'dashboard'
-                : (supaUser.onboarding_completed || cloudGoals.length > 0)
+              currentSessionId && timerState === 'paused'
+                ? 'focus'
+                : cloudActiveGoal
                   ? 'dashboard'
-                  : 'onboarding',
+                  : (supaUser.onboarding_completed || cloudGoals.length > 0)
+                    ? 'dashboard'
+                    : 'onboarding',
           });
 
           if (cloudActiveGoal) get().refreshDashboard();
@@ -803,7 +829,15 @@ export const useStore = create<AppState>((set, get) => ({
         dailyViewDate: todayKey,
         journalEntries,
         shadowGoals,
-        currentView: activeGoal ? 'dashboard' : (goals.length > 0 ? 'dashboard' : 'onboarding'),
+        // Same rehydrate-into-focus-mode rule as the cloud path —
+        // mid-session refresh should land back in focus mode, not
+        // bounce to dashboard.
+        currentView:
+          currentSessionId && timerState === 'paused'
+            ? 'focus'
+            : activeGoal
+              ? 'dashboard'
+              : goals.length > 0 ? 'dashboard' : 'onboarding',
       });
 
       // Hydrate any pending onboarding draft (saved if the user closed the
@@ -909,15 +943,27 @@ export const useStore = create<AppState>((set, get) => ({
     });
 
     // Then clear storage and sign out in background
-    try { storage.clearAllData(); } catch {}
+    try { storage.clearAllData(); } catch (e) {
+      // Log so we know if a user reports lingering data after logout
+      console.error('[logout] storage.clearAllData failed:', e);
+    }
     // Drop any half-finished onboarding draft so the next user on this
     // device doesn't see the previous user's pre-filled goal title.
     clearOnboardingDraft();
+    // Reset the init-debounce timestamp so a logout-then-login within
+    // 500ms re-runs initializeApp from scratch. Without this reset,
+    // the new user would inherit the previous user's hydrated store
+    // for the debounce window — a real cross-user data leak in
+    // shared-device scenarios.
+    _lastInitFinishedAt = 0;
     if (isSupabaseConfigured()) try {
       const supabase = createClient();
       await supabase.auth.signOut();
-    } catch {
-      // Continue even if Supabase signOut fails
+    } catch (e) {
+      // Continue even if Supabase signOut fails — local state is
+      // already cleared above. Log so we can see if signOut is
+      // routinely failing for some users.
+      console.error('[logout] supabase.signOut failed:', e);
     }
   },
 
@@ -1187,86 +1233,113 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   updateGoalProgress: (goalId) => {
-    // Read from store only (source of truth)
-    const goal = get().goals.find(g => g.id === goalId);
-    if (!goal) return;
-
-    const newCompleted = goal.sessions_completed + 1;
+    // Race-safe increment: previous code did `read goal → compute
+    // newCompleted = goal.sessions_completed + 1 → write` in three
+    // separate ticks, so two concurrent completions (e.g., a daily-
+    // task-linked goal getting both the activeGoal-path AND the
+    // task-goal-path increment from completeTimerSession) could each
+    // read N and both write N+1, losing one increment.
+    //
+    // Fix: capture the post-increment value INSIDE Zustand's
+    // functional `set(state => ...)` so the entire compute happens
+    // atomically against the latest store snapshot. The persistence
+    // calls below pull the just-set value back out via `get()`.
     const now = new Date().toISOString();
+    let updatedGoalSnapshot: Goal | null = null;
+    let recalResult: ReturnType<typeof recalibrate> | null = null;
+    let isNowComplete = false;
+    let needsFeedback = false;
+    let justCompletedMilestoneTitle: string | null = null;
+    let estimateDelta: { prev: number; next: number } | null = null;
 
-    // Apply updates in memory — mutate fields on the same object, so the
-    // binding is const even though the object is reshaped below.
-    const updatedGoal = { ...goal, sessions_completed: newCompleted };
+    set((state) => {
+      const goal = state.goals.find(g => g.id === goalId);
+      if (!goal) return state;
 
-    // Check milestones
-    const updatedMilestones = updatedGoal.milestones.map(m => {
-      if (!m.completed && newCompleted >= m.session_target) {
-        return { ...m, completed: true, completed_at: now };
+      const newCompleted = goal.sessions_completed + 1;
+      const updatedGoal: Goal = { ...goal, sessions_completed: newCompleted };
+
+      // Milestones
+      const updatedMilestones = updatedGoal.milestones.map(m => {
+        if (!m.completed && newCompleted >= m.session_target) {
+          return { ...m, completed: true, completed_at: now };
+        }
+        return m;
+      });
+      updatedGoal.milestones = updatedMilestones;
+
+      const justCompleted = updatedMilestones.find(
+        m => m.session_target === newCompleted && m.completed_at,
+      );
+      if (justCompleted) justCompletedMilestoneTitle = justCompleted.title;
+
+      // Goal-complete check
+      if (newCompleted >= updatedGoal.estimated_sessions_current) {
+        updatedGoal.status = 'completed';
+        updatedGoal.completed_at = now;
       }
-      return m;
+      updatedGoal.updated_at = now;
+
+      // Recalibrate inside the transaction so the snapshot reflects
+      // post-increment counts; downstream persistence reads from it.
+      const r = recalibrate(updatedGoal);
+      const prevEstimate = updatedGoal.estimated_sessions_current;
+      const newEstimate = updatedGoal.sessions_completed + r.remaining_sessions;
+      updatedGoal.estimated_sessions_current = newEstimate;
+
+      if (Math.abs(newEstimate - prevEstimate) >= 2 && updatedGoal.sessions_completed >= 5) {
+        estimateDelta = { prev: prevEstimate, next: newEstimate };
+      }
+
+      needsFeedback = shouldTriggerFeedback(updatedGoal);
+      isNowComplete = updatedGoal.status === 'completed';
+      updatedGoalSnapshot = updatedGoal;
+      recalResult = r;
+
+      return {
+        ...state,
+        activeGoal: updatedGoal,
+        goals: state.goals.map(g => g.id === goalId ? updatedGoal : g),
+        recalibrationResult: r,
+        showFeedback: needsFeedback && !isNowComplete,
+        feedbackGoalId: needsFeedback && !isNowComplete ? goalId : null,
+        showCelebration: isNowComplete,
+      };
     });
-    updatedGoal.milestones = updatedMilestones;
 
-    // Check milestone just completed for toast
-    const justCompleted = updatedMilestones.find(
-      m => m.session_target === newCompleted && m.completed_at
-    );
-    if (justCompleted) {
-      get().addToast(`Milestone reached: ${justCompleted.title}!`, 'success');
+    if (!updatedGoalSnapshot || !recalResult) return;
+
+    // Surface user-facing toasts AFTER the atomic state write so the
+    // toast queue isn't stomped by a re-render mid-flight.
+    if (justCompletedMilestoneTitle) {
+      get().addToast(`Milestone reached: ${justCompletedMilestoneTitle}!`, 'success');
     }
-
-    // Check if goal is complete
-    if (newCompleted >= updatedGoal.estimated_sessions_current) {
-      updatedGoal.status = 'completed';
-      updatedGoal.completed_at = now;
-    }
-
-    updatedGoal.updated_at = now;
-
-    // Recalibrate on the updated goal
-    const recalResult = recalibrate(updatedGoal);
-    const prevEstimate = updatedGoal.estimated_sessions_current;
-    const newEstimate = updatedGoal.sessions_completed + recalResult.remaining_sessions;
-    updatedGoal.estimated_sessions_current = newEstimate;
-
-    // Show recalibration toast if estimate changed meaningfully
-    if (Math.abs(newEstimate - prevEstimate) >= 2 && updatedGoal.sessions_completed >= 5) {
+    if (estimateDelta) {
       get().addToast(
-        `Estimate adjusted: ${prevEstimate} → ${newEstimate} sessions`,
-        'info'
+        `Estimate adjusted: ${(estimateDelta as { prev: number; next: number }).prev} → ${(estimateDelta as { prev: number; next: number }).next} sessions`,
+        'info',
       );
     }
 
-    // Check if feedback should be triggered
-    const needsFeedback = shouldTriggerFeedback(updatedGoal);
-    const isNowComplete = updatedGoal.status === 'completed';
-
-    // Update store directly
-    const updatedGoals = get().goals.map(g => g.id === goalId ? updatedGoal : g);
-    set({
-      activeGoal: updatedGoal,
-      goals: updatedGoals,
-      recalibrationResult: recalResult,
-      showFeedback: needsFeedback && !isNowComplete,
-      feedbackGoalId: needsFeedback && !isNowComplete ? goalId : null,
-      showCelebration: isNowComplete,
-    });
-
-    // Sync to localStorage and cloud
+    // Persist using the snapshot captured above. updatedGoalSnapshot is
+    // typed as `Goal | null` for early-return safety; once we get here
+    // it's guaranteed non-null (we returned above otherwise). Asserting
+    // with the explicit local — TS narrows on the !== null check.
+    const snap: Goal = updatedGoalSnapshot;
     storage.updateGoal(goalId, {
-      sessions_completed: newCompleted,
-      milestones: updatedMilestones,
-      status: updatedGoal.status,
-      completed_at: updatedGoal.completed_at,
-      estimated_sessions_current: newEstimate,
+      sessions_completed: snap.sessions_completed,
+      milestones: snap.milestones,
+      status: snap.status,
+      completed_at: snap.completed_at,
+      estimated_sessions_current: snap.estimated_sessions_current,
       updated_at: now,
     });
     cloudSync(() => api.updateGoal(goalId, {
-      sessions_completed: newCompleted,
-      milestones: updatedMilestones,
-      status: updatedGoal.status,
-      completed_at: updatedGoal.completed_at,
-      estimated_sessions_current: newEstimate,
+      sessions_completed: snap.sessions_completed,
+      milestones: snap.milestones,
+      status: snap.status,
+      completed_at: snap.completed_at,
+      estimated_sessions_current: snap.estimated_sessions_current,
       updated_at: now,
     }));
 
@@ -1349,10 +1422,20 @@ export const useStore = create<AppState>((set, get) => ({
   dismissQuickPomodoroPrompt: () => set({ quickPomodoroComplete: false }),
 
   startTimer: () => {
-    const { activeGoal, user, dashboardMode } = get();
+    const { activeGoal, user, dashboardMode, timerState } = get();
     if (!user) return;
     // In long-term mode, require an active goal
     if (dashboardMode === 'longterm' && !activeGoal) return;
+
+    // Double-fire guard. startTimer is reachable from a button click,
+    // a Cmd+K command, the FirstSessionRitual launch, the keyboard
+    // shortcut, and the focus mode hotkey. Without this guard a near-
+    // simultaneous double-trigger creates two session rows (local +
+    // cloud) AND double-counts the first-session funnel event AND
+    // double-prompts for push permission. Refusing to start when the
+    // timer isn't actually idle is the right move — the existing
+    // session keeps running and the second call is a clean no-op.
+    if (timerState !== 'idle') return;
 
     const focusDuration = user.settings?.focus_duration || 25 * 60;
 
@@ -1364,10 +1447,16 @@ export const useStore = create<AppState>((set, get) => ({
 
     // Create a session (use activeGoal if available, or a placeholder for daily grind)
     const goalId = activeGoal?.id || '__daily__';
+    // Capture start_time ONCE so the local row and the cloud row share
+    // the exact same timestamp. The previous code created the local
+    // row with `new Date()` then called `api.createSession` with a
+    // SECOND `new Date()` — a few-ms drift made the two rows look
+    // like distinct sessions in joined queries.
+    const startTime = new Date().toISOString();
     const session = storage.createSession({
       user_id: user.id,
       goal_id: goalId,
-      start_time: new Date().toISOString(),
+      start_time: startTime,
       duration: 0,
       status: 'active',
     });
@@ -1378,6 +1467,28 @@ export const useStore = create<AppState>((set, get) => ({
         event: 'first_pomodoro_started',
         properties: { mode: dashboardMode },
       });
+      // First-session is also a great moment to ask for notification
+      // permission. Permission UX research: prompts during a high-
+      // value action (here: starting a real focus session) get
+      // accepted ~3-5× more often than load-time prompts.
+      //
+      // Two paths converge here:
+      //   - If VAPID keys ARE configured server-side, ensureSubscribed
+      //     prompts AND registers a Web Push subscription — gets us
+      //     OS-level notifications even with the tab closed.
+      //   - If VAPID isn't configured (e.g., first-time deploy
+      //     without keys), ensureSubscribed silently no-ops; we still
+      //     request Notification permission directly so the
+      //     in-page sendNotification() path works on session-end.
+      // Either way the user only ever sees ONE permission prompt.
+      if (typeof window !== 'undefined') {
+        void import('@/lib/push-client').then(async ({ ensureSubscribed }) => {
+          const subscribed = await ensureSubscribed();
+          if (!subscribed && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+            try { await Notification.requestPermission(); } catch { /* ignore */ }
+          }
+        });
+      }
     }
 
     storage.saveTimerState({
@@ -1387,12 +1498,14 @@ export const useStore = create<AppState>((set, get) => ({
       sessionId: session.id,
     });
 
-    // Write-through: create session + timer state in Supabase
+    // Write-through: create session + timer state in Supabase. Reuse
+    // the locally-captured startTime so the cloud row matches the
+    // local row exactly (no millisecond drift).
     cloudSync(async () => {
       await api.createSession({
         user_id: user.id,
         goal_id: goalId,
-        start_time: new Date().toISOString(),
+        start_time: startTime,
         duration: 0,
         status: 'active',
       });
@@ -1417,7 +1530,13 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   pauseTimer: () => {
-    const { timeRemaining, activeGoal, currentSessionId, user } = get();
+    const { timeRemaining, activeGoal, currentSessionId, user, timerState } = get();
+    // Guard: pause only makes sense from 'running'. Without this guard
+    // a stray hotkey or PiP-control double-tap from any other state
+    // (idle / paused / break) would silently flip the store into
+    // 'paused' with potentially-bogus timeRemaining, then the engine
+    // would post PAUSE to a worker that's not actually counting.
+    if (timerState !== 'running') return;
     if (activeGoal) {
       storage.saveTimerState({
         goalId: activeGoal.id,
@@ -1433,7 +1552,11 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   resumeTimer: () => {
-    const { timeRemaining, activeGoal, currentSessionId, user } = get();
+    const { timeRemaining, activeGoal, currentSessionId, user, timerState } = get();
+    // Guard: resume only makes sense from 'paused'. Same shape as
+    // pauseTimer's guard above; protects against stray hotkey /
+    // PiP-button double-fire from idle or break states.
+    if (timerState !== 'paused') return;
     if (activeGoal) {
       storage.saveTimerState({
         goalId: activeGoal.id,
@@ -1448,40 +1571,42 @@ export const useStore = create<AppState>((set, get) => ({
     set({ timerState: 'running' });
   },
 
-  // tickTimer: legacy ticker, kept for type compatibility but no longer
-  // called by the timer engine. Both the Web Worker path AND the fallback
-  // path in TimerEngine.tsx now compute remaining from `Date.now()` against
-  // a captured `endsAt` timestamp, so background-tab throttling can't drift
-  // the countdown. Anything that calls this directly will silently no-op
-  // unless the user is in `running` state — leave it that way; if you need
-  // to manually decrement, write directly to the store with `setState`.
+  // tickTimer: kept ONLY to satisfy the AppState type signature. The
+  // TimerEngine owns all countdown mechanics now (worker + fallback
+  // both compute remaining from Date.now() against a captured endsAt).
+  // Any external call to tickTimer would corrupt the canonical
+  // countdown by writing a stale `timeRemaining - 1`. This handler is
+  // a true no-op so accidental references can't cause damage; remove
+  // when we drop the type field entirely.
   tickTimer: () => {
-    const { timeRemaining, timerState, isBreak, user } = get();
-    if (timerState !== 'running') return;
-
-    if (timeRemaining <= 1) {
-      if (isBreak) {
-        const focusDuration = user?.settings?.focus_duration || 25 * 60;
-        set({ timerState: 'idle', timeRemaining: focusDuration, isBreak: false });
-        storage.clearTimerState();
-        // Play break complete sound
-        if (user?.settings?.sound_enabled !== false) {
-          playSound('break_complete');
-        }
-        get().sendNotification('Break over!', 'Time to start your next focus session.');
-      } else {
-        get().completeTimerSession();
-      }
-      return;
-    }
-
-    set({ timeRemaining: timeRemaining - 1 });
+    /* intentional no-op — see comment above */
   },
 
   completeTimerSession: () => {
-    const { currentSessionId, activeGoal, user, dashboardMode, activeDailyTaskId } = get();
+    const { currentSessionId, activeGoal, user, dashboardMode, activeDailyTaskId, timerState, isBreak } = get();
     const focusDuration = user?.settings?.focus_duration || 25 * 60;
     const breakDuration = user?.settings?.break_duration || 5 * 60;
+
+    // Double-fire guard. completeTimerSession is reachable from the
+    // worker COMPLETE handler, the fallback timer's zero-tick branch,
+    // any future "manually mark complete" UI, and (transitively) the
+    // legacy tickTimer (now a no-op but external code may still
+    // reference it). Without this guard, two near-simultaneous calls
+    // double-count the daily-task pomodoro, double-call the cloud
+    // session-complete endpoint, double-fire updateGoalProgress
+    // (racy increment per the audit), and double-play the chime.
+    //
+    // The right shape of the guard: refuse to act if we're not in a
+    // state where completion makes sense. The valid states are
+    // 'running' (focus session about to end) and 'paused' (rare:
+    // user paused near zero, then the worker COMPLETE arrived).
+    // Critically NOT 'break' or 'idle' — both indicate the
+    // completion already ran.
+    if (timerState !== 'running' && timerState !== 'paused') return;
+    // Also refuse if we're in a break — a break ending should hit the
+    // engine's break-finished branch, not loop back through the
+    // focus-completion path.
+    if (isBreak) return;
 
     // Guest quick-pomodoro — skip all persistence, show signup prompt
     if (user?.id === '__guest__') {
@@ -1618,10 +1743,27 @@ export const useStore = create<AppState>((set, get) => ({
       showSessionNotes: dashboardMode !== 'daily', // Skip notes prompt in daily grind
     });
 
-    // Auto-start break timer after a moment
+    // Auto-start break timer after a moment.
+    //
+    // The 500ms delay lets the engine see the 'break' transition first
+    // (it posts START to the worker), then we flip to 'running' so the
+    // user-facing label says "Focus" instead of "Break starting...".
+    //
+    // Race protection: capture the breakDuration we just transitioned
+    // INTO. If the user hits Skip Break or Reset within the 500ms
+    // window, the break state will have changed (timerState !== 'break'
+    // OR timeRemaining !== breakDuration). Re-checking BOTH is stricter
+    // than the original guard which only checked isBreak + timerState
+    // — that combo was vulnerable to a quick break-skip + start-new
+    // sequence landing inside the window.
+    const expectedBreakRemaining = breakDuration;
     setTimeout(() => {
       const state = get();
-      if (state.isBreak && state.timerState === 'break') {
+      if (
+        state.isBreak &&
+        state.timerState === 'break' &&
+        state.timeRemaining === expectedBreakRemaining
+      ) {
         set({ timerState: 'running' });
       }
     }, 500);
@@ -1754,17 +1896,84 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   updateSettings: (settings) => {
+    // Capture the prior settings BEFORE the optimistic write so we
+    // can roll back if the cloud sync fails. The previous code
+    // toast'd "Settings saved" and never recovered if Supabase
+    // rejected — leaving local + cloud divergent and the timer
+    // engine using the unsaved values.
+    const priorUser = get().user;
     const updated = storage.updateSettings(settings);
     if (updated) {
       set({ user: updated });
       get().addToast('Settings saved', 'success');
-      cloudSync(() => api.updateSettings(settings));
+      cloudSync(async () => {
+        try {
+          await api.updateSettings(settings);
+        } catch (err) {
+          // Roll back local + storage if cloud write fails.
+          if (priorUser) {
+            storage.setUser(priorUser);
+            set({ user: priorUser });
+            get().addToast('Settings could not save — reverted', 'error');
+          }
+          throw err;
+        }
+      });
+    }
+  },
+
+  updateAnchorHabit: async (text) => {
+    const cur = get().user;
+    if (!cur) return;
+    // Capture prior value BEFORE optimistic write so a cloud failure
+    // can revert. Without this, the optimistic update + "Anchor
+    // saved" toast lied if Supabase rejected.
+    const priorAnchor = cur.anchor_habit_text ?? null;
+    // Defensive cap — DB CHECK is 80 chars; trim + slice here so a
+    // longer paste never round-trips an error to the user.
+    const cleaned = text != null ? text.trim().slice(0, 80) : null;
+    // Optimistic in-memory update first; UI feedback is instant.
+    set({ user: { ...cur, anchor_habit_text: cleaned } });
+    // Cloud sync via the profiles update path. Single-column update
+    // doesn't justify a dedicated api.updateAnchorHabit helper.
+    let cloudOk = true;
+    try {
+      const { createClient } = await import('@/lib/supabase/client');
+      const supabase = createClient();
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (authUser) {
+        const { error } = await supabase
+          .from('profiles')
+          .update({ anchor_habit_text: cleaned })
+          .eq('id', authUser.id);
+        if (error) cloudOk = false;
+      }
+    } catch (e) {
+      console.error('[updateAnchorHabit] cloud sync failed:', e);
+      cloudOk = false;
+    }
+
+    if (cloudOk) {
+      get().addToast(cleaned ? 'Anchor saved' : 'Anchor removed', 'success');
+    } else {
+      // Revert local state and surface a real-toast error so the
+      // user knows the save didn't land.
+      const reverted = get().user;
+      if (reverted) {
+        set({ user: { ...reverted, anchor_habit_text: priorAnchor } });
+      }
+      get().addToast('Could not save anchor — try again', 'error');
     }
   },
 
   addToast: (message, type = 'info') => {
     const toast: Toast = { id: generateId(), message, type, duration: 3000 };
-    set(state => ({ toasts: [...state.toasts, toast] }));
+    // Cap to 8 most-recent. Without this, a tab backgrounded for a
+    // long time + many toasts queued + the GC dropping setTimeout
+    // callbacks (Chrome aggressively does this on mobile) can grow
+    // the array unboundedly. The N=8 cap keeps the visible UI sane
+    // and bounds memory.
+    set(state => ({ toasts: [...state.toasts, toast].slice(-8) }));
     setTimeout(() => {
       get().removeToast(toast.id);
     }, toast.duration);
@@ -1895,6 +2104,45 @@ export const useStore = create<AppState>((set, get) => ({
     // Also remove from localStorage cache
     storage.deleteDailyTask(taskId);
     cloudSync(() => api.deleteDailyTask(taskId));
+  },
+
+  reorderDailyTasks: (date, orderedIds) => {
+    // Build a sort_order map from the new ordering, then re-sort the
+    // store's dailyTasks so the UI reflects the change immediately.
+    // Tasks for OTHER dates (anything not in orderedIds) stay where
+    // they are — this lets the day-nav re-renders not stomp on a
+    // reorder the user just did for today.
+    const orderMap = new Map<string, number>();
+    orderedIds.forEach((id, idx) => orderMap.set(id, idx));
+
+    const updated = get().dailyTasks.map((t) => {
+      const newOrder = orderMap.get(t.id);
+      if (newOrder == null || t.date !== date) return t;
+      return { ...t, order: newOrder };
+    });
+    // Stable in-memory sort by date then order so the list renders
+    // consistently. Other consumers (DailyGrind filter-by-date) keep
+    // their existing slice patterns.
+    updated.sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+      return a.order - b.order;
+    });
+
+    set({ dailyTasks: updated });
+
+    // Persist locally — same offline-first pattern as other actions.
+    storage.reorderDailyTasks(date, orderedIds);
+
+    // Cloud sync: one updateDailyTask call per moved task. Cheap (sub-
+    // 10 tasks per reorder usually); a future micro-optimisation could
+    // batch into a single endpoint, but the reorder action is rare
+    // enough that it's not worth the new endpoint until usage data
+    // says otherwise.
+    cloudSync(async () => {
+      await Promise.all(
+        orderedIds.map((id, idx) => api.updateDailyTask(id, { order: idx })),
+      );
+    });
   },
 
   setActiveDailyTask: (taskId) => {
@@ -2178,15 +2426,37 @@ export const useStore = create<AppState>((set, get) => ({
 
   fetchSubscriptionStatus: async () => {
     set({ subscriptionLoading: true });
+    // Capture prior subscription so we can preserve it across
+    // transient failures. The previous code overwrote with
+    // {status:'none'} on ANY non-2xx, which meant a single transient
+    // 401 (auth cookie hiccup, CORS preflight, revoked token mid-
+    // request) would silently downgrade a paying Pro user to free
+    // until the next refresh — Pro features would briefly disappear.
+    const priorSub = get().subscription;
     try {
       const res = await fetch('/api/subscription/status');
       if (!res.ok) {
-        // 5xx is a cloud-tier signal worth surfacing; 4xx is more likely an
-        // auth edge case (logged out, etc.) and shouldn't trip the banner.
         if (res.status >= 500) {
+          // Server tier outage — surface degraded banner. Keep prior
+          // subscription so Pro features stay rendered until the
+          // server confirms otherwise.
           get().setConnectionStatus('degraded', `subscription/status ${res.status}`);
+          set({ subscriptionLoading: false });
+          return;
         }
-        set({ subscription: { status: 'none', plan_tier: 'starter' }, subscriptionLoading: false });
+        if (res.status === 401 || res.status === 403) {
+          // Authoritatively unauthenticated — only here do we
+          // overwrite to 'none'. A real logout already cleared
+          // local subscription via the logout action; this branch
+          // catches the rarer case of a server-side session expiry.
+          set({
+            subscription: { status: 'none', plan_tier: 'starter' },
+            subscriptionLoading: false,
+          });
+          return;
+        }
+        // Other 4xx — treat as transient; preserve prior state.
+        set({ subscriptionLoading: false });
         return;
       }
       const data = await res.json();
@@ -2208,11 +2478,12 @@ export const useStore = create<AppState>((set, get) => ({
       });
     } catch (err) {
       // Network/CORS failure — almost always an outage at the edge.
+      // Preserve prior subscription (don't downgrade on a transient).
       get().setConnectionStatus(
         'degraded',
         err instanceof Error ? err.message : 'subscription/status failed',
       );
-      set({ subscription: { status: 'none', plan_tier: 'starter' }, subscriptionLoading: false });
+      set({ subscription: priorSub, subscriptionLoading: false });
     }
   },
 

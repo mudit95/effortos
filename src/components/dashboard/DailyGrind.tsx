@@ -11,8 +11,10 @@ import {
   Plus, Trash2, Play, Pause, RotateCcw, SkipForward,
   Repeat, ChevronLeft, ChevronRight, Maximize2, Circle, PictureInPicture2,
   CheckCircle2, Clock, Flame, PlusCircle, X, Calendar, Sparkles,
-  CalendarPlus, List, LayoutGrid, ListTodo, Columns2,
+  CalendarPlus, List, LayoutGrid, ListTodo, Columns2, GripVertical,
 } from 'lucide-react';
+import { useDragSort, type GripHandlerProps, type RowDropHandlerProps } from '@/hooks/useDragSort';
+import { CarryForwardCard } from './CarryForwardCard';
 import { PiPButton } from '@/components/timer/PiPButton';
 import { usePiP } from '@/hooks/usePiP';
 import { HintBanner } from '@/components/ui/HintBanner';
@@ -506,6 +508,7 @@ export function DailyGrind() {
   const addDailyTaskForDate = useStore(s => s.addDailyTaskForDate);
   const toggleTaskComplete = useStore(s => s.toggleTaskComplete);
   const deleteDailyTask = useStore(s => s.deleteDailyTask);
+  const reorderDailyTasks = useStore(s => s.reorderDailyTasks);
   const setDailyViewDate = useStore(s => s.setDailyViewDate);
   const updateDailyTaskDetails = useStore(s => s.updateDailyTaskDetails);
   const setView = useStore(s => s.setView);
@@ -628,6 +631,18 @@ export function DailyGrind() {
   const pendingTasks = visibleTasks.filter(t => !t.completed);
   const totalPomodoros = visibleTasks.reduce((sum, t) => sum + t.pomodoros_target, 0);
   const donePomodoros = visibleTasks.reduce((sum, t) => sum + t.pomodoros_done, 0);
+
+  // Drag-sort state for the pending-task list. Only pending tasks are
+  // sortable — completed-task ordering carries no meaningful semantics.
+  // The hook is presentational; reorder() commits via the store.
+  const pendingIds = React.useMemo(
+    () => pendingTasks.map((t) => t.id),
+    [pendingTasks],
+  );
+  const { gripHandlers, rowDropHandlers, dragState, indicator } = useDragSort({
+    ids: pendingIds,
+    onReorder: (newIds) => reorderDailyTasks(dailyViewDate, newIds),
+  });
 
   const todayKey = getTodayKey();
   // Only offer "roll to tomorrow" on today/past tasks — not future-dated ones.
@@ -796,6 +811,12 @@ export function DailyGrind() {
 
       {/* Main column */}
       <div className="lg:col-span-5 space-y-4">
+        {/* Smart auto-carry-forward — surfaces ONLY when there are
+            incomplete tasks from yesterday (or up to 3 days back).
+            Self-hides on dismiss. Does nothing on mount when nothing
+            to carry, so it adds zero overhead in the common case. */}
+        <CarryForwardCard />
+
         {/* Date nav + view controls — consolidated into two rows total:
               Row 1: date navigation on the left, List/Schedule view toggle
                      + manual-log button on the right. The view toggle is a
@@ -1040,7 +1061,7 @@ export function DailyGrind() {
               </div>
               <div className="space-y-1.5">
                 <AnimatePresence>
-                  {pendingTasks.map((task) => (
+                  {pendingTasks.map((task, idx) => (
                     <TaskRow
                       key={task.id}
                       task={task}
@@ -1060,6 +1081,17 @@ export function DailyGrind() {
                       }
                       timerBusy={isTimerActive}
                       goals={goals}
+                      // Drag-sort wiring. Each row is both a drop target
+                      // (rowDropHandlers) and contains a grip the user
+                      // grabs (gripHandlers). The hook tracks which row
+                      // is being dragged and where the drop indicator
+                      // should land; we pass that derived state in.
+                      gripHandlers={gripHandlers(task.id)}
+                      rowDropHandlers={rowDropHandlers(task.id, idx)}
+                      isDragging={dragState.draggingId === task.id}
+                      dropIndicator={
+                        indicator.index === idx ? indicator.position : null
+                      }
                     />
                   ))}
                 </AnimatePresence>
@@ -1473,6 +1505,13 @@ export function TaskRow({
   timerBusy,
   completed = false,
   goals = [],
+  // Optional drag-sort props. When the parent passes these, the row
+  // gets a grip handle on the left + accepts drop events. When omitted
+  // (e.g., FlowView, completed-task list), the row renders as before.
+  gripHandlers,
+  rowDropHandlers,
+  isDragging = false,
+  dropIndicator = null,
 }: {
   task: DailyTask;
   isActive: boolean;
@@ -1485,6 +1524,10 @@ export function TaskRow({
   timerBusy: boolean;
   completed?: boolean;
   goals?: Goal[];
+  gripHandlers?: GripHandlerProps;
+  rowDropHandlers?: RowDropHandlerProps;
+  isDragging?: boolean;
+  dropIndicator?: 'above' | 'below' | null;
 }) {
   const tagInfo = getTagInfo(task.tag as TaskTagId);
   const linkedGoal = task.goal_id ? goals.find(g => g.id === task.goal_id) : null;
@@ -1495,14 +1538,52 @@ export function TaskRow({
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, x: -20, transition: { duration: 0.2 } }}
+      // Drop event handlers spread here when the parent passed them.
+      // Spreading an empty object is a no-op so this is safe in the
+      // FlowView / completed-list contexts that don't sort.
+      {...(rowDropHandlers ?? {})}
       className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
         isActive && !completed
           ? 'bg-[var(--accent,#22d3ee)]/[0.10] border border-[var(--accent,#22d3ee)]/50 shadow-[0_0_24px_rgba(34,211,238,0.18)]'
           : completed
             ? 'bg-white/[0.015] border border-white/[0.04] opacity-50'
             : 'bg-white/[0.02] hover:bg-white/[0.04] border border-white/[0.08] hover:border-white/[0.14]'
-      } ${task.goal_id ? 'border-l-2 border-l-violet-500/60' : ''}`}
+      } ${task.goal_id ? 'border-l-2 border-l-violet-500/60' : ''} ${
+        isDragging ? 'opacity-40' : ''
+      }`}
     >
+      {/* Drop indicator — 2px line above or below the row, only while
+          another row is hovered over this one. Pure visual cue; the
+          hook tracks the indicator state. Above/below is decided by
+          cursor Y vs row midline. */}
+      {dropIndicator === 'above' && (
+        <span
+          aria-hidden="true"
+          className="absolute -top-[3px] left-2 right-2 h-[2px] rounded-full bg-cyan-400/80 shadow-[0_0_8px_rgba(34,211,238,0.6)] pointer-events-none"
+        />
+      )}
+      {dropIndicator === 'below' && (
+        <span
+          aria-hidden="true"
+          className="absolute -bottom-[3px] left-2 right-2 h-[2px] rounded-full bg-cyan-400/80 shadow-[0_0_8px_rgba(34,211,238,0.6)] pointer-events-none"
+        />
+      )}
+
+      {/* Grip handle — visible on hover only when sortable. Cursor
+          becomes a grab/grabbing affordance. The handle is the ONLY
+          draggable element so users can still text-select the title. */}
+      {gripHandlers && !completed && (
+        <span
+          {...gripHandlers}
+          aria-label="Drag to reorder"
+          role="button"
+          tabIndex={-1}
+          className="flex-shrink-0 -ml-1 w-4 h-8 flex items-center justify-center text-white/15 hover:text-white/40 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity"
+        >
+          <GripVertical className="w-3.5 h-3.5" />
+        </span>
+      )}
+
       {/* "Now" indicator — pulsing dot in the top-right of the active row.
           Strengthens the active highlight for users who couldn't tell
           which task was being timed at a glance. Only shown for the

@@ -8,6 +8,8 @@ import * as api from '@/lib/api';
 import { getLocalTodayKey } from '@/lib/utils';
 import { TASK_TAGS, type DailyTask } from '@/types';
 import { HintBanner } from '@/components/ui/HintBanner';
+import { FocusHeatmap } from './FocusHeatmap';
+import { DistractionInsight } from './DistractionInsight';
 import {
   BarChart3, Clock, Flame, Target,
   ChevronLeft, ChevronRight, TrendingUp, CheckCircle2,
@@ -497,6 +499,18 @@ export function Reports() {
           <BarChart data={barData} maxVal={maxBarVal} labelKey={period} />
         </motion.div>
       )}
+
+      {/* Time-of-day focus heatmap — independent of the period selector
+          above. Surfaces the user's circadian focus pattern from the
+          last 90 days; peak hour is called out as a one-line insight. */}
+      <FocusHeatmap />
+
+      {/* Distraction-pattern insight — surfaces ONLY when the user has
+          ≥3 aborted sessions clustering in a single (day, hour) cell
+          over the last 90 days. Self-hides otherwise so most users
+          never see it (which is the right behaviour — a "no pattern
+          detected" panel is empty-state noise). */}
+      <DistractionInsight />
 
       {/* Two-column: Tag breakdown + Best day */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

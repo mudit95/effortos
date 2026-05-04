@@ -171,9 +171,14 @@ export async function POST(request: Request) {
       plan_tier: authoritativeTier,
     });
   } catch (err) {
+    // Log the full error server-side; never echo it back to the
+    // client. The previous `err.message` echo could leak Razorpay
+    // SDK internals, signature mismatch reasons, or Postgres
+    // constraint names — all useful to an attacker probing the
+    // checkout path.
     console.error('Verify subscription error:', err);
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Internal server error' },
+      { error: 'Could not verify subscription' },
       { status: 500 },
     );
   }

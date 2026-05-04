@@ -16,6 +16,8 @@ import { warmUpAudio } from '@/lib/sounds';
 import { QuickPomodoroPrompt } from './QuickPomodoroPrompt';
 import { FocusBackgroundLayer } from './FocusBackgroundLayer';
 import { BackgroundPicker } from './BackgroundPicker';
+import { TimerPresetPicker } from './TimerPresetPicker';
+import { BreakWellnessPrompt } from './BreakWellnessPrompt';
 
 // How long the keyboard-shortcuts panel stays visible on first mount.
 // The user gets a brief glance at the available shortcuts, then it
@@ -227,14 +229,23 @@ export function FocusMode() {
         <AmbientSoundToggle />
       </div>
 
-      {/* Shortcuts help trigger */}
-      <button
-        onClick={() => setShowShortcuts(s => !s)}
-        className="absolute top-4 left-4 sm:top-6 sm:left-6 text-white/15 hover:text-white/40 transition-colors p-2 z-10"
-        aria-label="Keyboard shortcuts"
-      >
-        <Keyboard className="w-4 h-4" />
-      </button>
+      {/* Shortcuts help trigger + timer-preset picker (top-left cluster).
+          Preset switcher is power-user catnip; lives next to the
+          shortcuts so the area reads as "tweak the focus session". */}
+      <div className="absolute top-4 left-4 sm:top-6 sm:left-6 flex items-center gap-2 z-10">
+        <button
+          onClick={() => setShowShortcuts(s => !s)}
+          className="text-white/15 hover:text-white/40 transition-colors p-2"
+          aria-label="Keyboard shortcuts"
+        >
+          <Keyboard className="w-4 h-4" />
+        </button>
+        {/* Hide the preset picker mid-session — switching durations
+            doesn't apply to a running countdown anyway. Surfaces only
+            when the timer is idle so users don't get a misleading
+            "I'll change this for THIS session" expectation. */}
+        {timerState === 'idle' && <TimerPresetPicker />}
+      </div>
 
       {/* Shortcuts panel */}
       <AnimatePresence>
@@ -476,6 +487,12 @@ export function FocusMode() {
           </div>
         )}
       </div>
+
+      {/* Wellness prompt — appears in break only, gentle non-blocking
+          tile (eye rest / hydration / posture rotated by day-of-year).
+          Lives below the break controls so it doesn't compete with
+          the timer for attention. */}
+      {isBreak && !meditating && <BreakWellnessPrompt />}
 
       {/* Session counter + next-phase preview + PiP */}
       <div className="mt-6 sm:mt-8 text-center">

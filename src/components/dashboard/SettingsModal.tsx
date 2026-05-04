@@ -4,7 +4,8 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
-import { X, Bell, Clock, Palette, Check, CreditCard, AlertTriangle, Mail, Globe, MessageCircle, Download, Trash2, Sparkles } from 'lucide-react';
+import { X, Bell, Clock, Palette, Check, CreditCard, AlertTriangle, Mail, Globe, MessageCircle, Download, Trash2, Sparkles, Volume2 } from 'lucide-react';
+import { playSound } from '@/lib/sounds';
 import type { BotPersona } from '@/types';
 import { createClient } from '@/lib/supabase/client';
 import * as storage from '@/lib/storage';
@@ -17,6 +18,7 @@ import {
 import { PactsSection } from './PactsSection';
 import { TimezoneClock } from './TimezoneClock';
 import { InviteFriendsSection } from './InviteFriendsSection';
+import { AnchorHabitCard } from './AnchorHabitCard';
 
 const THEMES = [
   {
@@ -423,16 +425,20 @@ export function SettingsModal() {
 
               {/* Theme */}
               <div>
-                <div className="flex items-center gap-2 mb-3">
+                <div className="flex items-center gap-2 mb-1.5">
                   <Palette className="w-4 h-4 text-cyan-400" />
                   <h4 className="text-sm font-medium text-white/70">Theme</h4>
                 </div>
+                <p className="text-[10px] text-white/40 mb-3 leading-relaxed">
+                  Each theme also includes its own session-complete chime.
+                  Hover any theme and tap the speaker to preview.
+                </p>
                 <div className="grid grid-cols-4 gap-2">
                   {THEMES.map((theme) => (
                     <button
                       key={theme.id}
                       onClick={() => handleThemeSelect(theme.id)}
-                      className={`relative flex flex-col items-center gap-1.5 p-2 rounded-xl border transition-all ${
+                      className={`relative group flex flex-col items-center gap-1.5 p-2 rounded-xl border transition-all ${
                         activeTheme === theme.id
                           ? 'border-cyan-500/50 bg-cyan-500/5'
                           : 'border-white/[0.06] hover:border-white/10'
@@ -453,6 +459,28 @@ export function SettingsModal() {
                           <Check className="w-2.5 h-2.5 text-white" />
                         </div>
                       )}
+                      {/* Sound preview button. role="button" inside an
+                          outer button is invalid HTML; use a span with
+                          stopPropagation so the wrapping button's
+                          theme-select doesn't fire on preview click.
+                          Keyboard users get the preview via the theme's
+                          actual selection (each select also primes audio
+                          via warmUpAudio). */}
+                      <span
+                        role="button"
+                        tabIndex={-1}
+                        aria-label={`Preview ${theme.name} chime`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          // Pass theme.id explicitly so we preview that
+                          // theme's chime even if the user hasn't yet
+                          // selected it.
+                          playSound('pomodoro_complete', theme.id);
+                        }}
+                        className="absolute top-1.5 left-1.5 w-5 h-5 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center text-white/55 hover:text-white hover:bg-black/60 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                      >
+                        <Volume2 className="w-2.5 h-2.5" />
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -666,6 +694,9 @@ export function SettingsModal() {
               <div className="pt-4 border-t border-white/[0.06]">
                 <PactsSection />
               </div>
+
+              {/* Anchor habit — habit-stacking (research-backed retention lever) */}
+              <AnchorHabitCard />
 
               {/* Invite Friends — referrals (both sides get a month free) */}
               <InviteFriendsSection />

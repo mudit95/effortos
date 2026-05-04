@@ -5,9 +5,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useStore } from '@/store/useStore';
 import { Button } from '@/components/ui/button';
 import { GoalProgressBar } from './GoalProgressBar';
+import { GoalPaceCallout } from './GoalPaceCallout';
 import { FeedbackModal } from './FeedbackModal';
 import { LapseRecoveryModal } from './LapseRecoveryModal';
 import { DailyCard } from './DailyCard';
+import { WeeklyCard } from './WeeklyCard';
 import { SessionNotesModal } from './SessionNotesModal';
 import { CelebrationScreen } from './CelebrationScreen';
 import { SettingsModal } from './SettingsModal';
@@ -22,6 +24,8 @@ import { GoalSelector } from './GoalSelector';
 import { WelcomeCard } from './WelcomeCard';
 import { DailyBrief } from './DailyBrief';
 import { DailyGrind } from './DailyGrind';
+import { FirstSessionRitual, shouldShowFirstSessionRitual } from '@/components/onboarding/FirstSessionRitual';
+import { AntiRelapseCard, shouldShowAntiRelapseCard } from './AntiRelapseCard';
 import { Reports } from './Reports';
 import { StreakCalendar } from './StreakCalendar';
 // TimezoneClock moved to SettingsModal
@@ -65,12 +69,46 @@ export function Dashboard() {
   const setShowGoalHistory = useStore(s => s.setShowGoalHistory);
   const setShowEditGoal = useStore(s => s.setShowEditGoal);
   const setShowManualSession = useStore(s => s.setShowManualSession);
-  const requestNotificationPermission = useStore(s => s.requestNotificationPermission);
+  // Note: requestNotificationPermission used to be called on dashboard
+  // load — moved to startTimer's first-session branch in useStore.ts.
+  // Subscription kept here intentionally so a future Settings toggle
+  // can wire it back without re-importing.
   const subscription = useStore(s => s.subscription);
   const subscriptionLoading = useStore(s => s.subscriptionLoading);
   const setShowPaywall = useStore(s => s.setShowPaywall);
 
   const [showMeditation, setShowMeditation] = useState(false);
+
+  // First-session ritual gate — surfaces ONCE for users who finished
+  // onboarding but haven't done a single focus session. The predicate
+  // (shouldShowFirstSessionRitual) is a pure read of localStorage
+  // session count + dismissal flag, so we evaluate it during render
+  // via a lazy useState initializer. Using an effect would trigger
+  // the React 19 "setState in effect body" warning; computing during
+  // render is the canonical pattern for "should this modal mount once".
+  const [showFirstRitual, setShowFirstRitual] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    if (!user || !user.onboarding_completed) return false;
+    return shouldShowFirstSessionRitual();
+  });
+
+  // Anti-relapse survey gate. Renders inline above the daily brief
+  // when the user is 7+ days dormant. Distinct from the first-session
+  // ritual: that one fires for users who never started; this one
+  // fires for users who started, drifted, and came back. The two
+  // can't both be true (first ritual gates on zero sessions ever)
+  // so they're naturally mutually exclusive.
+  //
+  // Same lazy-init pattern as above — pure-read predicate runs once
+  // at mount; user opting to dismiss flips state via the callback.
+  const [relapseState, setRelapseState] = useState<{ show: boolean; days: number }>(
+    () => {
+      if (typeof window === 'undefined') return { show: false, days: 0 };
+      if (!user || !user.onboarding_completed) return { show: false, days: 0 };
+      const r = shouldShowAntiRelapseCard({ lastSessionDate: user.last_session_date });
+      return r.show ? { show: true, days: r.daysDormant } : { show: false, days: 0 };
+    },
+  );
 
   // Check subscription — show paywall if expired.
   // We open it ONCE per browser session (sessionStorage gate) so an expired
@@ -81,8 +119,15 @@ export function Dashboard() {
 
   useEffect(() => {
     refreshDashboard();
-    requestNotificationPermission();
-  }, [refreshDashboard, requestNotificationPermission]);
+    // Notification permission is no longer requested at dashboard
+    // load — that's the spammy pattern that gets users to permanently
+    // deny. The startTimer action requests it on the FIRST session
+    // start instead, where the value-for-permission ratio is highest
+    // (3-10× higher accept rate per UX research). The
+    // requestNotificationPermission action remains exported in case
+    // a future "Enable notifications" Settings toggle wants to
+    // trigger it explicitly.
+  }, [refreshDashboard]);
 
   useEffect(() => {
     if (!isExpired) return;
@@ -197,6 +242,17 @@ export function Dashboard() {
           {activeGoal ? `${activeGoal.title} — EffortOS dashboard` : 'EffortOS dashboard'}
         </h1>
 
+        {/* Anti-relapse survey — only after a 7+ day dormancy. Renders
+            ABOVE the daily brief because the empathy beat needs to come
+            before any data-driven content. Self-dismisses; DailyBrief
+            renders normally next mount. */}
+        {relapseState.show && (
+          <AntiRelapseCard
+            daysDormant={relapseState.days}
+            onDismiss={() => setRelapseState({ show: false, days: 0 })}
+          />
+        )}
+
         {/* Personalized daily brief — context-on-arrival */}
         <DailyBrief />
 
@@ -206,6 +262,15 @@ export function Dashboard() {
             DB read after the first dashboard load each day. */}
         <div className="mb-4 sm:mb-6">
           <DailyCard />
+        </div>
+
+        {/* Weekly AI card (Wave 3, Pro tier) — your-week-in-numbers for
+            everyone + multi-paragraph pattern insight + next-week
+            suggestion for Pro. Cached per (user, ISO week start). Self-
+            hides on weeks with zero activity so it doesn't surface a
+            wall of zeros for a vacationing user. */}
+        <div className="mb-4 sm:mb-6">
+          <WeeklyCard />
         </div>
 
         {/* Free / expired callout — frames "what you have vs. what you unlock"
@@ -304,6 +369,14 @@ export function Dashboard() {
       <ShadowGoalsModal />
       <PaywallModal />
       <PlanTomorrowModal />
+      {/* First-session ritual — only mounted when shouldShowFirstSessionRitual()
+          fires (zero sessions, onboarding complete, not yet dismissed). */}
+      {showFirstRitual && (
+        <FirstSessionRitual
+          onLaunch={() => setShowFirstRitual(false)}
+          onDismiss={() => setShowFirstRitual(false)}
+        />
+      )}
       <AnimatePresence>
         {showMeditation && (
           <MeditationScreen onClose={() => setShowMeditation(false)} />
@@ -380,6 +453,11 @@ function LongTermView({
             milestones={activeGoal.milestones}
             onClick={() => useStore.getState().openGoalReport(activeGoal.id)}
           />
+
+          {/* Pace projection — "if you keep this up you'll finish on..."
+              with confidence + status colouring. Hidden when there's not
+              enough recent activity to project from. */}
+          <GoalPaceCallout />
 
           {/* Progress caption — streak lives in the calendar card below, so
               this line only carries sessions + invested hours. Skeleton

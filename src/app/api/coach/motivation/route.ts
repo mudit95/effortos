@@ -36,7 +36,7 @@ export async function POST(request: Request) {
     const { taskTitle, goalTitle, sessionsCompleted, sessionsTotal, streakDays, userName } = await request.json();
 
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 128,
       system: `You generate ONE short motivational message (max 15 words) for a focus timer app.
 Rules:

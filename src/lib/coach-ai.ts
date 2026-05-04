@@ -275,11 +275,15 @@ export interface DailyCardStats {
   userName: string;
 }
 
-/** Result tuple from the AI call. tokens=0 when fallback was used
- *  (no Claude call happened) — caller can record that for accounting. */
+/** Result tuple from the AI call. Tokens broken into input + output so
+ *  the caller can pass an Anthropic-shape usage object straight into
+ *  recordAiUsage(). The previous `tokens: number` (sum) shape was racy
+ *  with recordAiUsage's expected `{input_tokens, output_tokens}` —
+ *  the daily-quota math under-counted by the input portion. */
 export interface DailyCardAiResult {
   suggestion: string;
-  tokens: number;
+  inputTokens: number;
+  outputTokens: number;
 }
 
 const DAILY_CARD_SYSTEM = `You are EffortOS, generating a one-line evening insight for a user reviewing their day.
@@ -299,7 +303,7 @@ export async function generateDailyCardAi(
 ): Promise<DailyCardAiResult> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    return { suggestion: dailyCardFallback(stats), tokens: 0 };
+    return { suggestion: dailyCardFallback(stats), inputTokens: 0, outputTokens: 0 };
   }
 
   const ctxLines: string[] = [
@@ -341,16 +345,15 @@ export async function generateDailyCardAi(
       .replace(/^[`*_>\s]+|[`*_>\s]+$/g, '')
       .replace(/\s+/g, ' ')
       .trim();
+    const inputTokens = response.usage?.input_tokens ?? 0;
+    const outputTokens = response.usage?.output_tokens ?? 0;
     if (!cleaned || cleaned.length < 20 || cleaned.length > 240) {
-      return { suggestion: dailyCardFallback(stats), tokens: response.usage?.input_tokens ?? 0 };
+      return { suggestion: dailyCardFallback(stats), inputTokens, outputTokens };
     }
-
-    const totalTokens =
-      (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0);
-    return { suggestion: cleaned, tokens: totalTokens };
+    return { suggestion: cleaned, inputTokens, outputTokens };
   } catch (err) {
     console.error('[daily-card-ai] generation failed:', err);
-    return { suggestion: dailyCardFallback(stats), tokens: 0 };
+    return { suggestion: dailyCardFallback(stats), inputTokens: 0, outputTokens: 0 };
   }
 }
 
@@ -373,4 +376,205 @@ function dailyCardFallback(stats: DailyCardStats): string {
     return 'No tasks today — set 1-3 small ones tonight so tomorrow starts with a clear first move.';
   }
   return 'Carry one unfinished task into tomorrow as your first focus block — momentum beats blank slate.';
+}
+
+// ── Wave 3: Weekly AI report card (Pro tier) ─────────────────────────
+//
+// One multi-paragraph insight + a one-line suggestion sent to Pro
+// users at end-of-week. Distinct from the daily card: weekly looks
+// at PATTERNS over 7 days ("78% completion in mornings vs 41%
+// afternoons; want me to suggest moving deep work to mornings?").
+//
+// Cached one-per-(user, week_start) in the weekly_cards table
+// (mig 043). The endpoint /api/coach/weekly-card handles cache
+// lookup + write; this function only does the AI call.
+//
+// The prompt is INTENTIONALLY more conservative about novelty than
+// the daily card. Weekly insights compete with the user's own
+// reflection — the AI should help them notice patterns they wouldn't
+// notice unaided, not invent narratives that don't exist in the data.
+
+/** Stats shape for the weekly card. Mirrors the JSONB schema in
+ *  the weekly_cards.descriptive column. */
+export interface WeeklyCardStats {
+  /** Total focus minutes across the 7 days. */
+  totalFocusMinutes: number;
+  /** Total completed sessions. */
+  totalSessions: number;
+  /** Sum of tasks marked complete this week. */
+  tasksCompleted: number;
+  /** Sum of tasks present this week (completed + incomplete). */
+  tasksTotal: number;
+  /** 0..1; NaN allowed when tasksTotal=0. */
+  completionRate: number;
+  /** Day-name with the most sessions. e.g. "Tuesday". */
+  bestDayName: string | null;
+  /** Sessions on the best day. */
+  bestDaySessions: number;
+  /** Per-time-of-day completion rates, 0..1, null when no data. */
+  morningCompletion: number | null;
+  afternoonCompletion: number | null;
+  eveningCompletion: number | null;
+  currentStreak: number;
+  longestStreak: number;
+  /** Number of active goals at week's end. */
+  activeGoalsCount: number;
+  /** Brief mood summary if user journaled this week (e.g., "mostly steady, one rough Wednesday"). */
+  moodSummary: string | null;
+  /** Most-tagged work area, e.g., "writing". */
+  topTag: string | null;
+  /** Active goal % progress change this week. */
+  activeGoalPctChange: number | null;
+  /** First name for personalisation. */
+  userName: string;
+}
+
+export interface WeeklyCardAiResult {
+  insight: string;
+  suggestion: string;
+  /** Anthropic-shape token split so the caller can pass straight to
+   *  recordAiUsage(). 0/0 when the static fallback was used. */
+  inputTokens: number;
+  outputTokens: number;
+}
+
+const WEEKLY_CARD_SYSTEM = `You are EffortOS, generating an end-of-week reflection for a Pro user.
+
+OUTPUT FORMAT (MUST follow exactly):
+{
+  "insight": "<2-3 short paragraphs of pattern observation>",
+  "suggestion": "<one-sentence concrete next-week action>"
+}
+
+INSIGHT RULES:
+- Reference SPECIFIC numbers from CONTEXT only. Do NOT invent stats.
+- Find a real pattern, not a generic platitude. If the data shows morning sessions complete at 78% but afternoon at 41%, name that exact gap.
+- 2-3 short paragraphs. ~80-160 words total. No bullets. No headers.
+- Tone: a thoughtful collaborator, not a coach. No hype words ("amazing", "great job", "crushing it").
+- If the week was mixed or quiet, ACKNOWLEDGE that honestly. Do not pretend.
+- No emojis.
+
+SUGGESTION RULES:
+- Single sentence, ≤140 chars.
+- Concrete and small. "Move 2 deep-work tasks to before noon" beats "improve mornings".
+- Should follow naturally from the insight — same theme.
+
+Return ONLY the JSON object. No preamble, no fences, no commentary.`;
+
+export async function generateWeeklyCardAi(
+  stats: WeeklyCardStats,
+): Promise<WeeklyCardAiResult> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return { ...weeklyCardFallback(stats), inputTokens: 0, outputTokens: 0 };
+  }
+
+  const ctx: string[] = [
+    `User: ${stats.userName.split(' ')[0] || 'there'}`,
+    `Week totals — focus minutes: ${stats.totalFocusMinutes}, sessions: ${stats.totalSessions}, tasks: ${stats.tasksCompleted}/${stats.tasksTotal}`,
+    `Streaks — current: ${stats.currentStreak} days, longest: ${stats.longestStreak} days`,
+    `Active goals: ${stats.activeGoalsCount}`,
+  ];
+  if (stats.bestDayName && stats.bestDaySessions > 0) {
+    ctx.push(`Best day: ${stats.bestDayName} (${stats.bestDaySessions} sessions)`);
+  }
+  if (
+    stats.morningCompletion !== null ||
+    stats.afternoonCompletion !== null ||
+    stats.eveningCompletion !== null
+  ) {
+    const parts: string[] = [];
+    if (stats.morningCompletion !== null)
+      parts.push(`morning ${Math.round(stats.morningCompletion * 100)}%`);
+    if (stats.afternoonCompletion !== null)
+      parts.push(`afternoon ${Math.round(stats.afternoonCompletion * 100)}%`);
+    if (stats.eveningCompletion !== null)
+      parts.push(`evening ${Math.round(stats.eveningCompletion * 100)}%`);
+    ctx.push(`Time-of-day completion: ${parts.join(', ')}`);
+  }
+  if (stats.topTag) ctx.push(`Top work tag: ${stats.topTag}`);
+  if (stats.moodSummary) ctx.push(`Journal mood: ${stats.moodSummary}`);
+  if (stats.activeGoalPctChange !== null) {
+    ctx.push(`Active goal progress change this week: +${stats.activeGoalPctChange}%`);
+  }
+
+  try {
+    const anthropic = new Anthropic({ apiKey });
+    const response = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 600,
+      system: WEEKLY_CARD_SYSTEM,
+      messages: [
+        {
+          role: 'user',
+          content: `[CONTEXT]\n${ctx.join('\n')}\n\n[TASK]\nReturn the JSON object.`,
+        },
+      ],
+    });
+
+    const text = response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join('')
+      .trim();
+
+    // Parse JSON; tolerate fence wrapping the model occasionally adds.
+    const jsonText = text
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```\s*$/i, '')
+      .trim();
+    const inputTokens = response.usage?.input_tokens ?? 0;
+    const outputTokens = response.usage?.output_tokens ?? 0;
+    let parsed: { insight?: string; suggestion?: string };
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch {
+      console.error('[weekly-card-ai] JSON parse failed:', jsonText.slice(0, 200));
+      return { ...weeklyCardFallback(stats), inputTokens, outputTokens };
+    }
+
+    const insight = (parsed.insight ?? '').trim();
+    const suggestion = (parsed.suggestion ?? '').trim();
+    if (insight.length < 50 || insight.length > 1200) {
+      return { ...weeklyCardFallback(stats), inputTokens, outputTokens };
+    }
+    if (suggestion.length < 10 || suggestion.length > 220) {
+      return { ...weeklyCardFallback(stats), inputTokens, outputTokens };
+    }
+
+    return { insight, suggestion, inputTokens, outputTokens };
+  } catch (err) {
+    console.error('[weekly-card-ai] generation failed:', err);
+    return { ...weeklyCardFallback(stats), inputTokens: 0, outputTokens: 0 };
+  }
+}
+
+/** Static fallback when AI is unavailable or returns garbage. Picks a
+ *  shape based on whether the week was active, mixed, or quiet so the
+ *  fallback still reads as if it acknowledged the user's actual week. */
+function weeklyCardFallback(stats: WeeklyCardStats): { insight: string; suggestion: string } {
+  const sess = stats.totalSessions;
+  if (sess === 0) {
+    return {
+      insight:
+        "It was a quiet week — no focus sessions logged. Nothing to read into. Sometimes the calendar just doesn't cooperate.\n\nIf next week opens up, even one short block on Monday morning is enough to re-anchor. The streak will catch up on its own.",
+      suggestion: 'Start next week with one 25-minute block on Monday morning.',
+    };
+  }
+  if (sess <= 3) {
+    return {
+      insight:
+        `${sess} session${sess === 1 ? '' : 's'} this week — modest, but real. The data is too thin to spot a pattern, so trust the rhythm rather than chase a number.\n\nNotice what made those sessions happen, and try to recreate the conditions next week.`,
+      suggestion: 'Aim for one slightly longer block (45 min) early in the week.',
+    };
+  }
+  const focusH = (stats.totalFocusMinutes / 60).toFixed(1);
+  return {
+    insight:
+      `${sess} sessions, ${focusH} hours of focus. ${stats.bestDayName ? stats.bestDayName + ' was your strongest day.' : ''} ${stats.completionRate >= 0.7 ? `Tasks closed at ${Math.round(stats.completionRate * 100)}% — you're following through on what you plan.` : `Completion at ${Math.round(stats.completionRate * 100)}% suggests you're planning more than you can carry; trim next week's list.`}\n\nLook at the numbers and ask which day's pattern you want to repeat.`,
+    suggestion:
+      stats.completionRate >= 0.7
+        ? `Plan ${Math.max(3, Math.ceil(sess / 7))} sessions per day next week to hold this pace.`
+        : 'Reduce next week to 3 must-do tasks per day; let the rest pile elsewhere.',
+  };
 }

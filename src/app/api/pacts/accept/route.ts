@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { rateLimitOrNull } from '@/lib/ratelimit';
 
 /**
  * POST /api/pacts/accept
@@ -28,6 +29,14 @@ export async function POST(req: Request) {
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
+    // Rate limit invite-code submissions. The lookup uses the
+    // service-role client (bypasses RLS) because pending invites
+    // have NULL partner_user_id and the user-scoped policy would
+    // 0-row them. The 24-hex code IS the authenticator — without a
+    // throttle, an authenticated attacker can grind the code space.
+    const blocked = await rateLimitOrNull(user.id, 'light');
+    if (blocked) return blocked;
 
     const body = await req.json();
     const { invite_code } = body;

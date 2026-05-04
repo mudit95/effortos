@@ -207,15 +207,16 @@ export async function GET() {
 
         const ai = await generateDailyCardAi(stats);
         aiSuggestion = ai.suggestion;
-        tokensUsed = ai.tokens;
+        tokensUsed = ai.inputTokens + ai.outputTokens;
 
-        // Record token usage in the per-user daily bucket so the
-        // existing aiQuota math stays accurate. Pass an Anthropic-shape
-        // usage object; recordAiUsage handles missing fields.
+        // Record token usage in the per-user daily bucket. Previously
+        // we passed `output_tokens: tokensUsed` (the SUM), which under-
+        // counted spend by the input portion — quota math drifted.
+        // Now we pass the real input/output split.
         if (tokensUsed > 0) {
           await recordAiUsage(user.id, {
-            input_tokens: 0,
-            output_tokens: tokensUsed,
+            input_tokens: ai.inputTokens,
+            output_tokens: ai.outputTokens,
             cache_creation_input_tokens: 0,
             cache_read_input_tokens: 0,
           });

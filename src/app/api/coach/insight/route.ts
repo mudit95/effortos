@@ -50,7 +50,10 @@ export async function POST(request: Request) {
     } = await request.json();
 
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      // Haiku is the right cost tier for a 2-3 sentence output. Was
+      // previously Sonnet (~12× more expensive); the prompt doesn't
+      // need Sonnet's reasoning depth.
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 150,
       system: `You generate ONE concise, data-driven insight (2-3 sentences max) for a productivity app user.
 Rules:

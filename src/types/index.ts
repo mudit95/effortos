@@ -33,6 +33,13 @@ export interface User {
   /** Dim-overlay opacity (0–100, %) applied over the background so the
    *  timer stays readable. Default 35. */
   focus_background_dim?: number;
+  /**
+   * User-named existing daily anchor that the focus habit attaches to
+   * (mig 041). Free-text, capped at 80 chars. Examples: "after morning
+   * coffee", "right after lunch". Surfaces in Settings as a habit-
+   * stacking control and in the proactive coach's nudge phrasing.
+   */
+  anchor_habit_text?: string | null;
   settings: UserSettings;
 }
 

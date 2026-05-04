@@ -31,6 +31,31 @@ function getAudioContext(): AudioContext {
 }
 
 /**
+ * Force-resume the AudioContext if it exists and is suspended.
+ *
+ * Mobile browsers suspend the AudioContext whenever the tab is
+ * backgrounded. Sounds scheduled while suspended don't play — we'd
+ * silently lose the session-complete chime fired from the worker
+ * COMPLETE handler. The timer-lifecycle hook calls this on every
+ * visibilitychange-to-visible so any subsequent playSound finds an
+ * awake context.
+ *
+ * Returns a promise that resolves once the context is running (or
+ * immediately if no context exists yet — first-gesture creation
+ * still happens via warmUpAudio).
+ */
+export async function resumeAudioContext(): Promise<void> {
+  if (!audioContext) return;
+  if (audioContext.state !== 'suspended') return;
+  try {
+    await audioContext.resume();
+  } catch {
+    /* iOS sometimes throws when called outside a gesture; the next
+     *  gesture will resume it. */
+  }
+}
+
+/**
  * Warm up the AudioContext on any user interaction so that later
  * programmatic calls to playSound() (e.g., from a timer complete
  * callback) don't get blocked by the browser's autoplay policy.

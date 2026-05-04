@@ -47,6 +47,10 @@ export async function PUT(req: Request) {
     .from('email_preferences')
     .upsert({ user_id: user.id, ...filtered }, { onConflict: 'user_id' });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) {
+    // Log raw error server-side; never echo Postgres internals to client.
+    console.error('[email-preferences] upsert failed:', error);
+    return NextResponse.json({ error: 'Update failed' }, { status: 500 });
+  }
   return NextResponse.json({ ok: true });
 }

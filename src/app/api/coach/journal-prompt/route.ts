@@ -71,7 +71,7 @@ export async function POST(request: Request) {
     }
 
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 180,
       system: `You generate ONE reflective journaling prompt (1-2 sentences, max 30 words) for a productivity app user who is about to write their daily journal entry.
 

@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { welcomeEmail } from '@/lib/email-templates';
 import { sendEmail } from '@/lib/email';
+import { rateLimitOrNull } from '@/lib/ratelimit';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -30,6 +31,13 @@ export async function POST() {
   if (!user.email) {
     return NextResponse.json({ sent: false, reason: 'no email on account' });
   }
+
+  // Rate-limit. The endpoint is idempotent (skips on prior log row),
+  // but the idempotency check is racy under concurrent calls and the
+  // per-call DB roundtrip + Resend quota lookup is real cost. Cap
+  // the call rate to keep an authenticated client from grinding it.
+  const blocked = await rateLimitOrNull(user.id, 'light');
+  if (blocked) return blocked;
 
   const admin = createServiceClient();
 

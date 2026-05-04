@@ -5,6 +5,53 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { RefreshCw } from 'lucide-react';
 import { Skeleton } from '@/components/ui/Skeleton';
 
+// Both AI cards previously polled their endpoints on a 15-20 min
+// setInterval — the single largest Anthropic cost source identified
+// in audit pass 2. A user with the dashboard open 8h/day burned
+// ~$0.10/day per tab in pure background polling, with no user benefit
+// (the inputs barely change between ticks).
+//
+// New behaviour: fetch on mount, cache the result in localStorage
+// keyed by content-hash for INSIGHT_TTL_MS / MOTIVATION_TTL_MS, only
+// re-fetch when the cache is stale OR the user clicks the manual ⟳
+// button. Same cards visible to the user; cost drops by ~95%.
+const INSIGHT_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+const MOTIVATION_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+/** Stable cache key that includes the inputs that actually affect output.
+ *  Coarse on session counts so we don't churn the cache for each
+ *  pomodoro completion mid-day. */
+function cacheKey(prefix: string, inputs: Record<string, unknown>): string {
+  const stable = JSON.stringify(inputs, Object.keys(inputs).sort());
+  return `effortos:ai_${prefix}:${stable}`;
+}
+
+interface CachedEntry {
+  value: string;
+  ts: number;
+}
+
+function readCache(key: string, ttlMs: number): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CachedEntry;
+    if (!parsed.value || !parsed.ts) return null;
+    if (Date.now() - parsed.ts > ttlMs) return null;
+    return parsed.value;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(key: string, value: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify({ value, ts: Date.now() }));
+  } catch { /* quota / private mode */ }
+}
+
 // Fallback insights when API fails
 const FALLBACK_INSIGHTS = [
   "Consistency beats intensity — your daily habit is building real momentum.",
@@ -60,7 +107,15 @@ export function AIInsightCard({
   const propsRef = useRef({ goalTitle, sessionsCompleted, sessionsTotal, streakDays, context });
   propsRef.current = { goalTitle, sessionsCompleted, sessionsTotal, streakDays, context };
 
-  const fetchInsight = useCallback(async () => {
+  const fetchInsight = useCallback(async (opts?: { force?: boolean }) => {
+    const key = cacheKey('insight', propsRef.current as Record<string, unknown>);
+    if (!opts?.force) {
+      const cached = readCache(key, INSIGHT_TTL_MS);
+      if (cached) {
+        setInsight(cached);
+        return;
+      }
+    }
     setIsLoading(true);
     try {
       const res = await fetch('/api/coach/insight', {
@@ -72,30 +127,23 @@ export function AIInsightCard({
       if (!res.ok) throw new Error('Failed');
       const data = await res.json();
       setInsight(data.insight);
+      writeCache(key, data.insight);
     } catch {
-      // Use a random fallback
+      // Use a random fallback (don't cache fallbacks).
       setInsight(
-        FALLBACK_INSIGHTS[Math.floor(Math.random() * FALLBACK_INSIGHTS.length)]
+        FALLBACK_INSIGHTS[Math.floor(Math.random() * FALLBACK_INSIGHTS.length)],
       );
     } finally {
       setIsLoading(false);
     }
   }, []); // stable — reads from ref, no prop dependencies
 
-  // Fetch once on mount, then auto-rotate every 20 minutes
+  // Fetch once on mount. The cache check inside fetchInsight skips
+  // the network round-trip when a recent value is available; manual
+  // ⟳ click triggers force=true to bypass the cache. No more
+  // setInterval auto-refresh — see the rationale comment at the top.
   useEffect(() => {
-    fetchInsight();
-
-    const autoRotateMs = 20 * 60 * 1000; // 20 minutes
-    const intervalId = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        fetchInsight();
-      }
-    }, autoRotateMs);
-
-    return () => {
-      clearInterval(intervalId);
-    };
+    void fetchInsight();
   }, [fetchInsight]);
 
   return (
@@ -111,7 +159,7 @@ export function AIInsightCard({
           </h3>
         </div>
         <button
-          onClick={fetchInsight}
+          onClick={() => fetchInsight({ force: true })}
           disabled={isLoading}
           className="p-2 border border-white/[0.08] rounded-md hover:border-white/[0.15] hover:bg-white/[0.02] transition-all duration-200 flex items-center justify-center disabled:opacity-50"
           aria-label="Get another insight"
@@ -153,8 +201,8 @@ export function AIInsightCard({
       </div>
 
       {/* Footer */}
-      <p className="text-[10px] text-white/15 mt-3">
-        Auto-refreshes · Tap ⟳ for another
+      <p className="text-[10px] text-white/40 mt-3">
+        Tap ⟳ for another
       </p>
     </div>
   );
@@ -175,7 +223,15 @@ export function AIMotivationCard({
   const propsRef = useRef({ goalTitle, sessionsCompleted, sessionsTotal, streakDays, userName });
   propsRef.current = { goalTitle, sessionsCompleted, sessionsTotal, streakDays, userName };
 
-  const fetchMotivation = useCallback(async () => {
+  const fetchMotivation = useCallback(async (opts?: { force?: boolean }) => {
+    const key = cacheKey('motivation', propsRef.current as Record<string, unknown>);
+    if (!opts?.force) {
+      const cached = readCache(key, MOTIVATION_TTL_MS);
+      if (cached) {
+        setMotivation(cached);
+        return;
+      }
+    }
     setIsLoading(true);
     try {
       const res = await fetch('/api/coach/motivation', {
@@ -187,30 +243,22 @@ export function AIMotivationCard({
       if (!res.ok) throw new Error('Failed');
       const data = await res.json();
       setMotivation(data.message);
+      writeCache(key, data.message);
     } catch {
-      // Use a random fallback
       setMotivation(
-        FALLBACK_MOTIVATIONS[Math.floor(Math.random() * FALLBACK_MOTIVATIONS.length)]
+        FALLBACK_MOTIVATIONS[Math.floor(Math.random() * FALLBACK_MOTIVATIONS.length)],
       );
     } finally {
       setIsLoading(false);
     }
   }, []); // stable — reads from ref, no prop dependencies
 
-  // Fetch once on mount, then auto-rotate every 15 minutes
+  // Fetch once on mount; cache check inside fetchMotivation skips
+  // network on warm runs. Manual ⟳ uses force=true. The previous
+  // 15-min auto-refresh setInterval was the largest single Anthropic
+  // cost source — see comment at top of file.
   useEffect(() => {
-    fetchMotivation();
-
-    const autoRotateMs = 15 * 60 * 1000; // 15 minutes
-    const intervalId = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        fetchMotivation();
-      }
-    }, autoRotateMs);
-
-    return () => {
-      clearInterval(intervalId);
-    };
+    void fetchMotivation();
   }, [fetchMotivation]);
 
   return (
@@ -226,7 +274,7 @@ export function AIMotivationCard({
           </h3>
         </div>
         <button
-          onClick={fetchMotivation}
+          onClick={() => fetchMotivation({ force: true })}
           disabled={isLoading}
           className="p-2 border border-white/[0.08] rounded-md hover:border-white/[0.15] hover:bg-white/[0.02] transition-all duration-200 flex items-center justify-center disabled:opacity-50"
           aria-label="Get another motivation"
@@ -268,8 +316,8 @@ export function AIMotivationCard({
       </div>
 
       {/* Footer */}
-      <p className="text-[10px] text-white/15 mt-3">
-        Auto-refreshes · Tap ⟳ for another
+      <p className="text-[10px] text-white/40 mt-3">
+        Tap ⟳ for another
       </p>
     </div>
   );

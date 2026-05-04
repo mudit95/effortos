@@ -665,7 +665,22 @@ export async function parseWhatsAppMessage(
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 600,
-      system: SYSTEM_PROMPT,
+      // Prompt caching on the (~6500-token) SYSTEM_PROMPT. The system
+      // block is identical across every WhatsApp inbound message, so
+      // marking it cache_control:'ephemeral' lets Anthropic's prompt
+      // cache reuse the encoded prefix on subsequent calls within
+      // the 5-minute cache window. Cache reads are 10% of input cost,
+      // dropping the per-message system-prompt cost ~90%.
+      // Anthropic's TS SDK accepts a content-block array on `system`
+      // when the block needs cache_control (string form is shorthand
+      // for a single text block without cache_control).
+      system: [
+        {
+          type: 'text',
+          text: SYSTEM_PROMPT,
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
       messages: [{
         role: 'user',
         content: `${conversationBlock}<USER_MESSAGE>\n${safeMessage}\n</USER_MESSAGE>`,

@@ -93,3 +93,46 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
+
+// ── Web Push (mig 042) ────────────────────────────────────────────────
+// The server sends an encrypted JSON payload of shape
+// { title, body, url?, tag? }. We render a notification with the title
+// and body, and capture the URL for use when the user clicks it.
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
+  let payload;
+  try {
+    payload = event.data.json();
+  } catch {
+    payload = { title: 'EffortOS', body: event.data.text() };
+  }
+  const { title = 'EffortOS', body = '', url = '/', tag } = payload;
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon: '/icon-192.svg',
+      badge: '/icon-192.svg',
+      tag, // collapse same-tag notifications so streak alerts don't pile up
+      data: { url },
+    })
+  );
+});
+
+// Click handler — focus an existing tab if one's already open at our
+// origin, otherwise open a new one to the URL the payload requested.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = event.notification.data?.url || '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url && 'focus' in client) {
+          // Same-origin tab: navigate it to the target URL and focus.
+          client.navigate(targetUrl).catch(() => {});
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
+    })
+  );
+});

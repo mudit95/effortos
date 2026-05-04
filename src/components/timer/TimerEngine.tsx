@@ -70,9 +70,26 @@ export function TimerEngine() {
       worker.onmessage = (e) => {
         const { type, remaining } = e.data;
         if (type === 'TICK') {
+          // Stale-tick guard: if the user reset the timer or skipped
+          // the break in the gap between the worker computing this
+          // TICK and the message reaching us, don't overwrite
+          // timeRemaining with a stale countdown. Only honour TICKs
+          // when the store is in a state where the worker should be
+          // counting (running OR break).
+          const s = useStore.getState();
+          if (s.timerState !== 'running' && s.timerState !== 'break') return;
           useStore.setState({ timeRemaining: remaining });
         } else if (type === 'COMPLETE') {
           const state = useStore.getState();
+          // Stale-COMPLETE guard. The worker emits COMPLETE
+          // asynchronously; in the gap between the worker stopping
+          // and the message arriving, the user could have reset
+          // the timer (timerState='idle') or paused it. If we acted
+          // on a stale COMPLETE we'd either fire completeTimerSession
+          // for a session the user already cancelled, or transition
+          // an idle timer into break for no reason. Only act when
+          // the store still believes a countdown is active.
+          if (state.timerState !== 'running' && state.timerState !== 'break') return;
           if (state.isBreak) {
             // Break finished — back to idle, ready for next focus session.
             if (state.user?.settings?.sound_enabled !== false) {
@@ -87,6 +104,10 @@ export function TimerEngine() {
             });
           } else {
             // Focus session finished — store handles persistence + break transition.
+            // The store-side completeTimerSession also has its own
+            // double-fire / wrong-state guards, so this call is safe
+            // even on the rare double-COMPLETE from a re-mounted
+            // worker.
             state.completeTimerSession();
           }
         }
@@ -204,7 +225,11 @@ export function TimerEngine() {
           if (remaining === 0) {
             // Match the worker COMPLETE branch exactly so behaviour is
             // identical regardless of which path drove the countdown.
+            // Same stale-state guard as the worker path: if the user
+            // reset/paused between this tick scheduling and execution,
+            // bail without firing completion side effects.
             const state = useStore.getState();
+            if (state.timerState !== 'running' && state.timerState !== 'break') return;
             if (state.isBreak) {
               if (state.user?.settings?.sound_enabled !== false) {
                 playSound('break_complete');

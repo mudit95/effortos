@@ -101,22 +101,23 @@ export async function GET(request: Request) {
       const decision = await evaluateNudges(supabase, user);
       if (!decision) return { kind: 'skipped' as const };
 
-      // Generate personalized message
-      const message = await generateCoachMessage(decision.nudge_type, decision.context);
-
-      // ── Atomic claim via unique-per-UTC-day index ──
-      // Insert the coach_log row BEFORE sending. The unique partial index
-      // (migration 025) on (user_id, nudge_type, day-UTC) makes a
-      // concurrent retry's insert fail with 23505; we treat that as
-      // "another invocation already claimed this nudge" and skip the
-      // outbound send entirely.
+      // ── Atomic claim FIRST, AI generation second ──
+      // Previously we generated the AI message before inserting the
+      // coach_log row — meaning a cron retry would still pay for the
+      // Anthropic call before losing the INSERT race. Fixed by
+      // inserting the claim row with an empty message_sent FIRST. If
+      // the unique partial index (mig 025) rejects with 23505, we
+      // skip generation entirely. Otherwise we generate, then UPDATE
+      // the row with the real message + delivered=true after sending.
+      // Net: zero duplicate Anthropic charges on cron retry.
       const { data: insertedRow, error: insertErr } = await supabase
         .from('coach_log')
         .insert({
           user_id: user.id,
           nudge_type: decision.nudge_type,
-          message_sent: message,
+          message_sent: '', // populated AFTER successful generate+send
           delivered: false,
+          nudge_slot: String(decision.context.localHour),
           context_json: {
             total_tasks: decision.context.totalTasks,
             completed_tasks: decision.context.completedTasks,
@@ -130,14 +131,40 @@ export async function GET(request: Request) {
 
       if (insertErr) {
         if (insertErr.code === '23505') {
-          // Race-loser — already claimed today.
           return { kind: 'skipped' as const, reason: 'already_claimed' };
         }
         throw new Error(`claim insert failed: ${insertErr.message}`);
       }
       const claimedId = insertedRow.id as string;
 
-      // Send via WhatsApp now that we hold the claim.
+      // Now we hold the claim — generate the personalised message
+      // (this is where the Anthropic cost lands).
+      let message = await generateCoachMessage(decision.nudge_type, decision.context);
+
+      // Milestone celebration enrichment — append a public share URL
+      // so the user can post their milestone in one tap. Lazy mint;
+      // failure drops the URL silently rather than blocking the send.
+      if (decision.nudge_type === 'goal_milestone') {
+        try {
+          const { getOrMintStreakShareUrl } = await import('@/lib/share-token-helper');
+          const shareUrl = await getOrMintStreakShareUrl(supabase, user.id);
+          if (shareUrl) {
+            message = `${message}\n\nShare your moment: ${shareUrl}`;
+          }
+        } catch (enrichErr) {
+          console.error('[coach] milestone share-url enrich failed:', enrichErr);
+        }
+      }
+
+      // Persist the generated message to the claim row before sending,
+      // so a crash between "generated" and "sent" doesn't lose the
+      // text we already paid Anthropic for.
+      await supabase
+        .from('coach_log')
+        .update({ message_sent: message })
+        .eq('id', claimedId);
+
+      // Send via WhatsApp.
       const phone = user.phone_number.replace(/^\+/, '');
       const delivered = await sendTextMessage(phone, message);
 

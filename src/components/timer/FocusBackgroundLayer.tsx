@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import {
   resolveFocusBackground,
   type FocusBackground,
@@ -58,6 +58,57 @@ export function FocusBackgroundLayer({
     () => resolveFocusBackground(backgroundId, customResolver),
     [backgroundId, customResolver],
   );
+
+  // Mobile autoplay: even with autoPlay+muted+playsInline, iOS Safari
+  // will sometimes refuse to start a video unless we call play()
+  // explicitly inside a user-gesture callback. The user opening focus
+  // mode IS a user gesture, but the gesture's "live trust" only
+  // extends through one synchronous tick. We attach a play() retry
+  // on visibilitychange-to-visible AND on first user click anywhere
+  // in the focus view, which together cover every realistic scenario:
+  //   - Initial mount inside a click → autoplay works
+  //   - Backgrounded then foregrounded → visibility handler retries
+  //   - Autoplay blocked for any other reason → next click retries
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const videoUrl = bg?.type === 'video' ? bg.url : undefined;
+  useEffect(() => {
+    if (!videoUrl) return;
+
+    const tryPlay = () => {
+      const v = videoRef.current;
+      if (!v) return;
+      const p = v.play();
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => {
+          // Promise rejection means autoplay was blocked. Browsers
+          // throw NotAllowedError here. We swallow it; the next
+          // user gesture will fire tryPlay again.
+        });
+      }
+    };
+
+    // Initial attempt — runs after the React commit, so the video
+    // element is mounted and `src` is set.
+    tryPlay();
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') tryPlay();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    // First-tap fallback — bound to the document so any tap inside
+    // focus mode (start button, bg picker, ambient toggle) re-attempts.
+    document.addEventListener('click', tryPlay, { once: true });
+    document.addEventListener('touchstart', tryPlay, { once: true });
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      document.removeEventListener('click', tryPlay);
+      document.removeEventListener('touchstart', tryPlay);
+    };
+    // Keyed on videoUrl so swapping background re-attaches handlers
+    // and re-attempts play for the new source.
+  }, [videoUrl]);
 
   if (!bg) return null;
 
@@ -124,13 +175,28 @@ export function FocusBackgroundLayer({
 
         {bg.type === 'video' && bg.url && !reducedMotion && (
           <video
+            ref={videoRef}
             src={bg.url}
             poster={bg.posterUrl}
             autoPlay
             loop
             muted
+            // playsInline is critical on iOS — without it the
+            // browser forces fullscreen on play, breaking the focus
+            // mode layout.
             playsInline
-            preload="auto"
+            // disablePictureInPicture so the video doesn't fight
+            // with our timer PiP window when the user opens that.
+            disablePictureInPicture
+            // disableRemotePlayback so AirPlay/cast targets don't
+            // think this is castable content.
+            disableRemotePlayback
+            // metadata-only preload: "auto" on mobile burns 5-10 MB
+            // of cellular data per video; "metadata" pulls just the
+            // first frame for the poster, then play() streams the
+            // rest. The useEffect above calls play() explicitly so
+            // we don't lose the autoplay path.
+            preload="metadata"
             className="absolute inset-0 w-full h-full object-cover"
           />
         )}

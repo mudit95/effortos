@@ -8,14 +8,25 @@
 import type { NudgeType, CoachingIntensity, BotPersona } from '@/types';
 import { todayKeyInTz, dateKeyInTz } from '@/lib/user-date';
 import { resolvePersona } from '@/lib/persona-tone';
+import { getOrCreateDailyPlan, MORNING_KICKOFF_SLOTS } from '@/lib/nudge-bandit';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SupabaseClient = any;
 
 // ── Nudge schedule: which nudges fire at which hours ──
 // The cron runs every hour, so we match against the user's local hour.
-const SCHEDULED_NUDGES: Record<string, { hour: number; intensities: CoachingIntensity[] }> = {
-  morning_kickoff:      { hour: 8,  intensities: ['light', 'balanced', 'intense'] },
+//
+// `morning_kickoff` has a special `bandit: true` flag — its target hour
+// is picked per-user-per-day by the Beta-Bernoulli bandit in
+// lib/nudge-bandit.ts, not the static `hour` field. The static field
+// stays as a sane fallback in case the bandit lookup fails (we still
+// know we should send SOME morning nudge to opted-in users). All
+// other nudges keep their fixed hours.
+const SCHEDULED_NUDGES: Record<
+  string,
+  { hour: number; intensities: CoachingIntensity[]; bandit?: boolean }
+> = {
+  morning_kickoff:      { hour: 8,  intensities: ['light', 'balanced', 'intense'], bandit: true },
   task_planning_prompt: { hour: 9,  intensities: ['balanced', 'intense'] },
   midday_checkin:       { hour: 13, intensities: ['balanced', 'intense'] },
   streak_protection:    { hour: 19, intensities: ['light', 'balanced', 'intense'] },
@@ -163,7 +174,30 @@ export async function evaluateNudges(
 
   // 3. Scheduled nudges by hour
   for (const [nudgeType, config] of Object.entries(SCHEDULED_NUDGES)) {
-    if (localHour !== config.hour) continue;
+    // Bandit-driven nudges resolve their hour per-user-per-day.
+    // Non-bandit nudges keep the static fixed hour.
+    let targetHour = config.hour;
+    if (config.bandit) {
+      try {
+        const plan = await getOrCreateDailyPlan(
+          supabase,
+          user.id,
+          nudgeType,
+          // Currently only morning_kickoff is bandit-driven; expand
+          // here when we enable additional nudges.
+          MORNING_KICKOFF_SLOTS,
+          todayKey,
+        );
+        const parsed = parseInt(plan.slot, 10);
+        if (Number.isFinite(parsed)) targetHour = parsed;
+      } catch (e) {
+        // Bandit lookup failed — fall back to the static hour. Worst
+        // case the user gets the legacy 8am ping for the day; the
+        // outcome backfill will still record the result for learning.
+        console.error('[coach-engine] bandit lookup failed, using static hour:', e);
+      }
+    }
+    if (localHour !== targetHour) continue;
     if (!config.intensities.includes(user.coaching_intensity)) continue;
 
     // Special conditions per nudge type

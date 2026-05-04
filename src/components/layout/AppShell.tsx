@@ -10,6 +10,8 @@ import { Dashboard } from '@/components/dashboard/Dashboard';
 import { FocusMode } from '@/components/timer/FocusMode';
 import { PiPTimerOverlay } from '@/components/timer/PiPTimerOverlay';
 import { TimerEngine } from '@/components/timer/TimerEngine';
+import { CommandPalette } from '@/components/layout/CommandPalette';
+import { useTimerLifecycle } from '@/hooks/useTimerLifecycle';
 import { PWAInstallPrompt } from '@/components/pwa/PWAInstallPrompt';
 import { ToastContainer } from '@/components/ui/toast';
 import { ConnectionBanner } from '@/components/layout/ConnectionBanner';
@@ -40,6 +42,16 @@ export function AppShell() {
 
   // Subscribe to Supabase Realtime for cross-device sync
   useRealtimeSync();
+
+  // Cross-device timer lifecycle:
+  //   - Desktop with PiP support: navigating away with a running
+  //     session in focus mode auto-opens PiP so the timer follows
+  //     the user; auto-closes on return.
+  //   - Mobile (or desktop without PiP): auto-pauses on tab hide,
+  //     auto-resumes on return if the user is back in focus mode.
+  //   - All platforms: resumes a suspended AudioContext on visible.
+  // See src/hooks/useTimerLifecycle.ts for the full design.
+  useTimerLifecycle();
 
   // Stash any ?ref=CODE landing-page referral code so completeOnboarding
   // (or a future paywall step) can auto-apply it. We strip it from the
@@ -190,6 +202,11 @@ export function AppShell() {
           store, and drives the live tab title. Mounted once here so every
           consumer of useTimer() shares one engine instead of spawning four. */}
       <TimerEngine />
+
+      {/* Cmd+K command palette — universal jump/search. Mounted at AppShell
+          level so the keyboard shortcut works on any view. Self-managed
+          open/close state; renders nothing until summoned. */}
+      <CommandPalette />
 
       {/* PiP overlay — renders timer into floating PiP window when active */}
       <PiPTimerOverlay />

@@ -25,8 +25,10 @@ on:
     - cron: '0 * * * *'
     # Watchdog (offset 15min so it sees the just-finished hourly runs)
     - cron: '15 * * * *'
+    # Bandit outcome backfill — every 5 minutes
+    - cron: '*/5 * * * *'
     # Daily crons
-    - cron: '0 3 * * *'    # pacts-cleanup
+    - cron: '0 3 * * *'    # pacts-cleanup + update-nudge-priors
     - cron: '0 4 * * *'    # retention-sweep
     - cron: '30 4 * * *'   # purge-deleted-accounts
     - cron: '0 5 * * *'    # replenish-freeze-tokens
@@ -56,6 +58,8 @@ on:
           - re-engagement
           - pact-activity
           - trial-ending
+          - record-nudge-outcomes
+          - update-nudge-priors
 
 # Don't queue overlapping runs — if a previous tick is still in flight
 # we'd rather skip than pile up.
@@ -128,16 +132,41 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           SITE_URL:    ${{ secrets.SITE_URL }}
 
-  pacts-cleanup:
-    name: Pacts cleanup (daily 03:00 UTC)
-    if: github.event.schedule == '0 3 * * *'
+  record-nudge-outcomes:
+    name: Record nudge outcomes (every 5 min)
+    if: github.event.schedule == '*/5 * * * *'
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - run: |
           curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/cron/record-nudge-outcomes"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL:    ${{ secrets.SITE_URL }}
+
+  pacts-cleanup:
+    name: Pacts cleanup + update nudge priors (daily 03:00 UTC)
+    if: github.event.schedule == '0 3 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Hit pacts-cleanup
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
             "$SITE_URL/api/cron/pacts-cleanup"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL:    ${{ secrets.SITE_URL }}
+      - name: Hit update-nudge-priors
+        # Piggy-backs on the daily 03:00 slot — the prior rebuild is
+        # idempotent and cheap, doesn't need its own cadence.
+        run: |
+          curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SITE_URL/api/cron/update-nudge-priors"
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           SITE_URL:    ${{ secrets.SITE_URL }}

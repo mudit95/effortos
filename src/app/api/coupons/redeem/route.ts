@@ -198,6 +198,43 @@ export async function POST(req: Request) {
           error: kickbackErr.message,
         });
         // Soft-fail — redeemer still gets value.
+      } else {
+        // Kickback landed. Fire the referral-success email to the
+        // referrer. Best-effort + fully decoupled — the email failing
+        // never blocks the user-facing redemption response. Lookups
+        // are scoped to public.profiles which RLS allows the service
+        // role to read; no extra permission gymnastics.
+        try {
+          const [referrerProfile, redeemerProfile] = await Promise.all([
+            service
+              .from('profiles')
+              .select('email, name')
+              .eq('id', couponRow.referrer_user_id)
+              .maybeSingle(),
+            service
+              .from('profiles')
+              .select('name')
+              .eq('id', user.id)
+              .maybeSingle(),
+          ]);
+          const referrerEmail = referrerProfile.data?.email as string | undefined;
+          if (referrerEmail) {
+            const { sendReferralSuccessEmail } = await import('@/lib/emails/referral-success');
+            // Don't await the email — it's async I/O that doesn't
+            // need to gate the response. void + .catch logs failures
+            // without leaking unhandled rejections.
+            void sendReferralSuccessEmail({
+              toEmail: referrerEmail,
+              referrerName: (referrerProfile.data?.name as string | undefined) || 'there',
+              friendName: (redeemerProfile.data?.name as string | undefined) || null,
+              monthsCredited: kickbackMonths,
+            }).catch((emailErr) => {
+              console.error('[coupons/redeem] referral email failed:', emailErr);
+            });
+          }
+        } catch (lookupErr) {
+          console.error('[coupons/redeem] referrer lookup failed:', lookupErr);
+        }
       }
     }
   }
