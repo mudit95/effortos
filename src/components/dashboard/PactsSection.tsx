@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/EmptyState';
 import {
   Users, Plus, Copy, Check, UserMinus,
   Flame, Calendar, Loader2, X,
@@ -330,10 +331,12 @@ export function PactsSection() {
 
       {/* Empty state */}
       {!loading && pacts.length === 0 && !showInvite && (
-        <div className="text-center py-6">
-          <Users className="w-8 h-8 text-white/10 mx-auto mb-2" />
-          <p className="text-xs text-white/25">No pacts yet. Invite a friend to stay accountable together.</p>
-        </div>
+        <EmptyState
+          icon={Users}
+          title="No pacts yet"
+          body="Invite a friend to a focus pact — you'll see each other's daily progress and keep each other honest."
+          action={{ label: 'Invite a friend', onClick: () => setShowInvite(true) }}
+        />
       )}
     </div>
   );

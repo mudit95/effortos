@@ -12,8 +12,14 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = 'default', size = 'md', ...props }, ref) => {
     const baseStyles = 'inline-flex items-center justify-center rounded-xl font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0F14] disabled:pointer-events-none disabled:opacity-50';
 
+    // Default primary aligned to what's actually used across the app
+    // (15+ bespoke buttons in /share, /unsubscribe, FirstSessionRitual,
+    // ConsentBanner, AIPlanWizard, etc. all settled on cyan-500 with
+    // dark text — that's the de facto on-brand primary). Was previously
+    // cyan-600 + white text, which only existed on the primitive and
+    // nowhere in actual production UI.
     const variants = {
-      default: 'bg-cyan-600 text-white hover:bg-cyan-500 active:bg-cyan-700 shadow-lg shadow-cyan-900/20',
+      default: 'bg-cyan-500 text-[#0B0F14] hover:bg-cyan-400 active:bg-cyan-600 shadow-lg shadow-cyan-500/15 font-semibold',
       secondary: 'bg-white/10 text-white hover:bg-white/15 active:bg-white/20 border border-white/10',
       outline: 'border border-white/20 text-white/80 hover:bg-white/5 hover:text-white',
       ghost: 'text-white/60 hover:text-white hover:bg-white/5',
