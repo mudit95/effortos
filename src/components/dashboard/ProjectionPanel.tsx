@@ -33,7 +33,7 @@ export function ProjectionPanel({ goal, stats, className = '' }: ProjectionPanel
   const statusColors = {
     ahead: 'text-green-400 bg-green-500/10',
     on_track: 'text-cyan-400 bg-cyan-500/10',
-    adjusting: 'text-yellow-400 bg-yellow-500/10',
+    adjusting: 'text-amber-400 bg-amber-500/10',
     behind: 'text-red-400 bg-red-500/10',
   };
 

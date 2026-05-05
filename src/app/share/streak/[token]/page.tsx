@@ -27,6 +27,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { Flame, Clock, Trophy, Sparkles } from 'lucide-react';
 import { resolveStreakShareToken, formatJoinedMonth } from '@/lib/share-streak';
+import { buttonClasses } from '@/components/ui/button';
 
 // Force dynamic rendering — token revocation must take effect on the
 // next request, not after edge cache eventually expires. Streaks also
@@ -141,7 +142,7 @@ export default async function StreakSharePage({ params }: PageProps) {
           </p>
           <Link
             href="/?utm_source=streak_share&utm_medium=referral"
-            className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-[#0B0F14] font-semibold transition-colors"
+            className={buttonClasses({ size: 'lg', className: 'gap-2' })}
           >
             Try it free
             <span aria-hidden="true">→</span>
@@ -202,10 +203,7 @@ function RevokedView() {
           The owner of this streak is no longer sharing publicly. You can still build your own
           streak with EffortOS.
         </p>
-        <Link
-          href="/"
-          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-[#0B0F14] font-semibold transition-colors"
-        >
+        <Link href="/" className={buttonClasses({ className: 'gap-2' })}>
           Try EffortOS
         </Link>
       </div>

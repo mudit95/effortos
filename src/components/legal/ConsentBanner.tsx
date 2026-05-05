@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import { Button } from '@/components/ui/button';
 
 /**
  * First-visit cookie / data-processing consent banner.
@@ -140,20 +141,23 @@ export function ConsentBanner() {
         </Link>
       </p>
       <div className="mt-3 flex flex-col sm:flex-row gap-2">
-        <button
+        <Button
+          size="sm"
           onClick={() => persist({ analytics: true, error_tracking: true, marketing: false })}
           disabled={submitting}
-          className="flex-1 bg-cyan-500 text-slate-900 text-xs font-semibold px-3 py-2 rounded-lg hover:bg-cyan-400 transition-colors disabled:opacity-50"
+          className="flex-1"
         >
           Accept
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
           onClick={() => persist({ analytics: false, error_tracking: false, marketing: false })}
           disabled={submitting}
-          className="flex-1 border border-white/10 text-xs font-medium text-white/70 px-3 py-2 rounded-lg hover:bg-white/[0.04] hover:text-white/90 transition-colors disabled:opacity-50"
+          className="flex-1"
         >
           Reject non-essential
-        </button>
+        </Button>
       </div>
     </div>
   );

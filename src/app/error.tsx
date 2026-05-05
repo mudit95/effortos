@@ -2,6 +2,7 @@
 
 import React, { useEffect } from 'react';
 import * as Sentry from '@sentry/nextjs';
+import { Button } from '@/components/ui/button';
 
 export default function Error({
   error,
@@ -27,22 +28,17 @@ export default function Error({
         {error.message || 'An unexpected error occurred.'}
       </p>
       <div className="flex gap-3">
-        <button
-          onClick={reset}
-          className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-sm"
-        >
-          Try again
-        </button>
-        <button
+        <Button onClick={reset}>Try again</Button>
+        <Button
+          variant="secondary"
           onClick={() => {
             // Clear all state and reload
             try { localStorage.clear(); } catch {}
             window.location.href = '/';
           }}
-          className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm"
         >
           Reset & Reload
-        </button>
+        </Button>
       </div>
     </div>
   );

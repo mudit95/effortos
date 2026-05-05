@@ -84,7 +84,7 @@ export function GoalSelector() {
                 <p className="text-[9px] text-white/25">
                   {goal.sessions_completed}/{goal.estimated_sessions_current}
                   {goal.status === 'paused' && (
-                    <span className="ml-1 text-yellow-500/60">paused</span>
+                    <span className="ml-1 text-amber-500/60">paused</span>
                   )}
                 </p>
               </div>

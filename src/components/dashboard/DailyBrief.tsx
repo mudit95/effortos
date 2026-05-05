@@ -205,7 +205,7 @@ export function DailyBrief() {
             {/* Incomplete tasks */}
             {incompleteTodayCount > 0 && (
               <div className="flex items-center gap-1.5 text-xs">
-                <AlertCircle className="w-3.5 h-3.5 text-yellow-400/70" />
+                <AlertCircle className="w-3.5 h-3.5 text-amber-400/70" />
                 <span className="text-white/70">
                   <strong className="text-white/90">{incompleteTodayCount}</strong> task{incompleteTodayCount !== 1 ? 's' : ''} pending today
                 </span>

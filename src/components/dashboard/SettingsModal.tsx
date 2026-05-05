@@ -656,7 +656,7 @@ export function SettingsModal() {
                   if (subscription.status === 'cancelled') {
                     return (
                       <div className="space-y-2">
-                        <p className="text-xs text-yellow-400/70">Subscription cancelled</p>
+                        <p className="text-xs text-amber-400/70">Subscription cancelled</p>
                         {subscription.current_period_end && (
                           <p className="text-[11px] text-white/25">
                             Access until: {new Date(subscription.current_period_end).toLocaleDateString()}

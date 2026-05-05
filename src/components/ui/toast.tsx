@@ -12,7 +12,7 @@ export function ToastContainer() {
   const icons = {
     success: <CheckCircle2 className="w-4 h-4 text-green-400 flex-shrink-0" />,
     info: <Info className="w-4 h-4 text-cyan-400 flex-shrink-0" />,
-    warning: <AlertTriangle className="w-4 h-4 text-yellow-400 flex-shrink-0" />,
+    warning: <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />,
     error: <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />,
   };
 

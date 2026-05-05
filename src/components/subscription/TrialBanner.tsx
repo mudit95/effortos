@@ -38,7 +38,7 @@ export function TrialBanner() {
       onClick={() => setShowPaywall(true)}
       className={`w-full flex items-center justify-center gap-2 px-4 py-2 text-xs font-medium transition-colors cursor-pointer ${
         trialInfo.isUrgent
-          ? 'bg-yellow-500/10 text-yellow-400/80 hover:bg-yellow-500/15'
+          ? 'bg-amber-500/10 text-amber-400/80 hover:bg-amber-500/15'
           : 'bg-cyan-500/[0.06] text-cyan-400/60 hover:bg-cyan-500/10'
       }`}
     >

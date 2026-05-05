@@ -12,6 +12,7 @@
  */
 
 import Link from 'next/link';
+import { buttonClasses } from '@/components/ui/button';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,10 +41,7 @@ function StatusCard({
         {body}
       </div>
       <div className="mt-10 flex gap-3">
-        <Link
-          href="/settings"
-          className="inline-block bg-cyan-500 text-slate-900 text-sm font-semibold px-5 py-2.5 rounded-lg hover:bg-cyan-400 transition"
-        >
+        <Link href="/settings" className={buttonClasses()}>
           Manage email preferences
         </Link>
         <Link

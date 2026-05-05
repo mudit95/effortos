@@ -507,10 +507,10 @@ function LongTermView({
       {activeGoal.confidence_score < 0.5 && (
         <motion.div
           {...fadeUp(0.25)}
-          className="mt-4 flex items-center gap-2 px-4 py-2.5 bg-yellow-500/5 border border-yellow-500/10 rounded-xl"
+          className="mt-4 flex items-center gap-2 px-4 py-2.5 bg-amber-500/5 border border-amber-500/10 rounded-xl"
         >
-          <Shield className="w-4 h-4 text-yellow-400 flex-shrink-0" />
-          <p className="text-xs text-yellow-400/70">
+          <Shield className="w-4 h-4 text-amber-400 flex-shrink-0" />
+          <p className="text-xs text-amber-400/70">
             This estimate has low confidence ({Math.round(activeGoal.confidence_score * 100)}%). It will improve as you complete more sessions.
           </p>
         </motion.div>

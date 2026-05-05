@@ -8,7 +8,7 @@ import { BarChart3, TrendingUp, TrendingDown, Minus, X, Loader2, Sparkles } from
 const momentumConfig = {
   rising: { icon: TrendingUp, color: 'text-green-400', bg: 'bg-green-500/10', label: 'Momentum rising' },
   steady: { icon: Minus, color: 'text-blue-400', bg: 'bg-blue-500/10', label: 'Steady pace' },
-  declining: { icon: TrendingDown, color: 'text-yellow-400', bg: 'bg-yellow-500/10', label: 'Needs attention' },
+  declining: { icon: TrendingDown, color: 'text-amber-400', bg: 'bg-amber-500/10', label: 'Needs attention' },
 };
 
 export function CoachWeeklyCard() {

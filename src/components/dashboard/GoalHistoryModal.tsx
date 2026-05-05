@@ -153,7 +153,7 @@ function GoalCard({
               </span>
               {daysRemaining !== null && (
                 <span className={`flex items-center gap-1 ${
-                  daysRemaining < 0 ? 'text-red-400/70' : daysRemaining < 7 ? 'text-yellow-400/70' : 'text-white/35'
+                  daysRemaining < 0 ? 'text-red-400/70' : daysRemaining < 7 ? 'text-amber-400/70' : 'text-white/35'
                 }`}>
                   <Flame className="w-3 h-3" />
                   {daysRemaining > 0 ? `${daysRemaining}d left` : 'Overdue'}
@@ -262,7 +262,7 @@ function GoalCard({
               )}
 
               {goal.paused_at && goal.status === 'paused' && (
-                <p className="text-[11px] text-yellow-400/50 mb-3 flex items-center gap-1">
+                <p className="text-[11px] text-amber-400/50 mb-3 flex items-center gap-1">
                   <Pause className="w-3 h-3" />
                   Paused on {formatDate(goal.paused_at)}
                 </p>
@@ -277,7 +277,7 @@ function GoalCard({
                   </Button>
                 )}
                 {goal.status === 'active' && (
-                  <Button variant="ghost" size="sm" onClick={onPause} className="gap-1 text-xs h-7 text-yellow-400/60 hover:text-yellow-400">
+                  <Button variant="ghost" size="sm" onClick={onPause} className="gap-1 text-xs h-7 text-amber-400/60 hover:text-amber-400">
                     <Pause className="w-3 h-3" />
                     Pause
                   </Button>
@@ -534,7 +534,7 @@ export function GoalHistoryModal() {
                     size="sm"
                     onClick={handleBulkPause}
                     disabled={!filteredGoals.some(g => selectedIds.has(g.id) && g.status === 'active')}
-                    className="gap-1 text-xs h-8 text-yellow-400/60 hover:text-yellow-400 disabled:opacity-40"
+                    className="gap-1 text-xs h-8 text-amber-400/60 hover:text-amber-400 disabled:opacity-40"
                   >
                     <Pause className="w-3 h-3" />
                     Pause Selected

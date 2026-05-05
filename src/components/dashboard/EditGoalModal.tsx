@@ -94,14 +94,14 @@ export function EditGoalModal() {
               {!showPauseConfirm ? (
                 <Button
                   variant="outline"
-                  className="w-full text-yellow-400 border-yellow-400/20 hover:bg-yellow-400/5"
+                  className="w-full text-amber-400 border-amber-400/20 hover:bg-amber-400/5"
                   onClick={() => setShowPauseConfirm(true)}
                 >
                   Pause Goal
                 </Button>
               ) : (
-                <div className="p-3 rounded-xl border border-yellow-400/20 bg-yellow-400/5 space-y-2">
-                  <p className="text-xs text-yellow-400/70 flex items-center gap-1.5">
+                <div className="p-3 rounded-xl border border-amber-400/20 bg-amber-400/5 space-y-2">
+                  <p className="text-xs text-amber-400/70 flex items-center gap-1.5">
                     <AlertTriangle className="w-3 h-3" />
                     Your progress is saved. You can resume anytime.
                   </p>
@@ -112,7 +112,7 @@ export function EditGoalModal() {
                     <Button
                       variant="outline"
                       size="sm"
-                      className="flex-1 text-xs text-yellow-400 border-yellow-400/20"
+                      className="flex-1 text-xs text-amber-400 border-amber-400/20"
                       onClick={() => {
                         pauseGoal(activeGoal.id);
                         setShowEditGoal(false);

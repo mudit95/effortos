@@ -268,7 +268,7 @@ function ChooseStep({
           <Button
             onClick={() => onAdvance(null, quickTitle)}
             disabled={!quickTitle.trim()}
-            className="bg-cyan-500 hover:bg-cyan-400 text-[#0B0F14] disabled:opacity-30 px-5"
+            className="px-5"
           >
             Pick
           </Button>
@@ -336,10 +336,7 @@ function FrameStep({
         >
           ← Pick a different task
         </button>
-        <Button
-          onClick={onLaunch}
-          className="bg-cyan-500 hover:bg-cyan-400 text-[#0B0F14] font-semibold px-7 py-3"
-        >
+        <Button onClick={onLaunch} size="lg" className="px-7">
           Start your first focus →
         </Button>
       </div>

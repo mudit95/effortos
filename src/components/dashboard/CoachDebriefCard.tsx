@@ -14,7 +14,7 @@ const patternIcons = {
 const patternColors = {
   positive: 'text-green-400',
   neutral: 'text-blue-400',
-  attention: 'text-yellow-400',
+  attention: 'text-amber-400',
 };
 
 export function CoachDebriefCard() {

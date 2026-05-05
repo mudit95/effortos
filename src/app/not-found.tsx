@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { buttonClasses } from '@/components/ui/button';
 
 /**
  * Catch-all 404 page. Kept deliberately minimal — no client-side JS and no
@@ -23,16 +24,10 @@ export default function NotFound() {
           Let&apos;s get you back to something useful.
         </p>
         <div className="flex gap-3 justify-center">
-          <Link
-            href="/"
-            className="inline-flex items-center justify-center h-11 px-6 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium transition-colors"
-          >
+          <Link href="/" className={buttonClasses()}>
             Go to dashboard
           </Link>
-          <Link
-            href="/legal/privacy"
-            className="inline-flex items-center justify-center h-11 px-6 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-white/80 text-sm font-medium transition-colors"
-          >
+          <Link href="/legal/privacy" className={buttonClasses({ variant: 'secondary' })}>
             Privacy
           </Link>
         </div>
