@@ -30,14 +30,26 @@ interface NudgeRecipient {
   phone: string;
 }
 
+type SkipReason = 'not_linked' | 'no_phone' | 'paused' | 'no_profile' | 'query_error';
+
+interface ResolveResult {
+  recipient: NudgeRecipient | null;
+  skipReason?: SkipReason;
+}
+
 /**
  * Resolve the WhatsApp recipient for a user, or return null if they shouldn't
  * receive a nudge right now (not linked, no phone on file, or coaching paused).
  *
  * Coaching pause comes from the in-chat "shh" command — see
  * src/app/api/whatsapp/webhook/route.ts handlePauseCoaching.
+ *
+ * Returns the skipReason alongside null so the caller can produce per-reason
+ * counters in cron logs. That's what makes "WhatsApp reports aren't working"
+ * diagnosable from server logs alone — without the breakdown, every skip
+ * looks the same.
  */
-async function resolveRecipient(userId: string): Promise<NudgeRecipient | null> {
+async function resolveRecipient(userId: string): Promise<ResolveResult> {
   try {
     const supabase = getAdminSupabase();
     const { data: profile, error } = await supabase
@@ -46,19 +58,19 @@ async function resolveRecipient(userId: string): Promise<NudgeRecipient | null> 
       .eq('id', userId)
       .maybeSingle();
 
-    if (error || !profile) return null;
-    if (!profile.whatsapp_linked) return null;
-    if (!profile.phone_number) return null;
+    if (error || !profile) return { recipient: null, skipReason: error ? 'query_error' : 'no_profile' };
+    if (!profile.whatsapp_linked) return { recipient: null, skipReason: 'not_linked' };
+    if (!profile.phone_number) return { recipient: null, skipReason: 'no_phone' };
 
     if (profile.coaching_paused_until) {
       const pausedUntil = new Date(profile.coaching_paused_until).getTime();
-      if (pausedUntil > Date.now()) return null;
+      if (pausedUntil > Date.now()) return { recipient: null, skipReason: 'paused' };
     }
 
-    return { phone: profile.phone_number };
+    return { recipient: { phone: profile.phone_number } };
   } catch (err) {
     console.error('[whatsapp-nudge] resolveRecipient failed', { userId, err });
-    return null;
+    return { recipient: null, skipReason: 'query_error' };
   }
 }
 
@@ -276,20 +288,32 @@ const NUDGE_TYPE_TO_LOG: Record<NudgeType, 'morning_email_companion' | 'afternoo
   nightly: 'nightly_email_companion',
 };
 
+export type NudgeOutcome =
+  | { kind: 'sent' }
+  | { kind: 'skipped'; reason: SkipReason }
+  | { kind: 'send_failed' };
+
 /**
- * Send a WhatsApp nudge that mirrors the email we just sent. Returns true
- * if a message was actually delivered, false if skipped or failed (caller
- * should NOT treat false as fatal — the email already went out).
+ * Send a WhatsApp nudge that mirrors the email we just sent. Returns a
+ * structured outcome so the caller can break down failures by reason —
+ * "X users not linked, Y paused, Z send-failed". The previous boolean
+ * return collapsed all of those into a single counter, which made
+ * "WhatsApp reports aren't arriving" un-diagnosable from logs.
+ *
+ * Caller should NOT treat anything other than `sent` as fatal — the
+ * email already went out and WhatsApp is best-effort.
  */
 export async function sendCronNudge(opts: {
   userId: string;
   nudgeType: NudgeType;
   message: string;
-}): Promise<boolean> {
+}): Promise<NudgeOutcome> {
   const { userId, nudgeType, message } = opts;
 
-  const recipient = await resolveRecipient(userId);
-  if (!recipient) return false;
+  const { recipient, skipReason } = await resolveRecipient(userId);
+  if (!recipient) {
+    return { kind: 'skipped', reason: skipReason ?? 'no_profile' };
+  }
 
   try {
     const ok = await sendTextMessage(recipient.phone, message);
@@ -299,7 +323,7 @@ export async function sendCronNudge(opts: {
       message,
       delivered: ok,
     });
-    return ok;
+    return ok ? { kind: 'sent' } : { kind: 'send_failed' };
   } catch (err) {
     console.error('[whatsapp-nudge] send failed', { userId, nudgeType, err });
     await logNudge({
@@ -308,6 +332,6 @@ export async function sendCronNudge(opts: {
       message,
       delivered: false,
     });
-    return false;
+    return { kind: 'send_failed' };
   }
 }

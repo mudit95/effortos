@@ -27,6 +27,8 @@ export async function GET(request: Request) {
 
     let sent = 0;
     let waSent = 0;
+    let waSendFailed = 0;
+    const waSkipReasons: Record<string, number> = {};
     let skipped = 0;
     const errors: string[] = [];
 
@@ -85,8 +87,8 @@ export async function GET(request: Request) {
         dayOfWeek,
         persona: user.bot_persona,
       });
-      const waOk = await sendCronNudge({ userId: user.user_id, nudgeType: 'morning', message: waMessage });
-      return { kind: 'sent' as const, waOk };
+      const waOutcome = await sendCronNudge({ userId: user.user_id, nudgeType: 'morning', message: waMessage });
+      return { kind: 'sent' as const, waOutcome };
     });
 
     for (let i = 0; i < results.length; i++) {
@@ -109,12 +111,32 @@ export async function GET(request: Request) {
         skipped++;
       } else {
         sent++;
-        if (r.value.waOk) waSent++;
+        const wa = r.value.waOutcome;
+        if (wa.kind === 'sent') waSent++;
+        else if (wa.kind === 'send_failed') waSendFailed++;
+        else waSkipReasons[wa.reason] = (waSkipReasons[wa.reason] ?? 0) + 1;
       }
     }
 
-    await recordCronRun('morning-email', 'success', { sent, wa_sent: waSent, skipped_dedup: skipped, total: users.length });
-    return NextResponse.json({ sent, wa_sent: waSent, skipped_dedup: skipped, total: users.length, errors: errors.length > 0 ? errors : undefined });
+    // If we tried to send and EVERY attempt failed, record this as a
+    // failure so the watchdog actually flags it. The previous code wrote
+    // 'success' regardless of error count, which is what masked the
+    // EMAIL_FROM-misconfigured / Resend-rejected failure mode that
+    // produced "no emails arrive but cron looks healthy".
+    const attempted = users.length - skipped;
+    const allFailed = attempted > 0 && sent === 0;
+    const status: 'success' | 'failure' = allFailed ? 'failure' : 'success';
+    await recordCronRun('morning-email', status, {
+      sent,
+      wa_sent: waSent,
+      wa_send_failed: waSendFailed,
+      wa_skip_reasons: waSkipReasons,
+      skipped_dedup: skipped,
+      total: users.length,
+      errors_count: errors.length,
+      first_error: errors[0],
+    });
+    return NextResponse.json({ sent, wa_sent: waSent, wa_send_failed: waSendFailed, wa_skip_reasons: waSkipReasons, skipped_dedup: skipped, total: users.length, errors: errors.length > 0 ? errors : undefined });
   } catch (err) {
     console.error('[cron/morning-email] Fatal:', err);
     await recordCronRun('morning-email', 'failure', { error: err instanceof Error ? err.message : String(err) });

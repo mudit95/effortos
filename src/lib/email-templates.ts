@@ -94,10 +94,15 @@ export function morningEmail(opts: {
 
   body += `<a href="${APP_URL}/dashboard" class="btn">Plan your day &rarr;</a>`;
 
+  // Subject lines render as PLAIN TEXT in nearly every email client —
+  // HTML entities like `you're` become literal `you&rsquo;re` in
+  // Gmail / Outlook / iOS Mail subject previews. Use real Unicode
+  // apostrophes and dashes throughout. Same rule applies in every
+  // subject line below.
   return {
     subject: hasYesterdayTasks
-      ? `${completedCount}/${yesterdayTasks.length} done yesterday — plan today's focus`
-      : `Good morning ${firstName} — set your focus for today`,
+      ? `${completedCount}/${yesterdayTasks.length} done yesterday — plan today`
+      : `Good morning, ${firstName}. Pick today's first focus block.`,
     html: emailLayout(body, { preheader: hasYesterdayTasks ? `${completedCount} of ${yesterdayTasks.length} tasks completed yesterday` : 'Time to plan your day' }),
   };
 }
@@ -142,8 +147,8 @@ export function afternoonEmail(opts: {
 
   return {
     subject: sessionsToday > 0
-      ? `${sessionsToday} session${sessionsToday > 1 ? 's' : ''} done — ${remaining.length} task${remaining.length !== 1 ? 's' : ''} left`
-      : `Afternoon nudge — still time to get a session in`,
+      ? `${sessionsToday} done so far — ${remaining.length} ${remaining.length === 1 ? 'task' : 'tasks'} to close`
+      : `${firstName}, the afternoon block is open`,
     html: emailLayout(body, { preheader: `${completedCount} of ${todayTasks.length} tasks done so far` }),
   };
 }
@@ -216,8 +221,8 @@ export function nightlyEmail(opts: {
 
   return {
     subject: daySummary.total_sessions > 0
-      ? `Day done: ${daySummary.total_sessions} sessions, ${daySummary.tasks_completed}/${daySummary.tasks_total} tasks ✓`
-      : `Day wrap-up — plan tomorrow's focus now`,
+      ? `${daySummary.total_sessions} ${daySummary.total_sessions === 1 ? 'session' : 'sessions'} today · plan tomorrow now`
+      : `Day's done — line up tomorrow's first task`,
     html: emailLayout(body, { preheader: `${daySummary.total_focus_minutes} min focused, ${daySummary.tasks_completed} tasks complete` }),
   };
 }
@@ -248,7 +253,7 @@ export function welcomeEmail(opts: { userName: string }): { subject: string; htm
   body += `<p style="margin-top:24px;color:#64748b;font-size:12px;">Replies land in my inbox — hit reply if anything&rsquo;s broken, confusing, or missing. &mdash; Mudit</p>`;
 
   return {
-    subject: `Welcome to EffortOS, ${firstName}`,
+    subject: `Welcome, ${firstName} — your first focus block is one tap away`,
     html: emailLayout(body, { preheader: 'The 10-minute getting-started on knowing where your hours actually go.' }),
   };
 }

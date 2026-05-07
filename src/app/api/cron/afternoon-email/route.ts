@@ -27,6 +27,8 @@ export async function GET(request: Request) {
 
     let sent = 0;
     let waSent = 0;
+    let waSendFailed = 0;
+    const waSkipReasons: Record<string, number> = {};
     let skipped = 0;
     const errors: string[] = [];
 
@@ -72,8 +74,8 @@ export async function GET(request: Request) {
         focusMinutesToday: daySummary.total_focus_minutes,
         persona: user.bot_persona,
       });
-      const waOk = await sendCronNudge({ userId: user.user_id, nudgeType: 'afternoon', message: waMessage });
-      return { kind: 'sent' as const, waOk };
+      const waOutcome = await sendCronNudge({ userId: user.user_id, nudgeType: 'afternoon', message: waMessage });
+      return { kind: 'sent' as const, waOutcome };
     });
 
     for (let i = 0; i < results.length; i++) {
@@ -96,12 +98,30 @@ export async function GET(request: Request) {
         skipped++;
       } else {
         sent++;
-        if (r.value.waOk) waSent++;
+        const wa = r.value.waOutcome;
+        if (wa.kind === 'sent') waSent++;
+        else if (wa.kind === 'send_failed') waSendFailed++;
+        else waSkipReasons[wa.reason] = (waSkipReasons[wa.reason] ?? 0) + 1;
       }
     }
 
-    await recordCronRun('afternoon-email', 'success', { sent, wa_sent: waSent, skipped_dedup: skipped, total: users.length });
-    return NextResponse.json({ sent, wa_sent: waSent, skipped_dedup: skipped, total: users.length, errors: errors.length > 0 ? errors : undefined });
+    // Honest success/failure reporting — see morning-email for rationale.
+    // If every send attempt fails, record 'failure' so the watchdog flags
+    // it. Otherwise success with per-run error counts in details.
+    const attempted = users.length - skipped;
+    const allFailed = attempted > 0 && sent === 0;
+    const status: 'success' | 'failure' = allFailed ? 'failure' : 'success';
+    await recordCronRun('afternoon-email', status, {
+      sent,
+      wa_sent: waSent,
+      wa_send_failed: waSendFailed,
+      wa_skip_reasons: waSkipReasons,
+      skipped_dedup: skipped,
+      total: users.length,
+      errors_count: errors.length,
+      first_error: errors[0],
+    });
+    return NextResponse.json({ sent, wa_sent: waSent, wa_send_failed: waSendFailed, wa_skip_reasons: waSkipReasons, skipped_dedup: skipped, total: users.length, errors: errors.length > 0 ? errors : undefined });
   } catch (err) {
     console.error('[cron/afternoon-email] Fatal:', err);
     await recordCronRun('afternoon-email', 'failure', { error: err instanceof Error ? err.message : String(err) });

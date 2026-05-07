@@ -71,7 +71,8 @@ function reEngagementEmail(opts: { userName: string; daysQuiet: number }): { sub
   body += `<p><a href="${APP_URL}/dashboard" class="btn">Run a 25-minute session &rarr;</a></p>`;
   body += `<p style="margin-top:24px;color:#64748b;font-size:12px;">If you&rsquo;d rather not hear from me, the link below stops these emails right away. &mdash; Mudit</p>`;
   return {
-    subject: `EffortOS — still here when you&rsquo;re ready`,
+    // Real Unicode apostrophe — &rsquo; renders as literal HTML in subject lines
+    subject: `Still here whenever you're ready`,
     html: emailLayout(body, { preheader: `It's been ${days} days. One small thing today is enough.` }),
   };
 }
@@ -91,7 +92,7 @@ function welcomeBackEmail(opts: { userName: string; daysQuiet: number }): { subj
   body += `<p><a href="${APP_URL}/dashboard" class="btn">Start a quick 25 min &rarr;</a></p>`;
   body += `<p style="margin-top:24px;color:#64748b;font-size:12px;">No follow-up unless you ask for one. &mdash; Mudit</p>`;
   return {
-    subject: `Your seat&rsquo;s still warm at EffortOS`,
+    subject: `${firstName}, want to ease back in with one 25-minute block?`,
     html: emailLayout(body, { preheader: `Easing back in is one tap. No streak pressure.` }),
   };
 }

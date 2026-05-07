@@ -20,11 +20,14 @@ export const maxDuration = 30;
  *   - One email per watchdog run, listing every stale cron in a single
  *     digest. We deliberately don't send a separate email per cron —
  *     a 5-cron outage at 3am should produce ONE email, not five.
- *   - Idempotent at the run level: if a cron is still stale on the next
- *     watchdog tick, we DO email again. The minor inbox noise is the
- *     correct trade for "operator can ignore for an hour and the alert
- *     keeps reminding them." A "snooze for N hours" mechanism would be
- *     a follow-up if alert fatigue ever becomes a real problem.
+ *   - Per-cron debounce: if the SAME cron was reported stale within
+ *     the last ALERT_DEBOUNCE_HOURS, we drop it from this run's
+ *     digest. The previous behaviour ("email every hour while still
+ *     stale") generated ~168 alerts/week for a single broken cron and
+ *     was the source of "stale cron notification" inbox noise users
+ *     reported. Persistently-stale crons now generate ~2/day; genuine
+ *     new outages still alert immediately because there's no prior
+ *     watchdog row to debounce against.
  *
  * The alert recipient is OPS_ALERT_EMAIL (env), falling back to
  * EMAIL_REPLY_TO. If neither is set we log the alert to console only —
@@ -41,6 +44,11 @@ interface StaleEntry {
   ageMinutes: number | null;
   threshold: number;
 }
+
+/** How long to suppress repeat alerts about the same stale cron.
+ *  12 h means a persistently broken cron alerts ~2×/day instead of
+ *  ~24×/day. Tunable; this is the minimum gap that still feels alive. */
+const ALERT_DEBOUNCE_HOURS = 12;
 
 export async function GET(request: Request) {
   const authErr = verifyCronAuth(request);
@@ -112,15 +120,67 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: true, healthy: true, checked: CRON_CATALOG.length });
   }
 
+  // ── Per-cron debounce ─────────────────────────────────────────────
+  // Look at our own prior watchdog runs in the last ALERT_DEBOUNCE_HOURS
+  // and pull out which cron names we've already complained about. If a
+  // currently-stale cron appears in that set, drop it from THIS digest
+  // — we already alerted recently, no point re-sending. We still record
+  // the run with the full stale list so the accumulating audit trail
+  // is accurate; we just suppress the email.
+  const debounceCutoff = new Date(now - ALERT_DEBOUNCE_HOURS * 60 * 60 * 1000).toISOString();
+  const { data: priorAlerts } = await supabase
+    .from('cron_run_log')
+    .select('details, ran_at')
+    .eq('cron_name', 'watchdog')
+    .eq('status', 'success')
+    .gte('ran_at', debounceCutoff)
+    .order('ran_at', { ascending: false })
+    .limit(50);
+
+  const recentlyAlertedNames = new Set<string>();
+  for (const row of priorAlerts ?? []) {
+    const details = (row as { details?: { names?: unknown } }).details;
+    const priorNames = details?.names;
+    if (Array.isArray(priorNames)) {
+      for (const n of priorNames) {
+        if (typeof n === 'string') recentlyAlertedNames.add(n);
+      }
+    }
+  }
+
+  const freshStale = stale.filter((s) => !recentlyAlertedNames.has(s.name));
+
+  if (freshStale.length === 0) {
+    // Everything still-stale was already alerted within the debounce
+    // window. Record the run so the audit trail shows the watchdog
+    // ran healthily, but DO NOT include `names` in the result — only
+    // alert-sending runs should populate names, otherwise the debounce
+    // filter (which scans for prior names) would refresh itself every
+    // hour and never let the next alert through.
+    await recordCronRun('watchdog', 'success', {
+      stale_count: stale.length,
+      suppressed_count: stale.length,
+      reason: 'debounced',
+      suppressed_names: stale.map((s) => s.name),
+    });
+    return NextResponse.json({
+      ok: true,
+      healthy: false,
+      stale,
+      alertSent: false,
+      suppressed: 'debounced',
+    });
+  }
+
   // ── Compose + send the alert ─────────────────────────────────────
   const opsEmail = process.env.OPS_ALERT_EMAIL || REPLY_TO;
   if (!opsEmail) {
-    console.error('[watchdog] STALE CRONS but no OPS_ALERT_EMAIL/REPLY_TO configured:', stale);
-    await recordCronRun('watchdog', 'failure', { reason: 'no_recipient', stale_count: stale.length });
-    return NextResponse.json({ ok: false, stale, alertSent: false });
+    console.error('[watchdog] STALE CRONS but no OPS_ALERT_EMAIL/REPLY_TO configured:', freshStale);
+    await recordCronRun('watchdog', 'failure', { reason: 'no_recipient', stale_count: freshStale.length });
+    return NextResponse.json({ ok: false, stale: freshStale, alertSent: false });
   }
 
-  const rowsHtml = stale
+  const rowsHtml = freshStale
     .map((s) => {
       const ageStr = s.ageMinutes == null
         ? '<em>never recorded</em>'
@@ -135,8 +195,10 @@ export async function GET(request: Request) {
     })
     .join('');
 
-  let body = `<h1>Cron watchdog — ${stale.length} stale cron${stale.length === 1 ? '' : 's'}</h1>`;
-  body += `<p>The watchdog detected ${stale.length} cron job${stale.length === 1 ? '' : 's'} that haven&rsquo;t logged a successful run within their tolerance window.</p>`;
+  const suppressedCount = stale.length - freshStale.length;
+
+  let body = `<h1>Cron watchdog — ${freshStale.length} stale cron${freshStale.length === 1 ? '' : 's'}</h1>`;
+  body += `<p>The watchdog detected ${freshStale.length} cron job${freshStale.length === 1 ? '' : 's'} that haven't logged a successful run within their tolerance window.</p>`;
   body += `<table style="width:100%;margin:16px 0;border-collapse:collapse;">
     <thead><tr style="text-align:left;border-bottom:1px solid rgba(255,255,255,0.1);">
       <th style="padding:6px 12px 6px 0;font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.05em;">Cron</th>
@@ -145,22 +207,30 @@ export async function GET(request: Request) {
     </tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table>`;
-  body += `<p style="font-size:12px;color:#64748b;">First place to look: Vercel project → Functions → Cron tab. Then check the corresponding cron route&rsquo;s recent invocations for failures.</p>`;
-  body += `<p style="font-size:11px;color:#475569;">This alert repeats every hour while the cron remains stale.</p>`;
+  body += `<p style="font-size:12px;color:#64748b;">First place to look: Vercel project → Functions → Cron tab. Then check the corresponding cron route's recent invocations for failures.</p>`;
+  if (suppressedCount > 0) {
+    body += `<p style="font-size:11px;color:#475569;">${suppressedCount} other stale cron${suppressedCount === 1 ? '' : 's'} suppressed — already alerted within the last ${ALERT_DEBOUNCE_HOURS}h.</p>`;
+  }
+  body += `<p style="font-size:11px;color:#475569;">Repeat alerts for the same cron are debounced for ${ALERT_DEBOUNCE_HOURS}h to keep this inbox quiet.</p>`;
 
   try {
     await sendEmail({
       to: opsEmail,
-      subject: `[EffortOS] ${stale.length} stale cron${stale.length === 1 ? '' : 's'}`,
-      html: emailLayout(body, { preheader: `Stale: ${stale.map(s => s.name).join(', ').slice(0, 80)}` }),
+      subject: `[EffortOS] ${freshStale.length} stale cron${freshStale.length === 1 ? '' : 's'}`,
+      html: emailLayout(body, { preheader: `Stale: ${freshStale.map(s => s.name).join(', ').slice(0, 80)}` }),
       transactional: true,
       tags: [{ name: 'type', value: 'watchdog' }],
     });
-    await recordCronRun('watchdog', 'success', { stale_count: stale.length, names: stale.map(s => s.name) });
-    return NextResponse.json({ ok: true, healthy: false, stale, alertSent: true });
+    await recordCronRun('watchdog', 'success', {
+      stale_count: stale.length,
+      alerted_count: freshStale.length,
+      suppressed_count: suppressedCount,
+      names: freshStale.map((s) => s.name),
+    });
+    return NextResponse.json({ ok: true, healthy: false, stale: freshStale, alertSent: true });
   } catch (err) {
     console.error('[watchdog] alert send failed:', err);
-    await recordCronRun('watchdog', 'failure', { reason: 'send_failed', stale_count: stale.length });
-    return NextResponse.json({ ok: false, stale, alertSent: false }, { status: 500 });
+    await recordCronRun('watchdog', 'failure', { reason: 'send_failed', stale_count: freshStale.length });
+    return NextResponse.json({ ok: false, stale: freshStale, alertSent: false }, { status: 500 });
   }
 }

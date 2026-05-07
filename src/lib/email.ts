@@ -12,8 +12,26 @@ function getResend(): Resend {
   return _resend;
 }
 
-/** Verified sender — change once your domain is verified in Resend. */
-export const FROM_EMAIL = process.env.EMAIL_FROM || 'EffortOS <onboarding@resend.dev>';
+/**
+ * Verified sender. Set via Vercel env var EMAIL_FROM to a verified
+ * Resend domain — e.g. `EffortOS <hello@effortos.com>`.
+ *
+ * The fallback `EffortOS <hello@resend.dev>` is the default Resend
+ * test sender, used for local dev only. The previous fallback was
+ * `onboarding@resend.dev` which:
+ *   - Reads as a literal "onboarding" sales email in inboxes
+ *   - Is the address Resend uses for ITS own platform, so deliverability
+ *     gets worse as our volume grows because Gmail correlates the
+ *     sender domain with whatever else Resend's customers blast
+ *
+ * Once domain is verified in Resend dashboard:
+ *   1. Add SPF/DKIM/DMARC records to effortos.com DNS
+ *   2. Set EMAIL_FROM on Vercel (Production + Preview) to
+ *      `EffortOS <hello@effortos.com>` (or whichever verified mailbox)
+ *   3. Optionally split by message type via per-call `from` overrides
+ *      if you want trial-ending to come from billing@ etc.
+ */
+export const FROM_EMAIL = process.env.EMAIL_FROM || 'EffortOS <hello@resend.dev>';
 
 /**
  * Default reply-to. We funnel replies to a real inbox so users who actually hit
@@ -71,8 +89,36 @@ function unsubscribeHeaders(recipient: string) {
   };
 }
 
+/**
+ * Detect Resend's free test-sender domain. When sendEmail uses this and the
+ * recipient isn't the Resend account owner, every send returns 403 from
+ * Resend and the user-facing email never lands. We log this loudly so a
+ * misconfigured Vercel deploy doesn't silently swallow real users' nudges.
+ *
+ * The user only sees "no morning email arrived"; without this warning the
+ * server logs show a generic Resend error and you'd have to read Resend
+ * dashboards to find the cause.
+ */
+function isResendTestSender(from: string): boolean {
+  return /@resend\.dev[>"]?\s*$/i.test(from.trim());
+}
+
+let _testSenderWarned = false;
+function warnIfTestSender() {
+  if (_testSenderWarned) return;
+  if (!isResendTestSender(FROM_EMAIL)) return;
+  _testSenderWarned = true;
+  console.warn(
+    '[email] FROM_EMAIL is the Resend test sender (' + FROM_EMAIL + '). ' +
+    'Resend will REJECT sends to any address other than the account-owner email. ' +
+    'Set EMAIL_FROM on Vercel to a verified domain (e.g. EffortOS <hello@effortos.com>) ' +
+    'or scheduled emails will silently fail for every real user.',
+  );
+}
+
 export async function sendEmail(opts: SendEmailOpts) {
   const resend = getResend();
+  warnIfTestSender();
   // Single-recipient path. Per-address List-Unsubscribe headers and {{email}}
   // substitution rely on knowing exactly who the recipient is, so we collapse
   // string-or-string[] down to a single address. Callers with many recipients
@@ -99,7 +145,19 @@ export async function sendEmail(opts: SendEmailOpts) {
   });
 
   if (error) {
-    console.error('[email] Send failed:', error);
+    // Resend rejects the test sender → real-user combination with messages
+    // like "You can only send testing emails to your own account email".
+    // Surface that directly so the operator can fix EMAIL_FROM rather than
+    // chase per-cron failures.
+    if (isResendTestSender(FROM_EMAIL) && /testing|verified|domain/i.test(error.message ?? '')) {
+      console.error(
+        '[email] Resend rejected send because FROM_EMAIL is the test sender. ' +
+        'Set EMAIL_FROM on Vercel to a verified domain. Original Resend error:',
+        error,
+      );
+    } else {
+      console.error('[email] Send failed:', error);
+    }
     throw new Error(error.message);
   }
   return data;
