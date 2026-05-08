@@ -15,7 +15,7 @@ export async function GET() {
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('coaching_intensity, coaching_quiet_start, coaching_quiet_end, coaching_paused_until')
+      .select('coaching_intensity, coaching_quiet_start, coaching_quiet_end, coaching_paused_until, beast_mode_enabled')
       .eq('id', user.id)
       .single();
 
@@ -25,6 +25,7 @@ export async function GET() {
         coaching_quiet_start: 22,
         coaching_quiet_end: 7,
         coaching_paused_until: null,
+        beast_mode_enabled: false,
       });
     }
 
@@ -58,6 +59,32 @@ export async function POST(req: Request) {
     }
     if (typeof body.coaching_quiet_end === 'number' && body.coaching_quiet_end >= 0 && body.coaching_quiet_end <= 23) {
       update.coaching_quiet_end = body.coaching_quiet_end;
+    }
+
+    // Beast Mode is Pro-gated on the server side because the cron uses
+    // this column directly. We don't trust the client; we re-check the
+    // user's subscription state here before persisting `true`. (`false`
+    // is always allowed — letting a non-Pro user turn it OFF is fine.)
+    if (typeof body.beast_mode_enabled === 'boolean') {
+      if (body.beast_mode_enabled === false) {
+        update.beast_mode_enabled = false;
+      } else {
+        const { data: sub } = await supabase
+          .from('subscriptions')
+          .select('plan_tier, status')
+          .eq('user_id', user.id)
+          .eq('plan_tier', 'pro')
+          .in('status', ['trialing', 'active'])
+          .maybeSingle();
+        if (!sub) {
+          return NextResponse.json(
+            { error: 'Beast Mode requires Pro' },
+            { status: 403 },
+          );
+        }
+        update.beast_mode_enabled = true;
+        update.beast_mode_enabled_at = new Date().toISOString();
+      }
     }
 
     if (Object.keys(update).length === 0) {

@@ -1,11 +1,54 @@
 import { NextResponse } from 'next/server';
 import { verifyCronAuth } from '@/lib/cron-auth';
-import { getEligibleUsers, getUserTasks, getUserGoalSummary, getUserDaySummary, logEmail, countOpenOtherTodosForUser, wasEmailSentRecently } from '@/lib/cron-helpers';
+import {
+  getEligibleUsers,
+  getUserTasks,
+  getUserGoalSummary,
+  getUserDaySummary,
+  logEmail,
+  countOpenOtherTodosForUser,
+  wasEmailSentRecently,
+  getAdminSupabase,
+} from '@/lib/cron-helpers';
 import { nightlyEmail } from '@/lib/email-templates';
 import { sendEmail } from '@/lib/email';
 import { nightlyWhatsAppMessage, sendCronNudge } from '@/lib/whatsapp-nudge';
 import { concurrentMap } from '@/lib/concurrency';
 import { recordCronRun } from '@/lib/cron-run-log';
+
+/**
+ * Quick check: does the user have a non-empty journal for `todayLocal`,
+ * and at least one daily_task row for `tomorrowLocal`? Drives the
+ * proactive prompts in the nightly WhatsApp companion message.
+ */
+async function getNightlyContextChecks(
+  userId: string,
+  todayLocal: string,
+  tomorrowLocal: string,
+): Promise<{ journalMissing: boolean; tomorrowPlanMissing: boolean }> {
+  const supabase = getAdminSupabase();
+  const [journalRes, taskRes] = await Promise.all([
+    supabase
+      .from('journal_entries')
+      .select('content')
+      .eq('user_id', userId)
+      .eq('date', todayLocal)
+      .maybeSingle(),
+    supabase
+      .from('daily_tasks')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('date', tomorrowLocal),
+  ]);
+
+  // Fail open: if either query errors, treat the gap as NOT missing
+  // so we don't pester the user based on a flaky read. The next
+  // nightly run will retry.
+  const journalContent = (journalRes.data?.content ?? '').trim();
+  const journalMissing = !journalRes.error && journalContent.length === 0;
+  const tomorrowPlanMissing = !taskRes.error && (taskRes.count ?? 0) === 0;
+  return { journalMissing, tomorrowPlanMissing };
+}
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -49,12 +92,25 @@ export async function GET(request: Request) {
       tomorrow.setDate(tomorrow.getDate() + 1);
       const tomorrowDay = dayNames[tomorrow.getDay()];
 
-      const [todayTasks, daySummary, goalSummary, openOtherTodosCount] = await Promise.all([
+      // Tomorrow's local date — UTC-noon trick to avoid DST corners.
+      // Used both for the email's `tomorrowDay` label AND to detect
+      // whether the user has any planned tasks for tomorrow.
+      const tomorrowStr = (() => {
+        const d = new Date(`${todayStr}T12:00:00Z`);
+        d.setUTCDate(d.getUTCDate() + 1);
+        return d.toISOString().slice(0, 10);
+      })();
+
+      const [todayTasks, daySummary, goalSummary, openOtherTodosCount, contextChecks] = await Promise.all([
         getUserTasks(user.user_id, todayStr),
         getUserDaySummary(user.user_id, todayStr),
         getUserGoalSummary(user.user_id),
         countOpenOtherTodosForUser(user.user_id),
+        // Lightweight checks to drive proactive nudge copy. Both are
+        // single indexed queries, ~2-3ms each on warm caches.
+        getNightlyContextChecks(user.user_id, todayStr, tomorrowStr),
       ]);
+      const { journalMissing, tomorrowPlanMissing } = contextChecks;
 
       const { subject, html } = nightlyEmail({
         userName: user.name,
@@ -83,6 +139,10 @@ export async function GET(request: Request) {
         activeGoal: goalSummary,
         tomorrowDay,
         openOtherTodosCount,
+        // Smarter nightly: prompt for the missing thing(s) directly.
+        // Even non-Beast users get this once-a-day proactive ask.
+        journalMissing,
+        tomorrowPlanMissing,
         persona: user.bot_persona,
       });
       const waOutcome = await sendCronNudge({ userId: user.user_id, nudgeType: 'nightly', message: waMessage });

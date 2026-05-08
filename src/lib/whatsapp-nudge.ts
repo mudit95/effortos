@@ -246,9 +246,23 @@ export function nightlyWhatsAppMessage(opts: {
    * daily-grind item, so we don't push them. Default 0 = omit the line.
    */
   openOtherTodosCount?: number;
+  /**
+   * Whether the user has yet to journal today. When true the message
+   * promotes journaling to the primary CTA — a one-shot proactive prompt
+   * even for users who don't have Beast Mode enabled. Defaults to false
+   * (keeps the legacy "how did today go?" wording).
+   */
+  journalMissing?: boolean;
+  /**
+   * Whether tomorrow's daily_tasks list is empty. When true the message
+   * promotes "plan tomorrow" to the primary CTA. Combined with
+   * journalMissing this becomes a punchy two-line ask.
+   */
+  tomorrowPlanMissing?: boolean;
   persona?: BotPersona | string | null;
 }): string {
-  const { userName, todayTasks, daySummary, activeGoal, tomorrowDay, openOtherTodosCount = 0 } = opts;
+  const { userName, todayTasks, daySummary, activeGoal, tomorrowDay, openOtherTodosCount = 0,
+    journalMissing = false, tomorrowPlanMissing = false } = opts;
   const persona = resolvePersona(opts.persona);
   const fn = firstName(userName);
   const done = todayTasks.filter(t => t.completed).length;
@@ -274,7 +288,26 @@ export function nightlyWhatsAppMessage(opts: {
     );
   }
 
-  lines.push(nightlyPrompt(persona, tomorrowDay));
+  // Proactive prompts — only fire when the corresponding gap is real.
+  // We choose targeted copy over a generic "what's next" because users
+  // act on specific asks ("write one line about today") far more than
+  // open-ended ones. Beast Mode escalates these on a 30-min cadence;
+  // here we get one nightly shot regardless of tier.
+  if (journalMissing && tomorrowPlanMissing) {
+    lines.push(
+      `📝 No journal yet, and tomorrow's list is empty. Reply with one line about today, then *"plan tomorrow"* to set up ${tomorrowDay}.`,
+    );
+  } else if (journalMissing) {
+    lines.push(
+      `📝 No journal yet for today. Reply with one line + a mood (great/good/meh/rough/hard) and I'll log it.`,
+    );
+  } else if (tomorrowPlanMissing) {
+    lines.push(
+      `🗓️ Tomorrow (${tomorrowDay}) is empty. Reply *"plan tomorrow"* and I'll help you queue 1–3 things.`,
+    );
+  } else {
+    lines.push(nightlyPrompt(persona, tomorrowDay));
+  }
   return lines.join('\n');
 }
 

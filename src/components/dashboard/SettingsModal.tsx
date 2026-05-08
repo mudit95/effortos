@@ -1433,6 +1433,8 @@ function CoachingPreferences() {
   const [intensity, setIntensity] = React.useState<'light' | 'balanced' | 'intense'>('balanced');
   const [quietStart, setQuietStart] = React.useState(22);
   const [quietEnd, setQuietEnd] = React.useState(7);
+  const [beastMode, setBeastMode] = React.useState(false);
+  const [savingBeast, setSavingBeast] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [loaded, setLoaded] = React.useState(false);
 
@@ -1446,6 +1448,7 @@ function CoachingPreferences() {
           setIntensity(data.coaching_intensity || 'balanced');
           setQuietStart(data.coaching_quiet_start ?? 22);
           setQuietEnd(data.coaching_quiet_end ?? 7);
+          setBeastMode(!!data.beast_mode_enabled);
         }
         setLoaded(true);
       })
@@ -1466,6 +1469,28 @@ function CoachingPreferences() {
       });
     } catch { /* silent */ }
     setSaving(false);
+  };
+
+  // Beast Mode toggles on its own (no save button) — instant feedback
+  // matches the seriousness of the feature: flip the switch, you're in.
+  const handleBeastToggle = async (next: boolean) => {
+    const prev = beastMode;
+    setBeastMode(next);
+    setSavingBeast(true);
+    try {
+      const res = await fetch('/api/coach/preferences', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ beast_mode_enabled: next }),
+      });
+      if (!res.ok) {
+        // Server rejected (likely Pro check failed) — revert UI.
+        setBeastMode(prev);
+      }
+    } catch {
+      setBeastMode(prev);
+    }
+    setSavingBeast(false);
   };
 
   if (!isProTier()) {
@@ -1557,6 +1582,51 @@ function CoachingPreferences() {
       >
         {saving ? 'Saving...' : 'Save Preferences'}
       </button>
+
+      {/* ── Beast Mode ─────────────────────────────────────────────
+          Sits below the regular coaching prefs because it's an
+          escalation OF those prefs — once on, the bot pings every
+          30 minutes from 20:00 to 23:30 local until the user has
+          journaled today AND planned at least one task for tomorrow.
+          The hard 23:30 cap is enforced server-side so this is the
+          most aggressive setting we ship; we want the user to
+          actually understand what they're opting into. */}
+      <div className="mt-4 pt-4 border-t border-white/[0.04]">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className="text-orange-400 text-sm">🛡️</span>
+              <h4 className="text-xs font-semibold text-white/70">Beast Mode</h4>
+              <span className="text-[9px] px-1.5 py-0.5 bg-orange-500/15 text-orange-400 rounded-full font-bold">
+                INTENSE
+              </span>
+            </div>
+            <p className="text-[11px] leading-relaxed text-white/40">
+              When on, the bot pings WhatsApp every 30 minutes between
+              20:00&ndash;23:30 local until you&rsquo;ve journaled today
+              AND planned at least one task for tomorrow.
+            </p>
+            <p className="text-[10px] text-white/25 mt-1">
+              Stops the moment both are done. Hard cap at 23:30 &mdash; no 2 AM pings.
+            </p>
+          </div>
+          <button
+            onClick={() => handleBeastToggle(!beastMode)}
+            disabled={savingBeast}
+            role="switch"
+            aria-checked={beastMode}
+            className={`shrink-0 relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
+              beastMode ? 'bg-orange-500/70' : 'bg-white/[0.08]'
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                beastMode ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

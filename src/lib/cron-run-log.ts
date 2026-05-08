@@ -37,6 +37,7 @@ export const CRON_CATALOG: CronCadenceEntry[] = [
   { name: 'afternoon-email',         staleAfterMinutes: 90,  description: 'Hourly afternoon check-in' },
   { name: 'nightly-email',           staleAfterMinutes: 90,  description: 'Hourly nightly recap' },
   { name: 'coach',                   staleAfterMinutes: 90,  description: 'Hourly AI coach nudges' },
+  { name: 'beast-mode',              staleAfterMinutes: 60,  description: 'Beast Mode every-30-min evening enforcer' },
   { name: 'trial-ending',            staleAfterMinutes: 26 * 60, description: 'Daily trial-ending warning' },
   { name: 'pacts-cleanup',           staleAfterMinutes: 26 * 60, description: 'Daily pacts maintenance' },
   { name: 'retention-sweep',         staleAfterMinutes: 26 * 60, description: 'Daily operational-table prune' },
