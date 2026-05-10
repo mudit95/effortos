@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { useStore } from '@/store/useStore';
 import {
   Sparkles, ArrowRight, Brain, BarChart3, Target, Clock,
-  ChevronDown, Zap, MessageCircle, Calendar, TrendingUp,
+  ChevronDown, Zap, MessageCircle, TrendingUp,
   CheckCircle2, Play, Timer, RotateCcw, Flame,
   ListChecks, Bot, Mail, Shield, Pause,
 } from 'lucide-react';
@@ -1073,12 +1073,10 @@ export function LandingPage() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.25, duration: 0.7, ease }}
-              className="text-base sm:text-lg text-white/40 mb-10 max-w-xl mx-auto lg:mx-0 leading-relaxed"
+              className="text-lg sm:text-xl text-white/45 mb-10 max-w-xl mx-auto lg:mx-0 leading-relaxed"
             >
-              In a world engineered to fragment your attention, EffortOS is the quiet operating
-              system that holds the line. Tell it your goal — it estimates the work, paces your
-              sessions, and recalibrates as you go. So the world doesn&apos;t get to decide what
-              you ship.
+              Tell it what you want to finish. It does the math, paces the work,
+              and quietly gets out of your way.
             </motion.p>
 
             {/* CTA */}
@@ -1102,7 +1100,7 @@ export function LandingPage() {
                   Sign up free <ArrowRight className="w-5 h-5" />
                 </Button>
               </div>
-              <p className="text-[11px] text-white/20 mt-1">No signup. No noise. Just twenty-five quiet minutes.</p>
+              <p className="text-[11px] text-white/20 mt-1">Twenty-five quiet minutes. No signup.</p>
             </motion.div>
 
             {/* Trust badges */}
@@ -1113,9 +1111,14 @@ export function LandingPage() {
               className="flex flex-wrap items-center justify-center lg:justify-start gap-x-5 gap-y-2 mt-10"
             >
               {[
-                { icon: Shield, text: '3 days free, no card needed' },
+                // Trust badges — concrete, positive, present tense.
+                // Negations ("no notifications") read as defensive; the rest
+                // of the page already establishes the quiet tone, so we use
+                // these slots for the most concrete promises a visitor cares
+                // about: time-to-value, cost-of-trial, and exit cost.
+                { icon: Shield, text: '3 days free, no card' },
                 { icon: Clock, text: 'Cancel anytime' },
-                { icon: Zap, text: 'No notifications by default' },
+                { icon: Zap, text: 'Quiet by design' },
               ].map(({ icon: I, text }) => (
                 <span key={text} className="flex items-center gap-1.5 text-xs text-white/25">
                   <I size={12} /> {text}
@@ -1150,15 +1153,16 @@ export function LandingPage() {
       {/* The ticker rows are pure decoration — replace them with a static
           two-line list under reduced-motion so the message survives without
           any infinite horizontal scroll. */}
+      {/* Single ticker row instead of two. The opposing-direction stack
+          felt busy and competed with the hero card column for attention.
+          One quiet row, slower speed — matches the "quiet by design"
+          positioning instead of fighting it. */}
       {!reduceMotion && (
-        <div className="py-6 sm:py-8">
+        <div className="py-8 sm:py-10">
           <p className="text-center text-[10px] text-white/20 uppercase tracking-[0.2em] mb-4">
             What people are quietly working toward
           </p>
-          <InfiniteTickerRow direction="left" speed={35} />
-          <div className="mt-3">
-            <InfiniteTickerRow direction="right" speed={40} />
-          </div>
+          <InfiniteTickerRow direction="left" speed={45} />
         </div>
       )}
 
@@ -1166,11 +1170,10 @@ export function LandingPage() {
       <Section className="py-16 sm:py-24 px-4" delay={0.1}>
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-12">
-            <p className="text-[11px] text-cyan-400/60 uppercase tracking-[0.2em] font-semibold mb-3">Try it yourself</p>
-            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3">A timer that knows what you&apos;re working on.</h2>
-            <p className="text-sm text-white/35 max-w-md mx-auto">
-              Pick the three things that matter today. Hit start. EffortOS quietly logs every
-              focused session against the work you set out to do. No leaderboards. No streak guilt.
+            <p className="text-[11px] text-cyan-400/60 uppercase tracking-[0.2em] font-semibold mb-3">Try it</p>
+            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3">A timer that knows the work.</h2>
+            <p className="text-sm text-white/40 max-w-md mx-auto leading-relaxed">
+              Three priorities. Hit start. Every focused session lands against the goal it was for.
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
@@ -1187,19 +1190,16 @@ export function LandingPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
             <div>
               <p className="text-[11px] text-cyan-400/60 uppercase tracking-[0.2em] font-semibold mb-3">Effort, calibrated</p>
-              <h2 className="text-2xl sm:text-3xl font-bold text-white mb-4">Know how long things actually take.</h2>
-              <p className="text-sm text-white/40 leading-relaxed mb-6">
-                Tell EffortOS what you&apos;re trying to finish. It estimates the work in focused
-                sessions, then quietly recalibrates as you go. Your timeline learns from your
-                real life — late meetings, bad days, breakthroughs, all of it. No guesswork.
-                No fake confidence.
+              <h2 className="text-2xl sm:text-3xl font-bold text-white mb-4">Know how long it actually takes.</h2>
+              <p className="text-base text-white/45 leading-relaxed mb-6">
+                Name the goal. EffortOS sizes it in focused sessions, then sharpens its
+                estimate every time you finish one. Your timeline learns from your real life.
               </p>
               <div className="space-y-3">
                 {[
-                  'Sizes up your goal in seconds',
-                  'Adapts to your real pace and consistency',
+                  'Sizes any goal in seconds',
+                  'Learns your real pace, not your aspirational one',
                   'Recalibrates after every session',
-                  'Marks milestones so you always know where you are',
                 ].map((item, i) => (
                   <motion.div
                     key={item}
@@ -1231,23 +1231,24 @@ export function LandingPage() {
       <Section className="py-16 sm:py-24 px-4">
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-12">
-            <p className="text-[11px] text-cyan-400/60 uppercase tracking-[0.2em] font-semibold mb-3">Quiet by default</p>
+            <p className="text-[11px] text-cyan-400/60 uppercase tracking-[0.2em] font-semibold mb-3">What you get</p>
             <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3">The features are quiet. The progress isn&apos;t.</h2>
-            <p className="text-sm text-white/35 max-w-md mx-auto">
-              Every feature here exists to protect your attention and make your hours add up.
-              Nothing in this product is asking for more of you.
+            <p className="text-sm text-white/40 max-w-md mx-auto leading-relaxed">
+              Six things, designed to add up. Nothing else.
             </p>
           </div>
+          {/* Six cards instead of nine. Repeating Templates and Adaptive
+              Recalibration were both subsumed into the AI Estimation card;
+              Quiet Email Nudges folded into the AI Coach. The cuts make the
+              page faster to scan and stop the visitor from feeling like
+              they're reading a release-notes wall. */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <FeatureCard icon={Timer} title="Pomodoro Timer" description="Twenty-five quiet minutes at a time. Smart breaks. Picture-in-picture so the timer stays in view, not in the way." gradient="bg-gradient-to-br from-cyan-500/[0.05] to-transparent" delay={0} />
-            <FeatureCard icon={Brain} title="AI Effort Estimation" description="Tell EffortOS what you&apos;re trying to finish. It estimates the work, then sharpens its guess every time you finish a session." gradient="bg-gradient-to-br from-purple-500/[0.05] to-transparent" delay={0.1} />
-            <FeatureCard icon={ListChecks} title="Daily Grind Planner" description="Pick three priorities for today. Tag what they&apos;re for. Hit start. EffortOS keeps the rest of the noise out." gradient="bg-gradient-to-br from-emerald-500/[0.05] to-transparent" delay={0.2} />
-            <FeatureCard icon={Bot} title="AI Coach" description="Honest reflections after each session. Weekly recaps that read like a coach who actually pays attention." gradient="bg-gradient-to-br from-amber-500/[0.05] to-transparent" delay={0.1} />
-            <FeatureCard icon={MessageCircle} title="Messaging Bot" description="Add tasks, check progress, log wins from WhatsApp. Useful when you don&apos;t want to open another app." gradient="bg-gradient-to-br from-green-500/[0.05] to-transparent" delay={0.2} />
-            <FeatureCard icon={BarChart3} title="Reports & Streaks" description="See where your hours actually went. A streak calendar that respects bad weeks instead of punishing them." gradient="bg-gradient-to-br from-blue-500/[0.05] to-transparent" delay={0.3} />
-            <FeatureCard icon={Mail} title="Quiet Email Nudges" description="Three short emails a day, on your timezone. Easy to silence. Honest about your week." gradient="bg-gradient-to-br from-rose-500/[0.05] to-transparent" delay={0.2} />
-            <FeatureCard icon={Calendar} title="Repeating Templates" description="Set your daily habits once. EffortOS rebuilds the day for you each morning, so consistency stops being a chore." gradient="bg-gradient-to-br from-indigo-500/[0.05] to-transparent" delay={0.3} />
-            <FeatureCard icon={TrendingUp} title="Adaptive Recalibration" description="Rate the accuracy after each session. Watch the estimate stop lying to you over time." gradient="bg-gradient-to-br from-cyan-500/[0.05] to-transparent" delay={0.4} />
+            <FeatureCard icon={Timer} title="Pomodoro Timer" description="Twenty-five minutes at a time. Picture-in-picture so it stays in view, never in the way." gradient="bg-gradient-to-br from-cyan-500/[0.05] to-transparent" delay={0} />
+            <FeatureCard icon={Brain} title="AI Estimation" description="Sizes any goal in focused sessions. Sharpens its guess every time you finish one." gradient="bg-gradient-to-br from-purple-500/[0.05] to-transparent" delay={0.1} />
+            <FeatureCard icon={ListChecks} title="Daily Grind" description="Three priorities. Tagged. Started. The rest of the noise stays outside." gradient="bg-gradient-to-br from-emerald-500/[0.05] to-transparent" delay={0.2} />
+            <FeatureCard icon={Bot} title="AI Coach" description="Honest debriefs after every session. Weekly recaps that read like a coach who&rsquo;s actually paying attention." gradient="bg-gradient-to-br from-amber-500/[0.05] to-transparent" delay={0.1} />
+            <FeatureCard icon={MessageCircle} title="WhatsApp Bot" description="Add tasks, log wins, plan tomorrow — by texting like you would a friend." gradient="bg-gradient-to-br from-green-500/[0.05] to-transparent" delay={0.2} />
+            <FeatureCard icon={BarChart3} title="Reports & Streaks" description="Where your hours actually went. A streak that respects bad weeks instead of punishing them." gradient="bg-gradient-to-br from-blue-500/[0.05] to-transparent" delay={0.3} />
           </div>
         </div>
       </Section>
@@ -1262,10 +1263,10 @@ export function LandingPage() {
             <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3">Tell it the goal. Let it carry the math.</h2>
           </div>
           <div className="space-y-0">
-            <Step number={1} icon={Target} title="Name what matters" description="Tell EffortOS what you&apos;re working toward — your novel, the bar exam, your MVP, the dissertation. Whatever&apos;s been on the list too long." delay={0} />
-            <Step number={2} icon={Brain} title="Get an honest estimate" description="EffortOS sizes up the work, your skill level, and the rest of your life. You get a real number of focused sessions, not a fantasy." delay={0.1} />
-            <Step number={3} icon={Zap} title="Work in quiet blocks" description="Twenty-five minutes at a time. Every session lands against the goal that matters. The world keeps moving; you keep going." delay={0.2} />
-            <Step number={4} icon={TrendingUp} title="Watch it learn you" description="After every session the estimate gets sharper. Your timeline learns from your actual pace — not who you said you&apos;d be." delay={0.3} isLast />
+            <Step number={1} icon={Target} title="Name the goal" description="Your novel. The bar exam. The MVP. Whatever&rsquo;s been on the list too long." delay={0} />
+            <Step number={2} icon={Brain} title="Get an honest estimate" description="A real number of focused sessions. Not a fantasy schedule." delay={0.1} />
+            <Step number={3} icon={Zap} title="Work in quiet blocks" description="Twenty-five minutes at a time. Every session lands against the goal it was for." delay={0.2} />
+            <Step number={4} icon={TrendingUp} title="Watch it learn you" description="The estimate sharpens after every session. Your timeline starts matching your real pace." delay={0.3} isLast />
           </div>
         </div>
       </Section>
@@ -1275,10 +1276,16 @@ export function LandingPage() {
         <div className="max-w-4xl mx-auto">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 sm:gap-8">
             {[
-              { value: 25, suffix: 'min', label: 'Per quiet session', icon: Timer },
+              // Stats are positive integers, present tense, scannable in
+              // one beat. The previous "0 push notifications" landed as a
+              // negation — it told the visitor what the product *isn't*
+              // doing, which sells nothing. Replaced with the streak number
+              // that actually shows what the product *does*: track days,
+              // forgive bad ones.
+              { value: 25, suffix: 'min', label: 'Quiet sessions', icon: Timer },
               { value: 52, suffix: '+', label: 'Goals you can finish here', icon: Target },
               { value: 3, suffix: '', label: 'Days free, no card', icon: Mail },
-              { value: 0, suffix: '', label: 'Push notifications by default', icon: Flame },
+              { value: 1, suffix: '', label: 'Coach in your pocket', icon: Flame },
             ].map(({ value, suffix, label, icon: I }, i) => (
               <motion.div
                 key={label}
@@ -1307,21 +1314,20 @@ export function LandingPage() {
         <div className="max-w-5xl mx-auto relative z-10">
           <div className="grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
             <div>
-              <p className="text-[11px] text-emerald-400/70 uppercase tracking-[0.2em] font-semibold mb-3">Lives where you already are</p>
+              <p className="text-[11px] text-emerald-400/70 uppercase tracking-[0.2em] font-semibold mb-3">Where you already are</p>
               <h2 className="text-2xl sm:text-3xl font-bold text-white mb-4">
                 A coach in WhatsApp.<br />
-                <span className="text-white/50">Not yet another app to open.</span>
+                <span className="text-white/50">Not another app to open.</span>
               </h2>
-              <p className="text-sm sm:text-base text-white/45 mb-6 leading-relaxed">
-                Add tasks, log a session, plan tomorrow, ask for a nudge — all by texting EffortOS the way you&apos;d text a friend.
-                Pro users get morning kickoffs, evening wrap-ups, and quiet streak-saver alerts when you&apos;re about to drop the chain.
+              <p className="text-base text-white/45 mb-6 leading-relaxed">
+                Add tasks, log a session, plan tomorrow &mdash; by texting like you would a friend.
               </p>
               <ul className="space-y-2.5 text-sm text-white/55">
                 {[
-                  'Drop a task in chat — it lands in tomorrow&apos;s plan',
-                  'Reply &quot;done&quot; after a session, get an honest debrief',
-                  'Type &quot;plan tomorrow&quot; — Claude builds your next day',
-                  'Streak about to break? You get one heads-up, no spam',
+                  'Drop a task in chat &mdash; it lands in tomorrow&rsquo;s plan',
+                  'Reply &quot;done&quot; &mdash; get an honest debrief',
+                  'Type &quot;plan tomorrow&quot; &mdash; your next day, drafted',
+                  'Streak about to break? One heads-up, never a nag',
                 ].map((line) => (
                   <li key={line} className="flex items-start gap-2.5">
                     <CheckCircle2 size={16} className="text-emerald-400/60 mt-0.5 flex-shrink-0" />
@@ -1533,15 +1539,17 @@ export function LandingPage() {
                   ? '≈ ₹3,999/year — billed in INR via Razorpay (4 months free)'
                   : '≈ ₹499 — billed in INR via Razorpay'}
               </p>
-              <ul className="space-y-2.5 mb-6 text-sm text-white/50">
+              <ul className="space-y-2.5 mb-6 text-sm text-white/55">
                 {[
+                  // Five bullets. The original seven mixed essentials with
+                  // duplicates (Daily Grind already implies the planner;
+                  // journal+mood is one thing, not two). Cutting reads
+                  // faster and stops the eye from glazing past the price.
                   'AI goal estimation that learns your pace',
-                  'Pomodoro focus timer with picture-in-picture',
-                  'Daily Grind planner — three priorities, no clutter',
-                  'Streak calendar that respects bad weeks',
+                  'Pomodoro timer with picture-in-picture',
+                  'Daily Grind: three priorities, no clutter',
                   'WhatsApp bot for tasks and check-ins',
-                  'Three quiet email nudges a day',
-                  'Journal and mood, just for you',
+                  'Streak calendar that forgives bad weeks',
                 ].map((f) => (
                   <li key={f} className="flex items-center gap-2">
                     <CheckCircle2 size={14} className="text-cyan-400/60 shrink-0" />
@@ -1579,22 +1587,27 @@ export function LandingPage() {
                   ? '≈ ₹7,999/year — billed in INR via Razorpay (4 months free)'
                   : '≈ ₹999 — billed in INR via Razorpay'}
               </p>
-              <ul className="space-y-2.5 mb-6 text-sm text-white/50">
+              <ul className="space-y-2.5 mb-6 text-sm text-white/55">
                 {[
-                  'Everything in Starter, plus:',
-                  'A coach that checks in without asking for your day',
-                  'Morning kickoff and evening wrap-up, on your time',
-                  'Streak saver and gentle idle nudges',
+                  // Pro list shows what Pro adds — not a recap of Starter.
+                  // The previous "Everything in Starter, plus:" line forced
+                  // an inline-styled exception that broke the rhythm of the
+                  // checklist. Cleaner to lead with the value: AI Coach.
+                  'A coach that checks in, on your timezone',
+                  'Morning kickoff. Evening wrap-up. WhatsApp.',
                   'Weekly recap written by Claude, not a template',
-                  '“Plan tomorrow” over WhatsApp in one message',
-                  'Pick how loud the coaching is. Or how quiet.',
-                ].map((f, i) => (
+                  'Beast Mode: pings you every 30 min until you ship',
+                  'Streak saver, idle nudges, and quiet hours you set',
+                ].map((f) => (
                   <li key={f} className="flex items-center gap-2">
-                    <CheckCircle2 size={14} className={`shrink-0 ${i === 0 ? 'text-cyan-400/60' : 'text-purple-400/70'}`} />
-                    <span className={i === 0 ? 'text-white/40 text-xs' : ''}>{f}</span>
+                    <CheckCircle2 size={14} className="text-purple-400/70 shrink-0" />
+                    <span>{f}</span>
                   </li>
                 ))}
               </ul>
+              <p className="text-[11px] text-white/30 mb-4 -mt-2">
+                Includes everything in Starter.
+              </p>
               <Button variant="glow" size="lg" onClick={() => setView('auth')} className="w-full gap-2 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 border-purple-500/30">
                 Start Free Trial <Sparkles size={14} />
               </Button>
@@ -1616,9 +1629,11 @@ export function LandingPage() {
           >
             <Sparkles className="w-8 h-8 text-white" />
           </motion.div>
-          <h2 className="text-2xl sm:text-4xl font-bold text-white mb-4">The world doesn&apos;t run your schedule. You do.</h2>
-          <p className="text-sm sm:text-base text-white/35 mb-8 max-w-md mx-auto">
-            Start with a quiet twenty-five minutes. Decide later if you want the rest.
+          <h2 className="text-3xl sm:text-5xl font-bold text-white mb-4 tracking-tight">
+            Start with twenty-five minutes.
+          </h2>
+          <p className="text-base sm:text-lg text-white/40 mb-10 max-w-md mx-auto leading-relaxed">
+            Decide the rest after.
           </p>
           <Button variant="glow" size="lg" onClick={() => setView('auth')} className="gap-2 px-8 h-13 text-base">
             Get Started Free <ArrowRight size={18} />
@@ -1633,11 +1648,11 @@ export function LandingPage() {
             <div className="w-6 h-6 rounded-md bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center">
               <Sparkles className="w-3 h-3 text-white" />
             </div>
-            <span className="text-xs text-white/30">EffortOS — The quiet OS for the work that matters.</span>
+            <span className="text-xs text-white/30">EffortOS &mdash; The quiet OS for the work that matters.</span>
           </div>
           <div className="flex items-center gap-4">
             <MoreMenu />
-            <span className="text-[11px] text-white/15">Your data, encrypted, in sync, in your hands.</span>
+            <span className="text-[11px] text-white/15">Encrypted. In sync. In your hands.</span>
           </div>
         </div>
       </footer>
