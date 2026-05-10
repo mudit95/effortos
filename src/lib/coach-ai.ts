@@ -8,6 +8,13 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { NudgeType } from '@/types';
 import type { UserContext } from '@/lib/coach-engine';
 import { personaSystemSnippet, personaGreeting, personaPush } from '@/lib/persona-tone';
+import {
+  ensureAiQuota,
+  recordAiUsage,
+  ensureGlobalAiBudget,
+  getUserAiTier,
+} from '@/lib/aiQuota';
+import { createServiceClient } from '@/lib/supabase/service';
 
 const BASE_SYSTEM_PROMPT = `You are the EffortOS AI Coach, a proactive productivity partner that sends WhatsApp messages to help users complete their daily tasks and long-term goals.
 
@@ -150,7 +157,16 @@ function getDayName(day: number): string {
 
 /**
  * Generate a personalized coach message.
- * Falls back to a static template if AI is unavailable.
+ * Falls back to a static template if AI is unavailable, the user is
+ * over their daily Anthropic budget, or the platform-wide ceiling has
+ * been hit. The fallbacks keep the cron resilient — losing AI quality
+ * for a session is better than emitting an error or burning runaway
+ * cost.
+ *
+ * Budget enforcement: this is the cron path, so we gate BEFORE the
+ * Anthropic call, not after. Skipping the gate (the previous shape)
+ * meant a coach-loop bug could fan out to every Pro user every hour
+ * with zero visibility — exactly the "$200 before lunch" scenario.
  */
 export async function generateCoachMessage(
   nudgeType: NudgeType,
@@ -167,6 +183,35 @@ export async function generateCoachMessage(
     return getFallbackMessage(nudgeType, context);
   }
 
+  // ── Budget gates ─────────────────────────────────────────────────
+  // Global ceiling first (cheaper read, fails the whole platform fast
+  // if we're in an emergency); then per-user. Failing closed on either
+  // returns the static fallback so the user still gets a nudge, just
+  // not an AI-generated one.
+  try {
+    const globalGate = await ensureGlobalAiBudget();
+    if (!globalGate.ok) {
+      console.warn(
+        `[Coach AI] Global AI budget exhausted (${globalGate.used}/${globalGate.limit}). Falling back to static for user ${context.userId}.`,
+      );
+      return getFallbackMessage(nudgeType, context);
+    }
+
+    const supabase = createServiceClient();
+    const tier = await getUserAiTier(supabase, context.userId);
+    const userGate = await ensureAiQuota(context.userId, tier);
+    if (!userGate.ok) {
+      console.warn(
+        `[Coach AI] User ${context.userId} over daily quota (${userGate.used}/${userGate.limit}, tier=${tier}). Falling back to static.`,
+      );
+      return getFallbackMessage(nudgeType, context);
+    }
+  } catch (gateErr) {
+    // Gate query failure — fall through to the AI call to avoid silently
+    // breaking the coach. Better to log loudly and keep the feature alive.
+    console.error('[Coach AI] Budget-gate read failed (proceeding):', gateErr);
+  }
+
   try {
     const anthropic = new Anthropic({ apiKey });
     const response = await anthropic.messages.create({
@@ -175,6 +220,12 @@ export async function generateCoachMessage(
       system: systemPromptFor(context),
       messages: [{ role: 'user', content: promptFn(context) }],
     });
+
+    // recordAiUsage already mirrors onto the global counter, so this one
+    // call covers both per-user and platform-wide accounting. Fire-and-
+    // forget; the message has already been paid for, a Redis write
+    // failure here shouldn't block the cron.
+    void recordAiUsage(context.userId, response.usage);
 
     const text = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')

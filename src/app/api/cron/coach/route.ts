@@ -199,7 +199,21 @@ export async function GET(request: Request) {
       }
     });
 
-    await recordCronRun('coach', 'success', { eligible: eligibleUsers.length, sent, skipped });
+    // Same honesty fix the email crons got: if every attempted send
+    // failed (we tried, but every one bounced or threw), record this
+    // run as a failure so the watchdog actually flags it. The previous
+    // shape ("'success' regardless of error count") was the exact
+    // pattern that hid the email_FROM misconfiguration for weeks.
+    const attempted = eligibleUsers.length - skipped;
+    const allFailed = attempted > 0 && sent === 0;
+    const status: 'success' | 'failure' = allFailed ? 'failure' : 'success';
+    await recordCronRun('coach', status, {
+      eligible: eligibleUsers.length,
+      sent,
+      skipped,
+      errors_count: errorMsgs.length,
+      first_error: errorMsgs[0],
+    });
     return NextResponse.json({
       eligible: eligibleUsers.length,
       sent,

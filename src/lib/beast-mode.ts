@@ -47,6 +47,38 @@ export const BEAST_WINDOW_END_MINUTE = 30;
  *  unless we already sent in the prior tick" — which is what we want. */
 export const BEAST_DEBOUNCE_MINUTES = 25;
 
+/** Hard ceiling on beast nudges per user per UTC day, across BOTH kinds
+ *  combined. The 30-min cron from 20:00–23:30 yields at most 8 ticks ×
+ *  2 kinds = 16 messages on paper. Most users will hit the cap because
+ *  they journaled or planned, but in pathological cases (user toggled
+ *  beast on, never replies, falls asleep) the cap stops a runaway.
+ *
+ *  Why per UTC day: matches the existing aiQuota bucket cadence and
+ *  doesn't require timezone-aware arithmetic. A 4-message ceiling is
+ *  what any reasonable WhatsApp Business policy review would call
+ *  "considered" for an opt-in coaching context — it's plenty to nudge
+ *  but not so many that one user can carry an account-level abuse
+ *  signal. Tunable via env BEAST_MAX_NUDGES_PER_USER_PER_DAY. */
+export function beastDailyCap(): number {
+  const env = process.env.BEAST_MAX_NUDGES_PER_USER_PER_DAY;
+  if (env) {
+    const n = parseInt(env, 10);
+    if (Number.isFinite(n) && n > 0 && n <= 50) return n;
+  }
+  return 4;
+}
+
+/** Global feature kill switch. Set BEAST_MODE_DISABLED=1 on Vercel and
+ *  every cron tick will short-circuit with `disabled: true` in details
+ *  — no profile reads, no Meta API calls, no chance of stray nudges
+ *  while you investigate an incident. Reads on every request so an
+ *  emergency env update via `vercel env add` takes effect immediately
+ *  without a redeploy. */
+export function beastModeDisabled(): boolean {
+  const v = (process.env.BEAST_MODE_DISABLED || '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
 /**
  * Compute the user's local hour + minute. Returns null if the timezone
  * string is malformed (we treat that as "skip this user" rather than
@@ -158,6 +190,33 @@ export async function evaluateMissingChecks(
   }
 
   return missing;
+}
+
+/**
+ * How many beast nudges has this user received today (UTC day),
+ * counted across BOTH kinds. The cron uses this to enforce the
+ * `beastDailyCap()` ceiling — once it's hit we stop pinging until UTC
+ * midnight even if other gates would say "send."
+ */
+export async function dailyBeastCountForUser(
+  supabase: SupabaseClient,
+  userId: string,
+  now: Date = new Date(),
+): Promise<number> {
+  const dayStart = new Date(now);
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const { count, error } = await supabase
+    .from('beast_nudge_log')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .gte('created_at', dayStart.toISOString());
+  if (error) {
+    // Fail closed — assume cap reached. We'd rather under-nudge than
+    // accidentally over-nudge based on a flaky read.
+    console.error('[beast-mode] dailyBeastCountForUser failed', { userId, error });
+    return Number.MAX_SAFE_INTEGER;
+  }
+  return count ?? 0;
 }
 
 /**

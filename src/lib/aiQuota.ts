@@ -182,6 +182,129 @@ export async function recordAiUsage(
   } catch (err) {
     console.error('[aiQuota] recordAiUsage failed (non-fatal):', err);
   }
+
+  // Mirror onto the global daily counter so the platform-wide ceiling
+  // stays accurate without forcing every call site to remember to call
+  // recordGlobalAiUsage explicitly. Single source of truth: any call
+  // that records per-user usage automatically also feeds the global.
+  try {
+    await redis.incrby(GLOBAL_BUCKET_KEY(), total);
+    await redis.expire(GLOBAL_BUCKET_KEY(), 26 * 60 * 60);
+  } catch (err) {
+    console.error('[aiQuota] global counter update failed (non-fatal):', err);
+  }
+}
+
+// ── Global daily spend ceiling ─────────────────────────────────────
+//
+// Per-user quotas catch one bad actor. They DON'T catch a regression
+// where the cron loops across 1,000 users and each legitimately burns
+// their share — we'd cheerfully spend ourselves into the ground.
+//
+// This second, simpler bucket counts every token across every user
+// and rejects further calls once a global ceiling is hit. Default
+// is generous so it only fires on a genuine emergency (10× normal
+// daily volume); tune via env var as the user base grows.
+//
+// Math at $5/M blended Haiku: 10M tokens/day = $50/day ceiling.
+
+const GLOBAL_BUCKET_KEY = (): string => `aiq:global:${new Date().toISOString().slice(0, 10)}`;
+
+function globalDailyTokenCeiling(): number {
+  const env = process.env.AI_GLOBAL_DAILY_TOKEN_LIMIT;
+  if (env) {
+    const parsed = parseInt(env, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 10_000_000; // 10M tokens ≈ $50/day at Haiku blended pricing
+}
+
+export interface GlobalQuotaOk { ok: true; used: number; limit: number }
+export interface GlobalQuotaExhausted {
+  ok: false;
+  used: number;
+  limit: number;
+  resetAt: number;
+  reason: 'global_cap';
+}
+
+/**
+ * Has the platform-wide daily Anthropic budget been exhausted? Use as
+ * an outer gate alongside ensureAiQuota — per-user catches one user;
+ * this catches a code bug that's burning everyone's tokens. Fails open
+ * in dev (no Redis), fails CLOSED in production.
+ */
+export async function ensureGlobalAiBudget(): Promise<GlobalQuotaOk | GlobalQuotaExhausted> {
+  const redis = getRedis();
+  if (!redis) {
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[aiQuota] global gate: Redis missing in production — failing closed');
+      return {
+        ok: false,
+        used: 0,
+        limit: globalDailyTokenCeiling(),
+        resetAt: Date.now() + msUntilUtcMidnight(),
+        reason: 'global_cap',
+      };
+    }
+    return { ok: true, used: 0, limit: Number.POSITIVE_INFINITY };
+  }
+  const limit = globalDailyTokenCeiling();
+  const used = Number((await redis.get<number>(GLOBAL_BUCKET_KEY())) ?? 0);
+  if (used >= limit) {
+    console.error(
+      `[aiQuota] GLOBAL CEILING HIT — ${used.toLocaleString()} of ${limit.toLocaleString()} tokens. ` +
+      `All AI calls will reject 429 until UTC midnight. ` +
+      `Investigate: check coach_log for runaway loops, recent deploys for accidental re-entry, ` +
+      `and bump AI_GLOBAL_DAILY_TOKEN_LIMIT only after diagnosing root cause.`,
+    );
+    return {
+      ok: false,
+      used,
+      limit,
+      resetAt: Date.now() + msUntilUtcMidnight(),
+      reason: 'global_cap',
+    };
+  }
+  return { ok: true, used, limit };
+}
+
+/** Mirror of recordAiUsage that updates the global counter. Call ALONGSIDE
+ *  recordAiUsage from every Anthropic call site — they're the two halves
+ *  of the same accounting. */
+export async function recordGlobalAiUsage(usage: {
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+} | null | undefined): Promise<void> {
+  if (!usage) return;
+  const redis = getRedis();
+  if (!redis) return;
+  const total =
+    (usage.input_tokens ?? 0) +
+    (usage.output_tokens ?? 0) +
+    (usage.cache_creation_input_tokens ?? 0) +
+    (usage.cache_read_input_tokens ?? 0);
+  if (total <= 0) return;
+  try {
+    await redis.incrby(GLOBAL_BUCKET_KEY(), total);
+    await redis.expire(GLOBAL_BUCKET_KEY(), 26 * 60 * 60);
+  } catch (err) {
+    console.error('[aiQuota] recordGlobalAiUsage failed (non-fatal):', err);
+  }
+}
+
+/**
+ * Read today's global token usage. For admin dashboards / health pages.
+ * Returns 0 if Redis isn't configured.
+ */
+export async function getGlobalAiUsageToday(): Promise<{ used: number; limit: number }> {
+  const redis = getRedis();
+  const limit = globalDailyTokenCeiling();
+  if (!redis) return { used: 0, limit };
+  const used = Number((await redis.get<number>(GLOBAL_BUCKET_KEY())) ?? 0);
+  return { used, limit };
 }
 
 /**

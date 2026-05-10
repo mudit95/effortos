@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { requireAdmin } from '@/lib/admin';
-import { Users, Ticket, BarChart3, FileText, Mail } from 'lucide-react';
+import { Users, Ticket, BarChart3, FileText, Mail, Activity } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,6 +40,7 @@ export default async function AdminOverviewPage() {
   ];
 
   const cards = [
+    { href: '/admin/health', label: 'System health', desc: 'Cron status, email delivery, Beast Mode, AI spend.', icon: Activity },
     { href: '/admin/users', label: 'Users', desc: 'Extend trials, grant premium, manage tiers.', icon: Users },
     { href: '/admin/coupons', label: 'Coupons', desc: 'Create, disable, and inspect redemptions.', icon: Ticket },
     { href: '/admin/metrics', label: 'Metrics', desc: 'Signups, DAU, tier-split MRR, coach stats.', icon: BarChart3 },

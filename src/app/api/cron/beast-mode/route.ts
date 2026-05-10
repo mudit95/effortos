@@ -9,7 +9,10 @@ import {
   evaluateMissingChecks,
   recentBeastNudgeExists,
   recordBeastNudge,
+  dailyBeastCountForUser,
   beastMessage,
+  beastDailyCap,
+  beastModeDisabled,
   type BeastUser,
   type BeastNudgeKind,
 } from '@/lib/beast-mode';
@@ -41,6 +44,17 @@ export const maxDuration = 60;
 export async function GET(request: Request) {
   const authErr = verifyCronAuth(request);
   if (authErr) return authErr;
+
+  // ── 0. Global kill switch ──────────────────────────────────────
+  // Read on every tick so flipping BEAST_MODE_DISABLED via Vercel env
+  // takes effect immediately without redeploy. This is the WhatsApp
+  // Business compliance lever — if Meta flags the number for repeated
+  // unsolicited messaging, you set this to '1' and every subsequent
+  // tick is a no-op until you can investigate.
+  if (beastModeDisabled()) {
+    await recordCronRun('beast-mode', 'success', { disabled: true, reason: 'kill_switch' });
+    return NextResponse.json({ disabled: true, reason: 'kill_switch' });
+  }
 
   const supabase = createServiceClient();
 
@@ -100,6 +114,8 @@ export async function GET(request: Request) {
     // tier, so 6 in flight is far from any cap.
     const BEAST_CONCURRENCY = 6;
 
+    const dailyCap = beastDailyCap();
+
     const results = await concurrentMap(eligibleUsers, BEAST_CONCURRENCY, async (user) => {
       if (!shouldFireForUser(user, now)) {
         return { kind: 'outside_window' as const };
@@ -110,9 +126,27 @@ export async function GET(request: Request) {
         return { kind: 'satisfied' as const };
       }
 
-      // Per-kind ping with per-kind debounce.
-      const perKindOutcomes: { kind: BeastNudgeKind; sent: boolean; debounced: boolean }[] = [];
+      // ── Per-user daily ceiling ────────────────────────────────────
+      // Single SELECT count per user per tick — cheap, but it's the
+      // most important guardrail in this entire cron. Hitting `dailyCap`
+      // means we have already pinged this user enough today (default
+      // 4×) regardless of debounce gaps. Stops the runaway "user
+      // forgot to journal, beast forgot to stop" failure mode.
+      const sentToday = await dailyBeastCountForUser(supabase, user.id, now);
+      if (sentToday >= dailyCap) {
+        return { kind: 'cap_reached' as const, sentToday };
+      }
+
+      // Per-kind ping with per-kind debounce. We honour the daily cap
+      // INSIDE this loop too so we don't fire two messages back-to-back
+      // when the user is exactly one ping away from the ceiling.
+      const perKindOutcomes: { kind: BeastNudgeKind; sent: boolean; debounced: boolean; capped?: boolean }[] = [];
+      let sentThisTick = 0;
       for (const nudgeKind of missing) {
+        if (sentToday + sentThisTick >= dailyCap) {
+          perKindOutcomes.push({ kind: nudgeKind, sent: false, debounced: false, capped: true });
+          continue;
+        }
         const recent = await recentBeastNudgeExists(supabase, user.id, nudgeKind, now);
         if (recent) {
           perKindOutcomes.push({ kind: nudgeKind, sent: false, debounced: true });
@@ -127,12 +161,14 @@ export async function GET(request: Request) {
           messageSent: message,
           delivered,
         });
+        if (delivered) sentThisTick++;
         perKindOutcomes.push({ kind: nudgeKind, sent: delivered, debounced: false });
       }
 
       return { kind: 'pinged' as const, outcomes: perKindOutcomes };
-    });
+    }, { taskTimeoutMs: 15_000 });
 
+    let capReached = 0;
     for (let i = 0; i < results.length; i++) {
       const r = results[i];
       const user = eligibleUsers[i];
@@ -146,9 +182,13 @@ export async function GET(request: Request) {
         continue;
       }
       if (v.kind === 'satisfied') continue;
+      if (v.kind === 'cap_reached') {
+        capReached++;
+        continue;
+      }
       // pinged
       for (const out of v.outcomes) {
-        if (!out.debounced) attempted++;
+        if (!out.debounced && !out.capped) attempted++;
         if (out.sent) sent++;
       }
     }
@@ -156,6 +196,8 @@ export async function GET(request: Request) {
     await recordCronRun('beast-mode', 'success', {
       eligible: eligibleUsers.length,
       outside_window: outsideWindow,
+      cap_reached: capReached,
+      daily_cap: dailyCap,
       attempted,
       sent,
       failures: failures.length,
@@ -164,6 +206,8 @@ export async function GET(request: Request) {
     return NextResponse.json({
       eligible: eligibleUsers.length,
       outside_window: outsideWindow,
+      cap_reached: capReached,
+      daily_cap: dailyCap,
       attempted,
       sent,
       failures: failures.length > 0 ? failures : undefined,
