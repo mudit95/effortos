@@ -506,6 +506,35 @@ export const useStore = create<AppState>((set, get) => ({
     if (isSupabaseConfigured()) try {
       const supabase = createClient();
       const { data: { session } } = await supabase.auth.getSession();
+
+      // ── Anonymous visitor fast path ───────────────────────────────
+      // If getSession() returns null AND we're not in the middle of an
+      // OAuth callback (`?code=` in the URL), we *know* the visitor is
+      // anonymous. Drop them on the landing page immediately rather
+      // than waiting up to 8 seconds for an auth listener that's
+      // never going to fire.
+      //
+      // The previous behaviour:
+      //   1. getSession() → null (cold-start serverless, 1-3 s)
+      //   2. fall through to "Supabase configured" branch below
+      //   3. set 8 s safety timer
+      //   4. visitor sees BootLoader's "stalled" modal at 6 s
+      //   5. landing page finally renders at 8 s
+      // After this fix, anonymous visitors see landing in ~500 ms.
+      // OAuth callbacks (?code=) still take the slower path because
+      // exchangeCodeForSession runs after this point and the auth
+      // listener will re-trigger initializeApp once the session is set.
+      if (!session?.user) {
+        const hasOAuthCode =
+          typeof window !== 'undefined' &&
+          /[?&]code=/.test(window.location.search);
+        if (!hasOAuthCode) {
+          set({ isLoading: false, currentView: 'landing', user: null, isAuthenticated: false });
+          get().setConnectionStatus('ok');
+          return;
+        }
+      }
+
       if (session?.user) {
         _isCloud = true;
 
