@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { buttonClasses } from '@/components/ui/button';
+import { buttonClasses } from '@/components/ui/button-classes';
 
 /**
  * Catch-all 404 page. Kept deliberately minimal — no client-side JS and no

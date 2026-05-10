@@ -12,7 +12,7 @@
  */
 
 import Link from 'next/link';
-import { buttonClasses } from '@/components/ui/button';
+import { buttonClasses } from '@/components/ui/button-classes';
 
 export const dynamic = 'force-dynamic';
 

@@ -27,7 +27,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { Flame, Clock, Trophy, Sparkles } from 'lucide-react';
 import { resolveStreakShareToken, formatJoinedMonth } from '@/lib/share-streak';
-import { buttonClasses } from '@/components/ui/button';
+import { buttonClasses } from '@/components/ui/button-classes';
 
 // Force dynamic rendering — token revocation must take effect on the
 // next request, not after edge cache eventually expires. Streaks also
