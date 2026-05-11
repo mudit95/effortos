@@ -42,7 +42,7 @@ import { MeditationScreen } from '@/components/timer/MeditationScreen';
 import {
   Target, LogOut, Plus,
   Sparkles, Settings, BookOpen, Edit3,
-  PlusCircle, Shield, List, Wind
+  PlusCircle, Shield, List, Wind, ListChecks
 } from 'lucide-react';
 
 const ease = [0.22, 1, 0.36, 1] as [number, number, number, number];
@@ -163,22 +163,36 @@ export function Dashboard() {
       <div className="min-h-screen flex flex-col">
         <DashboardHeader user={user} onLogout={logout} onSettings={() => setShowSettings(true)} onHistory={() => setShowGoalHistory(true)} onMeditate={() => setShowMeditation(true)} />
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-4 sm:mt-6 w-full">
-          <div className="flex justify-center mb-6">
+          <div className="flex items-center justify-between mb-4 sm:mb-6 pb-3 border-b border-white/[0.04]">
             <ModeToggle />
           </div>
         </main>
         <div className="flex-1 flex items-center justify-center p-4">
+          {/* Calmer no-goal state since the user reached this view by
+              choosing Long Term from the top nav. The primary action is
+              now &quot;jump to Today&quot; (the new product hero); setting a
+              goal is offered as a quieter outline button. */}
           <div className="text-center max-w-sm">
-            <div className="w-16 h-16 rounded-2xl bg-white/[0.04] flex items-center justify-center mx-auto mb-6">
-              <Target className="w-8 h-8 text-white/20" />
+            <div className="w-12 h-12 rounded-xl bg-white/[0.03] flex items-center justify-center mx-auto mb-4">
+              <Target className="w-5 h-5 text-white/25" />
             </div>
-            <h2 className="text-xl font-bold text-white mb-2">No active goal</h2>
-            <p className="text-sm text-white/40 mb-6">
-              Set a new goal or resume a paused one to get started.
+            <h2 className="text-base font-semibold text-white/80 mb-1.5">No long-term goal yet</h2>
+            <p className="text-xs text-white/35 mb-5">
+              Long-term tracking is optional. Plan today on the Today tab &mdash; or set a goal here when you&rsquo;re ready.
             </p>
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-1.5 items-center">
               <Button
-                variant="glow"
+                variant="default"
+                size="sm"
+                onClick={() => useStore.getState().setDashboardMode('daily')}
+                className="gap-1.5"
+              >
+                <ListChecks className="w-3.5 h-3.5" />
+                Go to Today
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => {
                   useStore.setState({
                     onboardingStep: 0,
@@ -186,22 +200,14 @@ export function Dashboard() {
                     currentView: 'onboarding',
                   });
                 }}
-                className="gap-2"
+                className="gap-1.5"
               >
-                <Plus className="w-4 h-4" />
-                Start New Goal
+                <Plus className="w-3.5 h-3.5" />
+                Set a goal
               </Button>
-              <Button variant="ghost" onClick={() => setShowGoalHistory(true)} className="gap-2">
-                <BookOpen className="w-4 h-4" />
-                View Goal History
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => useStore.getState().setShowShadowGoals(true)}
-                className="gap-2"
-              >
-                <Sparkles className="w-4 h-4" />
-                Shadow Goals
+              <Button variant="ghost" size="sm" onClick={() => setShowGoalHistory(true)} className="gap-1.5 text-[11px]">
+                <BookOpen className="w-3 h-3" />
+                Past goals
               </Button>
             </div>
           </div>
@@ -277,8 +283,13 @@ export function Dashboard() {
             for non-paying users. Renders nothing for trialing/active users. */}
         <FreeDashboardCallout />
 
-        {/* Mode toggle — centered at top */}
-        <div className="flex justify-center mb-6 sm:mb-8">
+        {/* Mode toggle — top-nav style, left-aligned, with "Today" as the
+            anchor. The previous centered pill made all three modes feel
+            equally important, which fought the product pivot (task list
+            is the hero; Long Term and Reports are secondary). Quiet
+            separator below it visually anchors the switcher to the
+            header strip rather than floating mid-page. */}
+        <div className="flex items-center justify-between mb-4 sm:mb-6 pb-3 border-b border-white/[0.04]">
           <ModeToggle />
         </div>
 
@@ -325,24 +336,32 @@ export function Dashboard() {
                   setShowGoalHistory={setShowGoalHistory}
                 />
               ) : !activeGoal ? (
-                <div className="text-center py-16">
-                  <div className="w-16 h-16 rounded-2xl bg-white/[0.04] flex items-center justify-center mx-auto mb-6">
-                    <Target className="w-8 h-8 text-white/20" />
+                // Calmer empty state — Long Term is no longer the implicit
+                // home, so this view shouldn&apos;t feel like a half-broken
+                // dashboard. Outline button (not glow), smaller anchor,
+                // gentler copy. The product&apos;s real prompt to act is on
+                // the Today tab.
+                <div className="text-center py-12">
+                  <div className="w-12 h-12 rounded-xl bg-white/[0.03] flex items-center justify-center mx-auto mb-4">
+                    <Target className="w-5 h-5 text-white/25" />
                   </div>
-                  <h2 className="text-xl font-bold text-white mb-2">No active goal</h2>
-                  <p className="text-sm text-white/40 mb-6">Set a goal to track your long-term progress.</p>
-                  <div className="flex flex-col items-center gap-2">
+                  <h2 className="text-base font-semibold text-white/80 mb-1.5">No long-term goal yet</h2>
+                  <p className="text-xs text-white/35 mb-5 max-w-xs mx-auto">
+                    Set one to track multi-week progress. Optional &mdash; you can keep using EffortOS day by day.
+                  </p>
+                  <div className="flex flex-col items-center gap-1.5">
                     <Button
-                      variant="glow"
+                      variant="outline"
+                      size="sm"
                       onClick={() => useStore.setState({ onboardingStep: 0, onboardingData: {}, currentView: 'onboarding' })}
-                      className="gap-2"
+                      className="gap-1.5"
                     >
-                      <Plus className="w-4 h-4" />
-                      Start New Goal
+                      <Plus className="w-3.5 h-3.5" />
+                      Set a goal
                     </Button>
-                    <Button variant="ghost" onClick={() => setShowGoalHistory(true)} className="gap-2 text-xs">
-                      <List className="w-3.5 h-3.5" />
-                      Review All Goals
+                    <Button variant="ghost" size="sm" onClick={() => setShowGoalHistory(true)} className="gap-1.5 text-[11px]">
+                      <List className="w-3 h-3" />
+                      Review past goals
                     </Button>
                   </div>
                 </div>

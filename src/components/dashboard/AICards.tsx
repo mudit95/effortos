@@ -89,6 +89,14 @@ interface AIMotivationCardProps {
   sessionsTotal?: number;
   streakDays?: number;
   userName?: string;
+  /**
+   * Top 2-3 task titles from the user&apos;s Today list. Surfaced to the
+   * motivation prompt so the AI can name a specific task ("Review PRs
+   * is the heaviest one — start there") instead of returning generic
+   * "you&apos;ve got this." encouragement. Optional — omitting it falls
+   * back to the previous goal-only prompt shape.
+   */
+  taskTitles?: string[];
   className?: string;
 }
 
@@ -214,14 +222,18 @@ export function AIMotivationCard({
   sessionsTotal = 0,
   streakDays = 0,
   userName = 'there',
+  taskTitles,
   className = '',
 }: AIMotivationCardProps) {
   const [motivation, setMotivation] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  // Store current props in a ref so fetchMotivation never changes identity
-  const propsRef = useRef({ goalTitle, sessionsCompleted, sessionsTotal, streakDays, userName });
-  propsRef.current = { goalTitle, sessionsCompleted, sessionsTotal, streakDays, userName };
+  // Store current props in a ref so fetchMotivation never changes identity.
+  // taskTitles flows through here so the cache key includes the user&apos;s
+  // current Today list — switching tasks invalidates the cached motivation,
+  // and the next render fetches a fresh task-aware message.
+  const propsRef = useRef({ goalTitle, sessionsCompleted, sessionsTotal, streakDays, userName, taskTitles });
+  propsRef.current = { goalTitle, sessionsCompleted, sessionsTotal, streakDays, userName, taskTitles };
 
   const fetchMotivation = useCallback(async (opts?: { force?: boolean }) => {
     const key = cacheKey('motivation', propsRef.current as Record<string, unknown>);

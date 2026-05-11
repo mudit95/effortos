@@ -33,23 +33,33 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'AI Coach not configured' }, { status: 503 });
     }
 
-    const { taskTitle, goalTitle, sessionsCompleted, sessionsTotal, streakDays, userName } = await request.json();
+    const { taskTitle, taskTitles, goalTitle, sessionsCompleted, sessionsTotal, streakDays, userName } = await request.json();
+
+    // taskTitles (an array of today&apos;s pending task titles) takes
+    // precedence over the legacy single taskTitle string — passing the
+    // list lets the AI name a specific item from the user&apos;s queue.
+    // Clamp to 3 to keep the prompt tight; the motivation reply is
+    // already capped at 15 words on the system side.
+    const todayList = Array.isArray(taskTitles)
+      ? taskTitles.filter((t: unknown): t is string => typeof t === 'string' && t.trim().length > 0).slice(0, 3)
+      : [];
 
     const message = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 128,
       system: `You generate ONE short motivational message (max 15 words) for a focus timer app.
 Rules:
-- Reference the specific task or goal when provided
-- Be warm, specific, and action-oriented
+- If today's task list is provided, name ONE specific task from it.
+- If no task list, reference the goal or a generic next step.
+- Be warm, specific, and action-oriented.
 - No quotes from famous people. Be original.
 - No exclamation marks. Keep it calm and confident.
-- Vary your style: sometimes encouraging, sometimes reflective, sometimes practical
+- Vary your style: sometimes encouraging, sometimes reflective, sometimes practical.
 - Return ONLY the message text, nothing else.`,
       messages: [{
         role: 'user',
         content: `User: ${userName || 'there'}
-Task: ${taskTitle || 'focused work'}
+${todayList.length > 0 ? `Today's list: ${todayList.map(t => `"${t}"`).join(', ')}` : `Task: ${taskTitle || 'focused work'}`}
 Goal: ${goalTitle || 'their goal'}
 Progress: ${sessionsCompleted}/${sessionsTotal} sessions done
 Streak: ${streakDays} days`,

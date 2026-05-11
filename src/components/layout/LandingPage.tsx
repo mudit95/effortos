@@ -188,16 +188,20 @@ function AnimatedNumber({ value, suffix = '' }: { value: number; suffix?: string
 // ROTATING HEADLINE — with typewriter-style reveal
 // ═════════════════════════════════════════════════════════════════════
 
-// Rotated outcomes (not negations). Outcomes convert significantly better:
-// readers see a finish line, not a problem they already know they have.
-// Tilted slightly US-first (bar exam, dissertation) but kept universal so
-// the same hero works for global traffic.
+// Rotating values now cycle through TASK shapes, not just long-term goals.
+// The product pivot leads with the daily list (the AI&apos;s reminders and
+// the on-demand Pomodoro live on top of that list), so the headline frame
+// "Finish [today&apos;s list]" reads as immediately concrete. Long-term
+// outcomes — your novel, the bar exam — stay in the rotation because they
+// remain a supported use case, but they&apos;re mixed in with tasks the
+// reader could be doing in the next twenty-five minutes.
 const ROTATING_WORDS = [
+  'today’s list.',
+  'the next task.',
   'your novel.',
+  'tomorrow’s plan.',
+  'one focused block.',
   'the bar exam.',
-  'your MVP.',
-  'your dissertation.',
-  'a new language.',
 ];
 
 function RotatingWord() {
@@ -352,7 +356,7 @@ function HeroCardPlan() {
   return (
     <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4 backdrop-blur-sm">
       <div className="flex items-center justify-between mb-3">
-        <span className="text-[10px] uppercase tracking-[0.18em] text-white/30">Daily Grind · Today</span>
+        <span className="text-[10px] uppercase tracking-[0.18em] text-white/30">Today</span>
         <span className="text-[10px] font-mono text-white/30">2 / 6 poms</span>
       </div>
       <ul className="space-y-1.5">
@@ -409,12 +413,17 @@ function HeroCardWeek() {
   );
 }
 
+// Order reflects the product pivot — the Daily Grind plan card leads
+// (task list = the hero), the Pomodoro card is second (the verb that
+// fires off any task row), and the WhatsApp/coach card sits where the
+// "AI does the math" promise can land most naturally. Long-term goal
+// + weekly stats stay in the rotation but trail the lead.
 const HERO_CARDS: React.FC[] = [
+  HeroCardPlan,
   HeroCardPomodoro,
   HeroCardWhatsApp,
-  HeroCardGoal,
-  HeroCardPlan,
   HeroCardInsight,
+  HeroCardGoal,
   HeroCardWeek,
 ];
 
@@ -613,7 +622,7 @@ function DailyGrindPreview() {
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <ListChecks size={16} className="text-cyan-400/60" />
-          <span className="text-xs font-semibold text-white/60 uppercase tracking-wider">Daily Grind</span>
+          <span className="text-xs font-semibold text-white/60 uppercase tracking-wider">Today</span>
         </div>
         <motion.span key={done} initial={{ scale: 1.3, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="text-xs text-white/30">
           {done}/{tasks.length} done
@@ -1075,8 +1084,8 @@ export function LandingPage() {
               transition={{ delay: 0.25, duration: 0.7, ease }}
               className="text-lg sm:text-xl text-white/45 mb-10 max-w-xl mx-auto lg:mx-0 leading-relaxed"
             >
-              Tell it what you want to finish. It does the math, paces the work,
-              and quietly gets out of your way.
+              A list of what you&rsquo;re working on today. Tap any task to start a Pomodoro.
+              A coach who actually checks in.
             </motion.p>
 
             {/* CTA */}
@@ -1170,10 +1179,11 @@ export function LandingPage() {
       <Section className="py-16 sm:py-24 px-4" delay={0.1}>
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-12">
-            <p className="text-[11px] text-cyan-400/60 uppercase tracking-[0.2em] font-semibold mb-3">Try it</p>
-            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3">A timer that knows the work.</h2>
+            <p className="text-[11px] text-cyan-400/60 uppercase tracking-[0.2em] font-semibold mb-3">The loop</p>
+            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-3">List on the left. Pomodoro on the right.</h2>
             <p className="text-sm text-white/40 max-w-md mx-auto leading-relaxed">
-              Three priorities. Hit start. Every focused session lands against the goal it was for.
+              Drop three things you want to ship today. Tap any one to start working.
+              Every block lands against the task it was for.
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
@@ -1245,7 +1255,7 @@ export function LandingPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <FeatureCard icon={Timer} title="Pomodoro Timer" description="Twenty-five minutes at a time. Picture-in-picture so it stays in view, never in the way." gradient="bg-gradient-to-br from-cyan-500/[0.05] to-transparent" delay={0} />
             <FeatureCard icon={Brain} title="AI Estimation" description="Sizes any goal in focused sessions. Sharpens its guess every time you finish one." gradient="bg-gradient-to-br from-purple-500/[0.05] to-transparent" delay={0.1} />
-            <FeatureCard icon={ListChecks} title="Daily Grind" description="Three priorities. Tagged. Started. The rest of the noise stays outside." gradient="bg-gradient-to-br from-emerald-500/[0.05] to-transparent" delay={0.2} />
+            <FeatureCard icon={ListChecks} title="Today" description="Three priorities. Tagged. Tap any one to start a Pomodoro. The rest of the noise stays outside." gradient="bg-gradient-to-br from-emerald-500/[0.05] to-transparent" delay={0.2} />
             <FeatureCard icon={Bot} title="AI Coach" description="Honest debriefs after every session. Weekly recaps that read like a coach who&rsquo;s actually paying attention." gradient="bg-gradient-to-br from-amber-500/[0.05] to-transparent" delay={0.1} />
             <FeatureCard icon={MessageCircle} title="WhatsApp Bot" description="Add tasks, log wins, plan tomorrow — by texting like you would a friend." gradient="bg-gradient-to-br from-green-500/[0.05] to-transparent" delay={0.2} />
             <FeatureCard icon={BarChart3} title="Reports & Streaks" description="Where your hours actually went. A streak that respects bad weeks instead of punishing them." gradient="bg-gradient-to-br from-blue-500/[0.05] to-transparent" delay={0.3} />
@@ -1547,7 +1557,7 @@ export function LandingPage() {
                   // faster and stops the eye from glazing past the price.
                   'AI goal estimation that learns your pace',
                   'Pomodoro timer with picture-in-picture',
-                  'Daily Grind: three priorities, no clutter',
+                  'Today view: three priorities, no clutter',
                   'WhatsApp bot for tasks and check-ins',
                   'Streak calendar that forgives bad weeks',
                 ].map((f) => (

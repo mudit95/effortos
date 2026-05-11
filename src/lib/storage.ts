@@ -247,10 +247,13 @@ export function clearTimerState(): void {
   localStorage.removeItem(STORAGE_KEYS.TIMER_STATE);
 }
 
-// Dashboard mode
+// Dashboard mode — defaults to 'daily' because the task list is the
+// new product hero. Long-term goals and reports stay reachable via
+// the top-nav switcher; the fallback for a fresh device should land
+// on Today, not on an empty long-term view.
 export function getDashboardMode(): DashboardMode {
-  if (typeof window === 'undefined') return 'longterm';
-  return (localStorage.getItem(STORAGE_KEYS.DASHBOARD_MODE) as DashboardMode) || 'longterm';
+  if (typeof window === 'undefined') return 'daily';
+  return (localStorage.getItem(STORAGE_KEYS.DASHBOARD_MODE) as DashboardMode) || 'daily';
 }
 
 export function setDashboardMode(mode: DashboardMode): void {

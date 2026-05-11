@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { SelectGroup } from '@/components/ui/select-group';
 import { useStore } from '@/store/useStore';
-import { ArrowRight, ArrowLeft, Sparkles, X, MessageCircle, Check } from 'lucide-react';
+import { ArrowRight, ArrowLeft, Sparkles, X, MessageCircle, Check, ListChecks, Target } from 'lucide-react';
 import type { BotPersona } from '@/types';
 import {
   GOAL_TEMPLATES,
@@ -102,6 +102,16 @@ export function OnboardingFlow() {
 
   const [direction, setDirection] = useState(1);
   const [goalError, setGoalError] = useState('');
+  // ── Onboarding fork ─────────────────────────────────────────────
+  // After the pivot to a task-list-first product, the very first thing a
+  // new user sees is a fork: "Plan today" (drop straight into the Today
+  // tab) vs "Set a long-term goal" (run the existing multi-step flow).
+  // We render the fork picker until the user picks one of those paths
+  // OR the user already has a goalTitle (e.g. resuming an in-progress
+  // onboarding draft) — in which case we know they want the goal flow.
+  const [forkChoice, setForkChoice] = useState<'goal' | null>(
+    onboardingData.goalTitle ? 'goal' : null,
+  );
 
   const step = onboardingStep;
 
@@ -174,6 +184,110 @@ export function OnboardingFlow() {
     setDirection(1);
     setOnboardingStep(PERSONA_STEP);
   }, [updateOnboardingData, setOnboardingStep]);
+
+  // ── Fork picker render path ────────────────────────────────────
+  // First impression for a brand-new user. Two cards: Plan today
+  // (the new product hero) and Set a long-term goal (the original
+  // flow). We early-return BEFORE the multi-step layout so the user
+  // doesn&apos;t see a progress bar for a flow they haven&apos;t
+  // committed to yet.
+  if (forkChoice === null && step === 0) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="w-full max-w-lg relative">
+          <button
+            onClick={() => useStore.setState({ currentView: 'dashboard', onboardingStep: 0, onboardingData: {} })}
+            className="absolute top-0 right-0 text-white/30 hover:text-white/60 transition-colors p-1"
+            aria-label="Skip onboarding"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          {user && (
+            <motion.p
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-white/40 text-sm mb-2"
+            >
+              Welcome, {user.name}
+            </motion.p>
+          )}
+          <motion.h1
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.05 }}
+            className="text-2xl sm:text-3xl font-semibold text-white mb-2 tracking-tight"
+          >
+            How do you want to start?
+          </motion.h1>
+          <motion.p
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="text-sm text-white/40 mb-8"
+          >
+            You can always switch later from the top of the dashboard.
+          </motion.p>
+          <div className="space-y-3">
+            <motion.button
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.15 }}
+              onClick={() =>
+                useStore.setState({
+                  currentView: 'dashboard',
+                  dashboardMode: 'daily',
+                  onboardingStep: 0,
+                  onboardingData: {},
+                })
+              }
+              className="group w-full text-left p-5 rounded-2xl border border-cyan-500/25 bg-gradient-to-br from-cyan-500/[0.06] to-blue-500/[0.03] hover:border-cyan-400/40 hover:from-cyan-500/[0.09] transition-colors"
+            >
+              <div className="flex items-start gap-4">
+                <div className="w-10 h-10 rounded-xl bg-cyan-500/15 flex items-center justify-center flex-shrink-0">
+                  <ListChecks className="w-5 h-5 text-cyan-300" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <h2 className="text-base font-semibold text-white">Plan today&rsquo;s tasks</h2>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 font-medium">
+                      Recommended
+                    </span>
+                  </div>
+                  <p className="text-sm text-white/55 leading-relaxed">
+                    Drop in three things you want to ship today. Tap any of them
+                    to start a Pomodoro. The AI coach takes it from there.
+                  </p>
+                </div>
+                <ArrowRight className="w-4 h-4 text-white/30 group-hover:text-cyan-300 transition-colors mt-2" />
+              </div>
+            </motion.button>
+
+            <motion.button
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+              onClick={() => setForkChoice('goal')}
+              className="group w-full text-left p-5 rounded-2xl border border-white/[0.08] bg-white/[0.02] hover:border-white/[0.15] hover:bg-white/[0.03] transition-colors"
+            >
+              <div className="flex items-start gap-4">
+                <div className="w-10 h-10 rounded-xl bg-white/[0.04] flex items-center justify-center flex-shrink-0">
+                  <Target className="w-5 h-5 text-white/55" />
+                </div>
+                <div className="flex-1">
+                  <h2 className="text-base font-semibold text-white/85 mb-1">Set a long-term goal</h2>
+                  <p className="text-sm text-white/45 leading-relaxed">
+                    Finish your novel, the bar exam, your MVP. EffortOS sizes
+                    the work and paces it across weeks.
+                  </p>
+                </div>
+                <ArrowRight className="w-4 h-4 text-white/25 group-hover:text-white/55 transition-colors mt-2" />
+              </div>
+            </motion.button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">

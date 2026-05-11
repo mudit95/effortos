@@ -156,7 +156,7 @@ export function AppShell() {
     if (timerState !== 'idle') return;
     if (currentView === 'dashboard') {
       const modeLabels: Record<string, string> = {
-        daily: 'Daily Grind',
+        daily: 'Today',
         longterm: 'Long Term',
         reports: 'Reports',
       };

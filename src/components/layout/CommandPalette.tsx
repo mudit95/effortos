@@ -183,8 +183,11 @@ export function CommandPalette() {
     // ── Jumps ──
     list.push({
       id: 'goto-daily',
-      label: 'Daily Grind',
-      keywords: 'today plan tasks',
+      label: 'Today',
+      // Keep "daily grind" in the keyword bag so muscle memory typists still
+      // land here. The visible label changed with the product pivot but the
+      // user&apos;s search string didn&apos;t.
+      keywords: 'today plan tasks daily grind',
       icon: ListTodo,
       section: 'jump',
       run: () => {

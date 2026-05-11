@@ -1278,6 +1278,11 @@ export function DailyGrind() {
           sessionsTotal={totalPomodoros}
           streakDays={dashboardStats?.current_streak ?? 0}
           userName={useStore.getState().user?.name || 'there'}
+          // Pass the top 3 pending task titles so the AI can be specific:
+          // &quot;Review PRs is the heaviest one&quot; beats generic &quot;keep
+          // going.&quot; Limit 3 so we don&apos;t blow the 300-token system
+          // prompt budget for the motivation endpoint.
+          taskTitles={pendingTasks.slice(0, 3).map(t => t.title)}
         />
 
         {/* Errand mini card — surfaces the top of the side list inline so

@@ -430,7 +430,12 @@ export const useStore = create<AppState>((set, get) => ({
   showEditGoal: false,
   showExitConfirm: false,
   remoteTimerInfo: null,
-  dashboardMode: 'longterm',
+  // Default to 'daily' — the task list is the new hero. Long-term goals
+  // and reports stay one tap away via the top-nav switcher, but a fresh
+  // session should never land in an empty long-term view. The prior
+  // default ('longterm') showed brand-new users a "No active goal" empty
+  // state, which fights the pivot to a task-list-first product.
+  dashboardMode: 'daily',
   dailyTasks: [],
   repeatingTemplates: [],
   activeDailyTaskId: null,

@@ -55,7 +55,7 @@ export function WelcomeCard() {
           </div>
 
           <p className="text-xs text-white/40 mb-4 leading-relaxed max-w-md">
-            Your goal is set. Start a focus session to begin tracking your progress, or switch to Daily Grind to plan tasks for today.
+            Your goal is set. Jump to Today to plan a few tasks &mdash; tap any one to start a Pomodoro. Or start an unassigned focus session right now.
           </p>
 
           <div className="flex items-center gap-3">
@@ -75,7 +75,7 @@ export function WelcomeCard() {
               className="gap-1.5 text-xs text-white/50"
             >
               <Calendar className="w-3 h-3" />
-              Try Daily Grind
+              Go to Today
             </Button>
           </div>
         </div>
