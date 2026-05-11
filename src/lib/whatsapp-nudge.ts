@@ -218,8 +218,14 @@ export function afternoonWhatsAppMessage(opts: {
   const lines: string[] = [afternoonHeader(persona, fn)];
 
   if (sessionsToday > 0) {
+    // Lead with tasks done, since that&apos;s the unit the user actually
+    // tracks against their day. Pomodoros + focused time are how-the-
+    // work-happened metrics — they belong second. The previous order
+    // (sessions first) made completed tasks easy to overlook, which
+    // landed as the user-reported "I did 5 tasks today but the bot
+    // doesn&apos;t reflect it" bug.
     lines.push(
-      `📊 ${sessionsToday} session${sessionsToday === 1 ? '' : 's'} · ${focusStr} focused · ${done}/${total} task${total === 1 ? '' : 's'} done`,
+      `📊 ${done}/${total} task${total === 1 ? '' : 's'} done · ${sessionsToday} session${sessionsToday === 1 ? '' : 's'} · ${focusStr} focused`,
     );
   } else {
     lines.push(

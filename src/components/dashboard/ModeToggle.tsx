@@ -25,11 +25,16 @@ export function ModeToggle() {
   const dashboardMode = useStore(s => s.dashboardMode);
   const setDashboardMode = useStore(s => s.setDashboardMode);
 
-  // Order matters: hero first, then the two secondary destinations.
-  const modes: { id: DashboardMode; label: string; icon: React.ReactNode; primary?: boolean }[] = [
-    { id: 'daily', label: 'Today', icon: <ListChecks className="w-4 h-4" />, primary: true },
-    { id: 'longterm', label: 'Long Term', icon: <Target className="w-3.5 h-3.5" /> },
-    { id: 'reports', label: 'Reports', icon: <BarChart3 className="w-3.5 h-3.5" /> },
+  // Equal typography across all three modes — they&apos;re peer
+  // destinations. Today is still the visual anchor through the active
+  // background + border treatment, but Long Term and Reports should
+  // not read as footnotes. Earlier shrunken-text version over-corrected
+  // the demotion and made them feel like settings links instead of
+  // real navigation.
+  const modes: { id: DashboardMode; label: string; icon: React.ReactNode }[] = [
+    { id: 'daily', label: 'Today', icon: <ListChecks className="w-4 h-4" /> },
+    { id: 'longterm', label: 'Long Term', icon: <Target className="w-4 h-4" /> },
+    { id: 'reports', label: 'Reports', icon: <BarChart3 className="w-4 h-4" /> },
   ];
 
   return (
@@ -47,9 +52,7 @@ export function ModeToggle() {
             aria-selected={isActive}
             aria-current={isActive ? 'page' : undefined}
             onClick={() => setDashboardMode(mode.id)}
-            className={`relative flex items-center gap-1.5 rounded-lg font-medium transition-colors ${
-              mode.primary ? 'px-3.5 py-1.5 text-sm' : 'px-3 py-1.5 text-xs'
-            }`}
+            className="relative flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors"
           >
             {isActive && (
               <motion.div
@@ -60,13 +63,7 @@ export function ModeToggle() {
             )}
             <span
               className={`relative z-10 flex items-center gap-1.5 ${
-                isActive
-                  ? mode.primary
-                    ? 'text-white'
-                    : 'text-white/85'
-                  : mode.primary
-                    ? 'text-white/45 hover:text-white/70'
-                    : 'text-white/35 hover:text-white/55'
+                isActive ? 'text-white' : 'text-white/45 hover:text-white/75'
               }`}
             >
               {mode.icon}

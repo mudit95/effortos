@@ -11,7 +11,7 @@ import {
   Plus, Trash2, Play, Pause, RotateCcw, SkipForward,
   Repeat, ChevronLeft, ChevronRight, Maximize2, Circle, PictureInPicture2,
   CheckCircle2, Clock, Flame, PlusCircle, X, Calendar, Sparkles,
-  CalendarPlus, List, LayoutGrid, ListTodo, Columns2, GripVertical,
+  CalendarPlus, ListTodo, GripVertical, BarChart3, ChevronDown,
 } from 'lucide-react';
 import { useDragSort, type GripHandlerProps, type RowDropHandlerProps } from '@/hooks/useDragSort';
 import { CarryForwardCard } from './CarryForwardCard';
@@ -30,8 +30,10 @@ import { StreakCalendar } from './StreakCalendar';
 // Having two AI text blocks stacked in the same viewport created
 // redundant "motivate the user" real estate.
 import { AIMotivationCard } from './AICards';
-import { TimeBoxView } from './TimeBoxView';
-import { FlowView } from './FlowView';
+// TimeBoxView and FlowView retired in the task-list pivot (see commit
+// log for "Remove schedule + flow layouts"). The files are kept in the
+// tree as dead code for now in case the layouts come back; no live
+// reference paths remain.
 import { OtherTodosDrawer } from './OtherTodosDrawer';
 import { countOpenOtherTodos, listOtherTodos, toggleOtherTodoComplete } from '@/lib/other-todos';
 
@@ -518,8 +520,10 @@ export function DailyGrind() {
   const dashboardStats = useStore(s => s.dashboardStats);
   const goals = useStore(s => s.goals);
   const setShowAIPlanWizard = useStore(s => s.setShowAIPlanWizard);
-  const dailyGrindLayout = useStore(s => s.dailyGrindLayout);
-  const setDailyGrindLayout = useStore(s => s.setDailyGrindLayout);
+  // dailyGrindLayout was the list/schedule/flow switch. After the pivot
+  // the list view is the only one we ship. Setter kept on the store for
+  // backwards compatibility with any persisted localStorage values but is
+  // no longer read here.
 
   // Journal subscriptions — kept as individual selectors so the grid doesn't
   // re-render when unrelated store slices change. `journalEntries` is a list
@@ -817,6 +821,68 @@ export function DailyGrind() {
             to carry, so it adds zero overhead in the common case. */}
         <CarryForwardCard />
 
+        {/* ── Today at a glance ────────────────────────────────────────
+            Four-stat strip sitting above the task list. This is the
+            "Today card" surface — the at-a-glance summary that answers
+            "did my work today actually register?" — which was the
+            specific complaint that triggered this rebuild. Reads from
+            the same `completedTasks` / `donePomodoros` / `focusMinutes`
+            already computed up the file, so no extra fetches.
+
+            Day-complete % is a weighted blend: 70% of the score comes
+            from Pomodoro completion (the verb the user actually picks
+            up), 30% from task-completion ratio (because hitting half
+            your Pomodoros on a single task isn't really "half-done").
+            Capped at 100. Streak lives in the corner so the daily
+            grind doesn't fight the multi-day commitment story. */}
+        {isToday && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease }}
+            className="mb-4 rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-[10px] uppercase tracking-[0.12em] text-white/30">Today at a glance</p>
+              {(dashboardStats?.current_streak ?? 0) > 0 && (
+                <p className="text-[10px] text-amber-300/70 flex items-center gap-1">
+                  <Flame className="w-3 h-3" />
+                  {dashboardStats?.current_streak} day streak
+                </p>
+              )}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="rounded-xl bg-white/[0.03] p-3">
+                <p className="text-xl font-semibold text-white leading-none">
+                  {completedTasks.length}
+                  <span className="text-sm text-white/30 font-normal">/{visibleTasks.length || 0}</span>
+                </p>
+                <p className="text-[11px] text-white/40 mt-1.5">tasks done</p>
+              </div>
+              <div className="rounded-xl bg-white/[0.03] p-3">
+                <p className="text-xl font-semibold text-white leading-none">{donePomodoros}</p>
+                <p className="text-[11px] text-white/40 mt-1.5">Pomodoros</p>
+              </div>
+              <div className="rounded-xl bg-white/[0.03] p-3">
+                <p className="text-xl font-semibold text-white leading-none">
+                  {focusHours > 0 ? `${focusHours}h ${focusMins}m` : `${focusMins}m`}
+                </p>
+                <p className="text-[11px] text-white/40 mt-1.5">focused</p>
+              </div>
+              <div className="rounded-xl bg-white/[0.03] p-3">
+                <p className="text-xl font-semibold text-white leading-none">
+                  {(() => {
+                    const pomShare = totalPomodoros > 0 ? donePomodoros / totalPomodoros : 0;
+                    const taskShare = visibleTasks.length > 0 ? completedTasks.length / visibleTasks.length : 0;
+                    return `${Math.min(100, Math.round(pomShare * 70 + taskShare * 30))}%`;
+                  })()}
+                </p>
+                <p className="text-[11px] text-white/40 mt-1.5">day complete</p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
         {/* Date nav + view controls — consolidated into two rows total:
               Row 1: date navigation on the left, List/Schedule view toggle
                      + manual-log button on the right. The view toggle is a
@@ -860,49 +926,13 @@ export function DailyGrind() {
               )}
             </div>
             <div className="flex items-center gap-2">
-              {/* List / Schedule layout toggle. Persisted per-device via
-                  localStorage so the preference survives reloads. */}
-              <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-white/[0.03] border border-white/[0.06]">
-                <button
-                  onClick={() => setDailyGrindLayout('list')}
-                  className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-all ${
-                    dailyGrindLayout === 'list'
-                      ? 'bg-white/[0.08] text-white/80'
-                      : 'text-white/30 hover:text-white/60'
-                  }`}
-                  title="List view"
-                  aria-pressed={dailyGrindLayout === 'list'}
-                >
-                  <List className="w-3 h-3" />
-                  List
-                </button>
-                <button
-                  onClick={() => setDailyGrindLayout('schedule')}
-                  className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-all ${
-                    dailyGrindLayout === 'schedule'
-                      ? 'bg-white/[0.08] text-white/80'
-                      : 'text-white/30 hover:text-white/60'
-                  }`}
-                  title="Schedule view — drag tasks between morning / afternoon / evening"
-                  aria-pressed={dailyGrindLayout === 'schedule'}
-                >
-                  <LayoutGrid className="w-3 h-3" />
-                  Schedule
-                </button>
-                <button
-                  onClick={() => setDailyGrindLayout('flow')}
-                  className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-all ${
-                    dailyGrindLayout === 'flow'
-                      ? 'bg-white/[0.08] text-white/80'
-                      : 'text-white/30 hover:text-white/60'
-                  }`}
-                  title="Flow view — plan on the left, completed sessions ledger on the right"
-                  aria-pressed={dailyGrindLayout === 'flow'}
-                >
-                  <Columns2 className="w-3 h-3" />
-                  Flow
-                </button>
-              </div>
+              {/* The List / Schedule / Flow toggle lived here in the previous
+                  iteration. Removed as part of the task-list pivot: the list
+                  layout is the only one we ship now. Schedule and Flow added
+                  cognitive load without an obvious win — and they cluttered
+                  the header strip we want spare. The dailyGrindLayout store
+                  value remains read-only as &apos;list&apos; below for any
+                  consumers that still pass through it. */}
               {isToday && (
                 <button
                   onClick={() => setShowManualPomodoro(true)}
@@ -995,60 +1025,12 @@ export function DailyGrind() {
           Add tasks and assign pomodoros for your day. Use <strong className="text-cyan-400/70">Plan My Day with AI</strong> to let AI build your schedule automatically.
         </HintBanner>
 
-        {/* Task list — framed panel so the day's plan reads as a distinct block.
-            Three lenses over the same visibleTasks:
-              - `list`     — classic ordered pending list (default).
-              - `schedule` — TimeBoxView splits tasks into morning/afternoon/
-                             evening drag-and-drop columns.
-              - `flow`     — FlowView is a Plan/Done split: pending tasks on
-                             the left, the day's completed-pomodoros ledger
-                             on the right.
-            We pass the full visibleTasks (not just pendingTasks) to TimeBoxView
-            and FlowView so completed tasks stay visible in their lane — that
-            way each layout reads as a record of the day, not just a plan. */}
-        {dailyGrindLayout === 'schedule' ? (
-          visibleTasks.length > 0 && (
-            <TimeBoxView
-              tasks={visibleTasks}
-              activeTaskId={activeDailyTaskId}
-              isTimerActive={isTimerActive}
-              isToday={isToday}
-              canRollForward={canRollForward}
-              goals={goals}
-              onUpdateTask={(taskId, updates) => updateDailyTaskDetails(taskId, updates)}
-              onToggleComplete={(taskId) => toggleTaskComplete(taskId)}
-              onDelete={(taskId) => deleteDailyTask(taskId)}
-              onStart={(taskId) => handleStartPomodoro(taskId)}
-              onExtend={(taskId) => {
-                const t = visibleTasks.find(x => x.id === taskId);
-                if (!t) return;
-                updateDailyTaskDetails(taskId, { pomodoros_target: t.pomodoros_target + 1 });
-              }}
-              onRollToTomorrow={(task) => handleRollToTomorrow(task)}
-            />
-          )
-        ) : dailyGrindLayout === 'flow' ? (
-          visibleTasks.length > 0 && (
-            <FlowView
-              tasks={visibleTasks}
-              activeTaskId={activeDailyTaskId}
-              isTimerActive={isTimerActive}
-              isToday={isToday}
-              canRollForward={canRollForward}
-              goals={goals}
-              focusDurationSeconds={user?.settings?.focus_duration ?? 25 * 60}
-              onToggleComplete={(taskId) => toggleTaskComplete(taskId)}
-              onDelete={(taskId) => deleteDailyTask(taskId)}
-              onStart={(taskId) => handleStartPomodoro(taskId)}
-              onExtend={(taskId) => {
-                const t = visibleTasks.find(x => x.id === taskId);
-                if (!t) return;
-                updateDailyTaskDetails(taskId, { pomodoros_target: t.pomodoros_target + 1 });
-              }}
-              onRollToTomorrow={(task) => handleRollToTomorrow(task)}
-            />
-          )
-        ) : (
+        {/* Task list — single list layout. Schedule (TimeBoxView) and Flow
+            (FlowView) lenses were removed in the pivot; only the ordered
+            pending list survives. visibleTasks still flows through the
+            store so any future layout can be added back without rewiring
+            the data path. */}
+        {(
           pendingTasks.length > 0 && (
             <div className="rounded-2xl border border-white/[0.08] bg-white/[0.015] p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
               <div className="flex items-center justify-between px-2 pt-1 pb-2">
@@ -1226,7 +1208,7 @@ export function DailyGrind() {
 
         {/* Completed — hidden in Flow view because the Done ledger already
             renders these on the right side. */}
-        {completedTasks.length > 0 && dailyGrindLayout !== 'flow' && (
+        {completedTasks.length > 0 && (
           <div className="mt-4 rounded-2xl border border-white/[0.05] bg-white/[0.01] p-2">
             <p className="text-[10px] text-white/25 uppercase tracking-widest mb-2 px-2 pt-1">
               Done ({completedTasks.length})
@@ -1285,29 +1267,18 @@ export function DailyGrind() {
           taskTitles={pendingTasks.slice(0, 3).map(t => t.title)}
         />
 
-        {/* Errand mini card — surfaces the top of the side list inline so
-            the user sees what's pending without having to open the drawer.
-            Click "View all" to open the full drawer (still the canonical
-            place for editing / completing / reordering errands). When the
-            list is empty we show a subtle "No errands" empty state plus an
-            "+ Add errand" link that also opens the drawer in add-mode. */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1, duration: 0.4, ease }}
-          className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]"
+        {/* Errands bookmark — collapsed by default so the right rail
+            stays focused on the AI motivation. Tap to expand inline; the
+            "View all" button still opens the full canonical drawer for
+            editing / reordering. */}
+        <BookmarkDrawer
+          label="Errands"
+          icon={<Circle className="w-3.5 h-3.5" />}
+          accent="amber"
+          badge={openOtherTodoCount > 0 ? String(openOtherTodoCount) : undefined}
+          defaultOpen={false}
         >
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <h3 className="text-[10px] text-amber-300/70 uppercase tracking-widest font-medium">
-                Errands
-              </h3>
-              {openOtherTodoCount > 0 && (
-                <span className="px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300/90 text-[10px] font-semibold tabular-nums">
-                  {openOtherTodoCount}
-                </span>
-              )}
-            </div>
+          <div className="flex items-center justify-end mb-2">
             <button
               onClick={() => setShowOtherTodos(true)}
               className="text-[10px] text-white/35 hover:text-white/70 transition-colors flex items-center gap-0.5"
@@ -1358,95 +1329,23 @@ export function DailyGrind() {
           >
             + Add errand
           </button>
-        </motion.div>
-        {/* Today at a glance — the old "Today's Charter" and "Today's Focus"
-            cards said nearly the same thing with different framings. Both are
-            now folded into a single compact card: four stats in a 2x2 grid
-            with a single thin progress bar. Previously the user saw the
-            same pomodoro count in four places (header, task-list header,
-            Charter, Focus). Now it lives once on the right and once in the
-            main column's progress bar. */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.05, duration: 0.4, ease }}
-          className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]"
-        >
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-[10px] text-white/25 uppercase tracking-widest">
-              {isToday ? 'Today at a glance' : formatDateLabel(dailyViewDate)}
-            </h3>
-            {totalPomodoros > 0 && (
-              <span className="text-[10px] text-white/30 tabular-nums">
-                {Math.round((donePomodoros / totalPomodoros) * 100)}%
-              </span>
-            )}
-          </div>
+        </BookmarkDrawer>
+        {/* The old "Today at a glance" right-rail card lived here — four
+            stats in a 2x2 grid with a thin progress bar. It became
+            redundant when the top-of-main-column stat card landed (which
+            shows the same four numbers in a more prominent slot), so it
+            was removed. */}
 
-          {/* Thin day-progress bar — carries what the Charter card used to
-              show, without a second title or second numeric readout. */}
-          {totalPomodoros > 0 && (
-            <div className="h-1.5 rounded-full bg-white/[0.04] overflow-hidden mb-4">
-              <motion.div
-                className="h-full rounded-full"
-                style={{ backgroundColor: 'var(--accent, #22d3ee)' }}
-                animate={{ width: `${(donePomodoros / totalPomodoros) * 100}%` }}
-                transition={{ duration: 0.5, ease }}
-              />
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-x-3 gap-y-4">
-            <div>
-              <div className="flex items-center gap-1.5 mb-1">
-                <Clock className="w-3 h-3 text-[var(--accent,#22d3ee)]" />
-                <span className="text-[10px] text-white/30 uppercase">Time</span>
-              </div>
-              <p className="text-lg font-bold text-white">
-                {focusHours > 0 ? `${focusHours}h ${focusMins}m` : `${focusMins}m`}
-              </p>
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5 mb-1">
-                <Flame className="w-3 h-3 text-orange-400" />
-                <span className="text-[10px] text-white/30 uppercase">Sessions</span>
-              </div>
-              <p className="text-lg font-bold text-white">
-                {donePomodoros}<span className="text-sm text-white/25 font-normal">/{totalPomodoros}</span>
-              </p>
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5 mb-1">
-                <CheckCircle2 className="w-3 h-3 text-green-400" />
-                <span className="text-[10px] text-white/30 uppercase">Tasks</span>
-              </div>
-              <p className="text-lg font-bold text-white">
-                {completedTasks.length}<span className="text-sm text-white/25 font-normal">/{dailyTasks.length}</span>
-              </p>
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5 mb-1">
-                <Flame className="w-3 h-3 text-orange-400/70" />
-                <span className="text-[10px] text-white/30 uppercase">Streak</span>
-              </div>
-              <p className="text-lg font-bold text-white">
-                {dashboardStats?.current_streak ?? 0}
-                <span className="text-sm text-white/25 font-normal"> day{(dashboardStats?.current_streak ?? 0) === 1 ? '' : 's'}</span>
-              </p>
-            </div>
-          </div>
-        </motion.div>
-
-        {/* Effort breakdown by tag */}
+        {/* Effort breakdown bookmark — collapsed by default. Tap to
+            expand inline and see the tag-segmented progress bar +
+            legend. Only renders when there's meaningful data. */}
         {Object.keys(tagBreakdown).length > 0 && totalPomodoros > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2, duration: 0.4, ease }}
-            className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]"
+          <BookmarkDrawer
+            label="Effort breakdown"
+            icon={<BarChart3 className="w-3.5 h-3.5" />}
+            accent="cyan"
+            defaultOpen={false}
           >
-            <h3 className="text-[10px] text-white/25 uppercase tracking-widest mb-3">Effort Breakdown</h3>
-
             <div className="h-3 rounded-full bg-white/[0.04] overflow-hidden flex mb-3">
               {Object.entries(tagBreakdown).map(([key, val]) => (
                 <motion.div
@@ -1471,7 +1370,7 @@ export function DailyGrind() {
                 </div>
               ))}
             </div>
-          </motion.div>
+          </BookmarkDrawer>
         )}
       </div>
 
@@ -1717,6 +1616,98 @@ export function TaskRow({
           <Trash2 className="w-3.5 h-3.5" />
         </button>
       )}
+    </motion.div>
+  );
+}
+
+// ── Bookmark drawer ─────────────────────────────────────────────────
+// Right-rail side card that collapses to a thin clickable bookmark by
+// default. Tap the header strip to expand into the full content with a
+// height + opacity animation. Replaces the two previously-always-open
+// side cards (Errand mini, Effort breakdown) — keeps the data one tap
+// away without sinking visual weight into them at rest.
+//
+// Why per-card local state and not a single "openBookmark" selector:
+// they&apos;re independent — a user could legitimately want both open
+// at the same time, and the most common state for both is "closed."
+// A single-open selector would force radio-button behaviour that
+// doesn&apos;t match the user&apos;s mental model of bookmarks.
+
+const BOOKMARK_ACCENT_STYLES: Record<string, { label: string; pill: string }> = {
+  amber: {
+    label: 'text-amber-300/80',
+    pill: 'bg-amber-500/15 text-amber-300/90',
+  },
+  cyan: {
+    label: 'text-cyan-300/80',
+    pill: 'bg-cyan-500/15 text-cyan-300/90',
+  },
+};
+
+function BookmarkDrawer({
+  label,
+  icon,
+  accent = 'cyan',
+  badge,
+  defaultOpen = false,
+  children,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  accent?: 'amber' | 'cyan';
+  badge?: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const styles = BOOKMARK_ACCENT_STYLES[accent] ?? BOOKMARK_ACCENT_STYLES.cyan;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, ease }}
+      className="rounded-xl border border-white/[0.06] bg-white/[0.02] overflow-hidden"
+    >
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        className="w-full flex items-center justify-between gap-2 px-4 py-3 text-left hover:bg-white/[0.02] transition-colors"
+      >
+        <div className="flex items-center gap-2.5">
+          <span className={`flex items-center justify-center w-5 h-5 ${styles.label}`}>{icon}</span>
+          <span className="text-[11px] uppercase tracking-[0.12em] font-medium text-white/65">{label}</span>
+          {badge && (
+            <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-semibold tabular-nums ${styles.pill}`}>
+              {badge}
+            </span>
+          )}
+        </div>
+        <motion.span
+          animate={{ rotate: open ? 0 : -90 }}
+          transition={{ duration: 0.2 }}
+          className="text-white/40"
+        >
+          <ChevronDown className="w-4 h-4" />
+        </motion.span>
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="content"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease }}
+            className="overflow-hidden"
+          >
+            <div className="px-4 pb-4 pt-1 border-t border-white/[0.04]">
+              {children}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
